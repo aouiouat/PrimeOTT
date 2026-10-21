@@ -4,13 +4,20 @@ import android.os.Parcelable
 import kotlinx.parcelize.Parcelize
 
 @Parcelize
+data class QualityOption(
+    val label: String,
+    val url: String
+) : Parcelable
+
+@Parcelize
 data class StreamSource(
     val label: String,
     val url: String,
     val referer: String = "",
     val origin: String = "",
     val userAgent: String = "",
-    val isDirectStream: Boolean = true
+    val isDirectStream: Boolean = true,
+    val qualities: List<QualityOption> = emptyList()
 ) : Parcelable
 
 data class VideoQualityTrack(
@@ -20,6 +27,14 @@ data class VideoQualityTrack(
     val bitrate: Int,
     val groupIndex: Int,
     val trackIndex: Int
+)
+
+data class AudioTrackOption(
+    val label: String,
+    val language: String,
+    val groupIndex: Int,
+    val trackIndex: Int,
+    val isSelected: Boolean
 )
 
 @Parcelize

@@ -690,23 +690,23 @@ object OttRepository {
                     val sources = ArrayList<StreamSource>(srcArr.length())
                     for (j in 0 until srcArr.length()) {
                         val s = srcArr.getJSONObject(j)
-                        val lbl = s.optString("label", "HD")
+                        val lbl = s.optString("label", "Server ${j + 1}")
                         val u = s.optString("url", "")
-                        if (u.isNotEmpty()) sources.add(StreamSource(lbl, u))
-                    }
-                    if (sources.isNotEmpty()) {
-                        val chId = ch.optString("id")
-                        chList.add(
-                            Channel(
-                                id = chId,
-                                categoryId = ch.optString("category_id"),
-                                name = ch.optString("name"),
-                                logoUrl = ch.optString("logo_url"),
-                                streamUrls = sources.map { it.url },
-                                isFavorite = favoriteChannelIds.contains(chId),
-                                namedSources = sources
-                            )
-                        )
+                        val qArr = s.optJSONArray("qualities")
+                        val qList = ArrayList<QualityOption>()
+                        if (qArr != null) {
+                            for (k in 0 until qArr.length()) {
+                                val qo = qArr.optJSONObject(k) ?: continue
+                                val ql = qo.optString("label", "")
+                                val qu = qo.optString("url", "")
+                                if (ql.isNotEmpty() && qu.isNotEmpty()) {
+                                    qList.add(QualityOption(ql, qu))
+                                }
+                            }
+                        }
+                        if (u.isNotEmpty()) {
+                            sources.add(StreamSource(label = lbl, url = u, qualities = qList))
+                        }
                     }
                 }
                 cachedCustomChannels = chList
