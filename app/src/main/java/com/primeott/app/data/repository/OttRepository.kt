@@ -103,6 +103,40 @@ object OttRepository {
         }
     }
 
+    private fun mapTmdbGenreIdsToText(genreIds: JSONArray?, defaultCategory: String): String {
+        if (genreIds == null || genreIds.length() == 0) return defaultCategory
+        val names = ArrayList<String>()
+        for (i in 0 until genreIds.length()) {
+            val name = when (genreIds.optInt(i)) {
+                28 -> "Action"
+                12 -> "Adventure"
+                16 -> "Animation"
+                35 -> "Comedy"
+                80 -> "Crime"
+                99 -> "Documentary"
+                18 -> "Drama"
+                10751 -> "Family"
+                14 -> "Fantasy"
+                36 -> "History"
+                27 -> "Horror"
+                9648 -> "Mystery"
+                10749 -> "Romance"
+                878 -> "Sci-Fi"
+                53 -> "Thriller"
+                10752 -> "War"
+                37 -> "Western"
+                10759 -> "Action & Adventure"
+                10765 -> "Sci-Fi & Fantasy"
+                else -> ""
+            }
+            if (name.isNotEmpty() && !names.contains(name)) {
+                names.add(name)
+            }
+            if (names.size >= 3) break
+        }
+        return if (names.isNotEmpty()) names.joinToString("  •  ") else defaultCategory
+    }
+
     private fun parseTmdbArrayToVodList(arr: JSONArray?, defaultCategory: String, forceSeries: Boolean? = null): List<VodItem> {
         if (arr == null) return emptyList()
         val list = ArrayList<VodItem>(arr.length())
@@ -110,17 +144,13 @@ object OttRepository {
             val obj = arr.optJSONObject(i) ?: continue
             val tmdbId = "${obj.optInt("id", 0)}"
             if (tmdbId == "0") continue
-
             val posterPath = obj.optString("poster_path", "")
             if (posterPath.isEmpty() || posterPath == "null") continue
             val backdropPath = obj.optString("backdrop_path", "")
-
             val mediaType = obj.optString("media_type", "")
             val isTv = forceSeries ?: (mediaType == "tv" || obj.has("first_air_date") || obj.has("name"))
-
             val rawDate = if (isTv) obj.optString("first_air_date", "") else obj.optString("release_date", "")
             if (rawDate.isEmpty() || rawDate > "2026-11-01") continue
-
             val voteCount = obj.optInt("vote_count", 0)
             if (voteCount < 10) continue
 
@@ -129,19 +159,19 @@ object OttRepository {
             } else {
                 obj.optString("title").ifEmpty { obj.optString("original_title", "Movie") }
             }
-
             val vote = obj.optDouble("vote_average", 7.2)
             val rating = String.format(Locale.US, "%.1f", if (vote > 0.1) vote else 7.2)
             val year = if (rawDate.length >= 4) rawDate.take(4) else "2026"
             val overview = obj.optString("overview", "")
             val posterUrl = "$TMDB_POSTER_BASE$posterPath"
             val backdropUrl = if (backdropPath.isNotEmpty() && backdropPath != "null") "$TMDB_BACKDROP_BASE$backdropPath" else posterUrl
+            val genresText = mapTmdbGenreIdsToText(obj.optJSONArray("genre_ids"), defaultCategory)
 
             list.add(
                 VodItem(
                     id = tmdbId,
                     title = title,
-                    category = defaultCategory,
+                    category = genresText,
                     rating = rating,
                     year = year,
                     posterUrl = posterUrl,

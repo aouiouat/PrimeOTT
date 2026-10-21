@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="115dp"
-    android:layout_height="190dp"
+    android:layout_width="118dp"
+    android:layout_height="192dp"
     android:layout_margin="5dp"
-    app:cardBackgroundColor="#12131A"
-    app:cardCornerRadius="12dp"
+    app:cardBackgroundColor="#101218"
+    app:cardCornerRadius="14dp"
     app:cardElevation="0dp">
 
     <FrameLayout
@@ -18,39 +18,51 @@
             android:layout_height="match_parent"
             android:scaleType="centerCrop" />
 
+        <!-- التقييم الفوق على اليمين بالذهبي وبطبقة داكنة وراه -->
+        <TextView
+            android:id="@+id/tvVodMeta"
+            android:layout_width="wrap_content"
+            android:layout_height="22dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="6dp"
+            android:background="@drawable/bg_rating_pill_dark"
+            android:drawableStart="@drawable/ic_star_gold"
+            android:drawablePadding="3dp"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="7dp"
+            android:text="8.5"
+            android:textColor="#FFFFFF"
+            android:textSize="10.5sp"
+            android:textStyle="bold" />
+
+        <!-- طبقة التدرج الأسود الفايد (Faded Black Layer) باش ما تبانش مربع -->
         <View
             android:layout_width="match_parent"
-            android:layout_height="70dp"
+            android:layout_height="82dp"
             android:layout_gravity="bottom"
-            android:background="#CC0A0A0F" />
+            android:background="@drawable/bg_card_bottom_fade" />
 
-        <LinearLayout
+        <!-- اسم الفيلم أو المسلسل تحت قاع فالكارت بخط شباب -->
+        <TextView
+            android:id="@+id/tvVodTitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
-            android:orientation="vertical"
-            android:padding="8dp">
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium"
+            android:lineSpacingExtra="1dp"
+            android:maxLines="2"
+            android:paddingHorizontal="9dp"
+            android:paddingBottom="9dp"
+            android:shadowColor="#CC000000"
+            android:shadowDx="0"
+            android:shadowDy="2"
+            android:shadowRadius="4"
+            android:text="Movie Title"
+            android:textColor="#FFFFFF"
+            android:textSize="12.5sp"
+            android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/tvVodTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:text="Movie Title"
-                android:textColor="#FFFFFF"
-                android:textSize="12sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tvVodMeta"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="★ 8.5"
-                android:textColor="#E50914"
-                android:textSize="10.5sp"
-                android:textStyle="bold" />
-        </LinearLayout>
     </FrameLayout>
 </androidx.cardview.widget.CardView>

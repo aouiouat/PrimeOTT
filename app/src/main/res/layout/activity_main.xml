@@ -5,34 +5,33 @@
     android:background="#08080C"
     android:layoutDirection="ltr">
 
-    <!-- Container ta3 Les Fragments -->
     <FrameLayout
         android:id="@+id/fragmentContainer"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- Luxury Black Glass Floating Bottom Bar -->
+    <!-- Slim & Transparent Glass Floating Bottom Bar (54dp) -->
     <FrameLayout
         android:id="@+id/floatingBottomBar"
         android:layout_width="match_parent"
-        android:layout_height="62dp"
+        android:layout_height="54dp"
         android:layout_gravity="bottom"
-        android:layout_marginHorizontal="16dp"
-        android:layout_marginBottom="12dp"
+        android:layout_marginHorizontal="18dp"
+        android:layout_marginBottom="10dp"
         android:background="@drawable/bg_floating_nav_pill"
         android:elevation="22dp"
         android:layoutDirection="ltr"
         android:paddingHorizontal="6dp">
 
-        <!-- Focus Capsule (3rida chwiy 56x44dp b Red Glass) -->
+        <!-- Focus Capsule -->
         <FrameLayout
             android:id="@+id/liveTvCircleBg"
-            android:layout_width="56dp"
-            android:layout_height="44dp"
+            android:layout_width="50dp"
+            android:layout_height="38dp"
             android:layout_gravity="center_vertical|left"
             android:background="@drawable/bg_nav_tv_active_circle" />
 
-        <!-- Les 6 Tabs b 7ajm wadh7 26dp -->
+        <!-- Les 6 Tabs -->
         <LinearLayout
             android:id="@+id/navTabsRow"
             android:layout_width="match_parent"
@@ -50,8 +49,8 @@
 
                 <ImageView
                     android:id="@+id/ivNavHome"
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_nav_home" />
             </FrameLayout>
@@ -64,8 +63,8 @@
 
                 <ImageView
                     android:id="@+id/ivNavMovies"
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_nav_movies" />
             </FrameLayout>
@@ -78,8 +77,8 @@
 
                 <ImageView
                     android:id="@+id/ivNavSeries"
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_nav_series" />
             </FrameLayout>
@@ -92,8 +91,8 @@
 
                 <ImageView
                     android:id="@+id/ivNavLive"
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_nav_live_tv" />
             </FrameLayout>
@@ -106,8 +105,8 @@
 
                 <ImageView
                     android:id="@+id/ivNavMatches"
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_nav_events" />
             </FrameLayout>
@@ -120,8 +119,8 @@
 
                 <ImageView
                     android:id="@+id/ivNavProfile"
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_nav_profile" />
             </FrameLayout>

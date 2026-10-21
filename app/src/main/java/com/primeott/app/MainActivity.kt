@@ -1,5 +1,6 @@
 package com.primeott.app
 
+import android.animation.ValueAnimator
 import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -8,23 +9,24 @@ import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import androidx.activity.OnBackPressedCallback
-import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.ImageViewCompat
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
-import androidx.media3.common.util.UnstableApi
 import com.primeott.app.data.repository.OttRepository
 import com.primeott.app.databinding.ActivityMainBinding
 import com.primeott.app.presentation.livetv.LiveTvFragment
 import com.primeott.app.presentation.sections.*
 import com.primeott.app.presentation.watch.WatchRoomActivity
 import com.primeott.app.presentation.watch.WatchTogetherFragment
+import kotlin.math.abs
+import kotlin.math.sin
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var activeTag: String = ""
     private val tabOrder = listOf("HOME", "MOVIES", "SERIES", "LIVE", "MATCHES", "WATCH")
+    private var circleSlideAnimator: ValueAnimator? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,13 +79,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    @OptIn(UnstableApi::class)
     private fun switchToTab(tag: String, animate: Boolean = true) {
         if (activeTag == tag && supportFragmentManager.findFragmentByTag(tag) != null) return
 
         val oldIndex = tabOrder.indexOf(activeTag)
         val newIndex = tabOrder.indexOf(tag)
         val movingForward = oldIndex == -1 || newIndex >= oldIndex
+        val tabDistance = if (oldIndex == -1) 1 else abs(newIndex - oldIndex).coerceAtLeast(1)
 
         val tx = supportFragmentManager.beginTransaction()
 
@@ -109,27 +111,26 @@ class MainActivity : AppCompatActivity() {
 
         tx.commitNowAllowingStateLoss()
 
-        // Smooth Slide bla ramcha ka7la (alpha tabda men 0.85f machi 0f)
         if (animate) {
             target.view?.let { pageView ->
-                val slidePx = (16f * resources.displayMetrics.density) * if (movingForward) 1f else -1f
+                val slidePx = (14f * resources.displayMetrics.density) * if (movingForward) 1f else -1f
                 pageView.animate().cancel()
-                pageView.alpha = 0.85f
+                pageView.alpha = 0.88f
                 pageView.translationX = slidePx
                 pageView.animate()
                     .alpha(1f)
                     .translationX(0f)
-                    .setDuration(190)
+                    .setDuration(180)
                     .setInterpolator(DecelerateInterpolator(1.5f))
                     .start()
             }
         }
 
         activeTag = tag
-        updateBottomBarIcons(tag, animate)
+        updateBottomBarIcons(tag, animate, tabDistance)
     }
 
-    private fun updateBottomBarIcons(tag: String, animate: Boolean) {
+    private fun updateBottomBarIcons(tag: String, animate: Boolean, tabDistance: Int) {
         val activeTint = ColorStateList.valueOf(Color.parseColor("#FF1E27"))
         val inactiveTint = ColorStateList.valueOf(Color.parseColor("#E2E6F0"))
 
@@ -153,58 +154,77 @@ class MainActivity : AppCompatActivity() {
             if (isSelected) {
                 selectedTabView = tabContainer
                 if (animate) {
-                    // Takbar chwiy برك (1.12f) داخل الـ Focus Capsule
-                    iconView.scaleX = 0.94f
-                    iconView.scaleY = 0.94f
+                    iconView.scaleX = 0.92f
+                    iconView.scaleY = 0.92f
+                    iconView.translationY = 0f
                     iconView.animate()
-                        .scaleX(1.12f)
-                        .scaleY(1.12f)
-                        .setDuration(240)
-                        .setInterpolator(OvershootInterpolator(1.4f))
+                        .scaleX(1.13f)
+                        .scaleY(1.13f)
+                        .translationY(-1.5f * resources.displayMetrics.density)
+                        .setDuration(250)
+                        .setInterpolator(OvershootInterpolator(1.6f))
                         .start()
                 } else {
-                    iconView.scaleX = 1.12f
-                    iconView.scaleY = 1.12f
+                    iconView.scaleX = 1.13f
+                    iconView.scaleY = 1.13f
+                    iconView.translationY = -1.5f * resources.displayMetrics.density
                 }
             } else {
-                // Ki troh menha tweli lel 7ajm el asli (1.0f)
                 if (animate) {
                     iconView.animate()
                         .scaleX(1.0f)
                         .scaleY(1.0f)
+                        .translationY(0f)
                         .setDuration(180)
                         .setInterpolator(DecelerateInterpolator())
                         .start()
                 } else {
                     iconView.scaleX = 1.0f
                     iconView.scaleY = 1.0f
+                    iconView.translationY = 0f
                 }
             }
         }
 
-        moveActiveCircleToTab(selectedTabView, animate)
+        moveActiveCircleToTab(selectedTabView, animate, tabDistance)
     }
 
-    private fun moveActiveCircleToTab(targetTab: View, animate: Boolean) {
+    private fun moveActiveCircleToTab(targetTab: View, animate: Boolean, tabDistance: Int) {
         val circle = binding.liveTvCircleBg
         val row = binding.navTabsRow
+        val density = resources.displayMetrics.density
 
         val applyPosition = {
             val destX = (row.left + targetTab.left - circle.left) +
                     (targetTab.width - circle.width) / 2f
-            circle.animate().cancel()
+            circleSlideAnimator?.cancel()
+
             if (animate) {
-                circle.scaleX = 0.92f
-                circle.scaleY = 0.92f
-                circle.animate()
-                    .translationX(destX)
-                    .scaleX(1.0f)
-                    .scaleY(1.0f)
-                    .setDuration(240)
-                    .setInterpolator(FastOutSlowInInterpolator())
-                    .start()
+                val startX = circle.translationX
+                val maxLiftPx = -4.5f * density
+                val maxStretchX = (1.16f + (tabDistance * 0.05f)).coerceAtMost(1.38f)
+                // Ki yroh men a9sa yamin l a9sa yasar yroh rapide b slide chaba
+                val animDuration = if (tabDistance >= 3) 215L else 255L
+
+                circleSlideAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                    duration = animDuration
+                    interpolator = FastOutSlowInInterpolator()
+                    addUpdateListener { va ->
+                        val f = va.animatedFraction
+                        // Slide X
+                        circle.translationX = startX + (destX - startX) * f
+                        // Arc Lift Y (yethaz fel wasat apres yetsagam ki yawsal)
+                        val wave = sin(f * Math.PI).toFloat()
+                        circle.translationY = maxLiftPx * wave
+                        // Liquid Stretch X & Squash Y
+                        circle.scaleX = 1f + (maxStretchX - 1f) * wave
+                        circle.scaleY = 1f - (0.08f * wave)
+                    }
+                    start()
+                }
             } else {
                 circle.translationX = destX
+                circle.translationY = 0f
                 circle.scaleX = 1.0f
                 circle.scaleY = 1.0f
             }

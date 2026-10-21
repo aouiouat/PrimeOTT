@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.TextUtils
 import android.view.Gravity
@@ -31,6 +33,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.CompositePageTransformer
 import androidx.viewpager2.widget.MarginPageTransformer
+import androidx.viewpager2.widget.ViewPager2
 import com.bumptech.glide.Glide
 import com.primeott.app.R
 import com.primeott.app.data.remote.SessionManager
@@ -45,6 +48,7 @@ import com.primeott.app.domain.model.Category
 import com.primeott.app.domain.model.MatchFixture
 import com.primeott.app.domain.model.VodItem
 import com.primeott.app.domain.model.WatchHistoryEntry
+import com.primeott.app.presentation.common.AnimUtils
 import com.primeott.app.presentation.common.LocaleHelper
 import com.primeott.app.presentation.detail.ContentDetailActivity
 import com.primeott.app.presentation.livetv.CategoriesAdapter
@@ -60,7 +64,6 @@ import java.util.Locale
 import kotlin.math.abs
 
 class HomeFragment : Fragment() {
-
     private var _binding: FragmentHomeBinding? = null
     private var autoSlideJob: Job? = null
     private var heroItems: List<VodItem> = emptyList()
@@ -80,7 +83,6 @@ class HomeFragment : Fragment() {
         binding.rvRecentWatched.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
 
         val parentLinear = binding.rvHomeSeries.parent as? LinearLayout
-        // تغيير عنوان القسم الثاني في XML ليكون Popular Movies مباشرة تحت Trending Today
         val secondHeaderLayout = parentLinear?.getChildAt(parentLinear.indexOfChild(binding.rvHomeSeries) - 1) as? LinearLayout
         (secondHeaderLayout?.getChildAt(0) as? TextView)?.text = "Popular Movies"
 
@@ -104,18 +106,30 @@ class HomeFragment : Fragment() {
                 addTransformer(MarginPageTransformer(20))
                 addTransformer { page, position ->
                     val r = 1 - abs(position)
-                    page.scaleY = 0.84f + r * 0.16f
-                    page.alpha = 0.55f + r * 0.45f
+                    page.scaleY = 0.85f + r * 0.15f
+                    page.alpha = 0.58f + r * 0.42f
                 }
             }
             setPageTransformer(transformer)
+            registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+                override fun onPageSelected(position: Int) {
+                    super.onPageSelected(position)
+                    updateHeroFavoriteButtonIcon(binding)
+                }
+            })
         }
+
+        AnimUtils.attachPressBounce(binding.btnWatchFeatured)
+        AnimUtils.attachPressBounce(binding.btnHeroFavorite)
 
         loadRecentHistorySection(binding)
 
+        // Ki tadrak 3la Continue Watching wella el sahm > takhroj page Watch History
+        binding.recentHeaderRow.setOnClickListener {
+            showWatchHistoryFullDialog()
+        }
         binding.btnClearHistory.setOnClickListener {
-            SessionManager.clearAllWatchHistory(requireContext())
-            loadRecentHistorySection(binding)
+            showWatchHistoryFullDialog()
         }
 
         binding.btnHomeSearch.setOnClickListener {
@@ -132,26 +146,24 @@ class HomeFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             val sections = OttRepository.fetchHomeSections()
-
             heroItems = sections.heroItems
+
             if (heroItems.isNotEmpty()) {
                 binding.heroViewPager.adapter = HeroBannerAdapter(heroItems) { vod ->
                     openVodDetail(vod)
                 }
+                updateHeroFavoriteButtonIcon(binding)
                 startHeroAutoSlider(binding)
             }
 
-            // 1. القسم الأول: Trending Today
             binding.rvHomeChannels.adapter = VodGridAdapter(sections.trendingToday) { vod ->
                 openVodDetail(vod)
             }
 
-            // 2. القسم الثاني: Popular Movies
             binding.rvHomeSeries.adapter = VodGridAdapter(sections.popularMovies) { vod ->
                 openVodDetail(vod)
             }
 
-            // 3. باقي الأقسام بالترتيب المطلوب بالضبط
             extraSectionsContainer?.removeAllViews()
             addHomeRowSection("Popular TV Shows", sections.popularTvShows, true, "")
             addHomeRowSection("Top Rated Movies", sections.topRatedMovies, false, "TOP_MOVIE")
@@ -176,11 +188,19 @@ class HomeFragment : Fragment() {
                 val currentIdx = binding.heroViewPager.currentItem.coerceIn(0, heroItems.lastIndex)
                 val vod = heroItems[currentIdx]
                 OttRepository.toggleFavorite(vod.id, requireContext())
-                val isFav = OttRepository.isChannelFavorite(vod.id)
-                binding.btnHeroFavorite.text = if (isFav) "♥" else "♡"
-                binding.btnHeroFavorite.setTextColor(if (isFav) Color.parseColor("#E50914") else Color.WHITE)
+                updateHeroFavoriteButtonIcon(binding)
             }
         }
+    }
+
+    private fun updateHeroFavoriteButtonIcon(binding: FragmentHomeBinding) {
+        if (heroItems.isEmpty()) return
+        val currentIdx = binding.heroViewPager.currentItem.coerceIn(0, heroItems.lastIndex)
+        val vod = heroItems[currentIdx]
+        val isFav = OttRepository.isChannelFavorite(vod.id)
+        binding.btnHeroFavorite.setImageResource(
+            if (isFav) R.drawable.ic_heart_filled else R.drawable.ic_heart_outline
+        )
     }
 
     private fun addHomeRowSection(title: String, items: List<VodItem>, isSeries: Boolean, filterCode: String) {
@@ -188,31 +208,30 @@ class HomeFragment : Fragment() {
         val ctx = requireContext()
         val d = ctx.resources.displayMetrics.density
         val container = extraSectionsContainer ?: return
+        val mediumFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
 
         val headerRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding((16 * d).toInt(), (18 * d).toInt(), (16 * d).toInt(), (8 * d).toInt())
         }
-
         val tvTitle = TextView(ctx).apply {
             text = title
             setTextColor(Color.WHITE)
-            textSize = 18f
-            setTypeface(typeface, Typeface.BOLD)
+            textSize = 18.5f
+            typeface = mediumFont
+            letterSpacing = 0.01f
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-
         val tvSeeAll = TextView(ctx).apply {
             text = "See All"
             setTextColor(Color.parseColor("#E50914"))
             textSize = 13.5f
-            setTypeface(typeface, Typeface.BOLD)
+            typeface = mediumFont
             setOnClickListener {
                 showSeeAllInfiniteDialog(title, isSeries, filterCode)
             }
         }
-
         headerRow.addView(tvTitle)
         headerRow.addView(tvSeeAll)
         container.addView(headerRow)
@@ -231,8 +250,9 @@ class HomeFragment : Fragment() {
         val ctx = requireContext()
         val dialog = Dialog(ctx, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-
         val d = ctx.resources.displayMetrics.density
+        val mediumFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
+
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#08080C"))
@@ -244,23 +264,18 @@ class HomeFragment : Fragment() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding((6 * d).toInt(), 0, (6 * d).toInt(), (12 * d).toInt())
         }
-
-        val btnBack = TextView(ctx).apply {
-            text = "← Back"
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding((12 * d).toInt(), (8 * d).toInt(), (16 * d).toInt(), (8 * d).toInt())
+        val btnBack = ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_back_chevron)
+            setPadding((8 * d).toInt(), (8 * d).toInt(), (12 * d).toInt(), (8 * d).toInt())
+            layoutParams = LinearLayout.LayoutParams((40 * d).toInt(), (40 * d).toInt())
             setOnClickListener { dialog.dismiss() }
         }
-
         val tvHeader = TextView(ctx).apply {
             text = sectionTitle
             setTextColor(Color.WHITE)
-            textSize = 19f
-            setTypeface(typeface, Typeface.BOLD)
+            textSize = 19.5f
+            typeface = mediumFont
         }
-
         topBar.addView(btnBack)
         topBar.addView(tvHeader)
         root.addView(topBar)
@@ -339,6 +354,25 @@ class HomeFragment : Fragment() {
         })
     }
 
+    private fun openHistoryEntryDetail(entry: WatchHistoryEntry) {
+        val vod = VodItem(
+            id = entry.id,
+            title = entry.title,
+            category = if (entry.isSeries) "Series" else "Movie",
+            rating = entry.rating,
+            year = entry.year,
+            posterUrl = entry.posterUrl,
+            backdropUrl = entry.backdropUrl,
+            streamUrls = emptyList(),
+            isSeries = entry.isSeries,
+            savedPositionMs = entry.positionMs,
+            totalDurationMs = entry.durationMs
+        )
+        startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
+            putExtra(ContentDetailActivity.EXTRA_VOD, vod)
+        })
+    }
+
     private fun loadRecentHistorySection(binding: FragmentHomeBinding) {
         val historyList = SessionManager.getWatchHistoryList(requireContext())
         if (historyList.isEmpty()) {
@@ -348,25 +382,265 @@ class HomeFragment : Fragment() {
         }
         binding.recentHeaderRow.visibility = View.VISIBLE
         binding.rvRecentWatched.visibility = View.VISIBLE
+        binding.rvRecentWatched.adapter = RecentLandscapeAdapter(
+            items = historyList,
+            onClick = { entry -> openHistoryEntryDetail(entry) },
+            onRemoveRequest = { entry ->
+                showRemoveWatchHistoryPopup(
+                    titleText = "Remove from Continue Watching?",
+                    messageText = "Remove \"${entry.title}\" from your watch history?",
+                    confirmLabel = "Remove"
+                ) {
+                    SessionManager.deleteWatchHistoryItems(requireContext(), setOf(entry.id))
+                    _binding?.let { loadRecentHistorySection(it) }
+                }
+            }
+        )
+    }
 
-        binding.rvRecentWatched.adapter = RecentLandscapeAdapter(historyList) { entry ->
-            val vod = VodItem(
-                id = entry.id,
-                title = entry.title,
-                category = if (entry.isSeries) "Series" else "Movie",
-                rating = entry.rating,
-                year = entry.year,
-                posterUrl = entry.posterUrl,
-                backdropUrl = entry.backdropUrl,
-                streamUrls = emptyList(),
-                isSeries = entry.isSeries,
-                savedPositionMs = entry.positionMs,
-                totalDurationMs = entry.durationMs
-            )
-            startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
-                putExtra(ContentDetailActivity.EXTRA_VOD, vod)
-            })
+    /**
+     * Popup فخمة وزجاجية كي تقعد ضاغط على فيلم فـ Continue Watching ولا تضغط على العنوان تاعو
+     * فيها أزرار Cancel و Remove شابين
+     */
+    private fun showRemoveWatchHistoryPopup(
+        titleText: String,
+        messageText: String,
+        confirmLabel: String = "Remove",
+        onConfirm: () -> Unit
+    ) {
+        val ctx = requireContext()
+        val d = ctx.resources.displayMetrics.density
+        val dialog = Dialog(ctx)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val mediumFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        val regularFont = Typeface.create("sans-serif", Typeface.NORMAL)
+
+        val card = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 22f * d
+                colors = intArrayOf(Color.parseColor("#F5171923"), Color.parseColor("#FA0E1016"))
+                orientation = GradientDrawable.Orientation.TOP_BOTTOM
+                setStroke((1.1f * d).toInt(), Color.parseColor("#33FFFFFF"))
+            }
+            setPadding((22 * d).toInt(), (22 * d).toInt(), (22 * d).toInt(), (18 * d).toInt())
         }
+
+        val tvTitle = TextView(ctx).apply {
+            text = titleText
+            setTextColor(Color.WHITE)
+            textSize = 17.5f
+            typeface = mediumFont
+        }
+
+        val tvMsg = TextView(ctx).apply {
+            text = messageText
+            setTextColor(Color.parseColor("#A6B0C2"))
+            textSize = 13.5f
+            typeface = regularFont
+            setPadding(0, (8 * d).toInt(), 0, (20 * d).toInt())
+        }
+
+        val btnsRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            weightSum = 2f
+        }
+
+        val btnCancel = TextView(ctx).apply {
+            text = "Cancel"
+            setTextColor(Color.parseColor("#E2E8F0"))
+            textSize = 14.5f
+            typeface = mediumFont
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 14f * d
+                setColor(Color.parseColor("#242836"))
+                setStroke((1 * d).toInt(), Color.parseColor("#2EFFFFFF"))
+            }
+            layoutParams = LinearLayout.LayoutParams(0, (44 * d).toInt(), 1f).apply {
+                marginEnd = (6 * d).toInt()
+            }
+            setOnClickListener { dialog.dismiss() }
+        }
+
+        val btnRemove = TextView(ctx).apply {
+            text = confirmLabel
+            setTextColor(Color.WHITE)
+            textSize = 14.5f
+            typeface = mediumFont
+            gravity = Gravity.CENTER
+            setBackgroundResource(R.drawable.bg_btn_watch_now_luxury)
+            layoutParams = LinearLayout.LayoutParams(0, (44 * d).toInt(), 1f).apply {
+                marginStart = (6 * d).toInt()
+            }
+            setOnClickListener {
+                dialog.dismiss()
+                onConfirm()
+            }
+        }
+
+        btnsRow.addView(btnCancel)
+        btnsRow.addView(btnRemove)
+        card.addView(tvTitle)
+        card.addView(tvMsg)
+        card.addView(btnsRow)
+
+        dialog.setContentView(card)
+        dialog.show()
+        val widthPx = (ctx.resources.displayMetrics.widthPixels * 0.86).toInt()
+        dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    /**
+     * صفحة Watch History الكاملة كي تضغط على Continue Watching (مطابقة 100% لـ image_dbd8c1.jpg)
+     */
+    private fun showWatchHistoryFullDialog() {
+        val ctx = requireContext()
+        val dialog = Dialog(ctx, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val d = ctx.resources.displayMetrics.density
+        val mediumFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
+
+        var isSelectionMode = false
+        val selectedIds = mutableSetOf<String>()
+        val itemsList = SessionManager.getWatchHistoryList(ctx).toMutableList()
+
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#050508"))
+            setPadding((12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt(), 0)
+        }
+
+        val topBar = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding((4 * d).toInt(), (4 * d).toInt(), (4 * d).toInt(), (16 * d).toInt())
+        }
+
+        val btnBack = ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_back_chevron)
+            setPadding((8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt())
+            layoutParams = LinearLayout.LayoutParams((38 * d).toInt(), (38 * d).toInt())
+            setOnClickListener { dialog.dismiss() }
+        }
+
+        val tvHeaderTitle = TextView(ctx).apply {
+            text = "Watch History"
+            setTextColor(Color.WHITE)
+            textSize = 20.5f
+            typeface = mediumFont
+            setPadding((8 * d).toInt(), 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val btnSelectMode = ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_edit_select)
+            setPadding((8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt())
+            layoutParams = LinearLayout.LayoutParams((38 * d).toInt(), (38 * d).toInt()).apply {
+                marginEnd = (6 * d).toInt()
+            }
+        }
+
+        val btnTrashAction = ImageView(ctx).apply {
+            setImageResource(R.drawable.ic_trash_bin)
+            setPadding((8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt())
+            layoutParams = LinearLayout.LayoutParams((38 * d).toInt(), (38 * d).toInt())
+        }
+
+        topBar.addView(btnBack)
+        topBar.addView(tvHeaderTitle)
+        topBar.addView(btnSelectMode)
+        topBar.addView(btnTrashAction)
+        root.addView(topBar)
+
+        val rvGrid = RecyclerView(ctx).apply {
+            layoutManager = GridLayoutManager(ctx, 2)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        }
+        root.addView(rvGrid)
+
+        fun refreshGrid() {
+            rvGrid.adapter = RecentLandscapeAdapter(
+                items = itemsList,
+                isGridMode = true,
+                isSelectionMode = isSelectionMode,
+                selectedIds = selectedIds,
+                onClick = { entry ->
+                    if (isSelectionMode) {
+                        if (selectedIds.contains(entry.id)) selectedIds.remove(entry.id)
+                        else selectedIds.add(entry.id)
+                        tvHeaderTitle.text = if (selectedIds.isEmpty()) "Select Items" else "Selected (${selectedIds.size})"
+                        refreshGrid()
+                    } else {
+                        dialog.dismiss()
+                        openHistoryEntryDetail(entry)
+                    }
+                },
+                onRemoveRequest = { entry ->
+                    showRemoveWatchHistoryPopup(
+                        titleText = "Remove from Watch History?",
+                        messageText = "Remove \"${entry.title}\" from your history?",
+                        confirmLabel = "Remove"
+                    ) {
+                        SessionManager.deleteWatchHistoryItems(ctx, setOf(entry.id))
+                        itemsList.removeAll { it.id == entry.id }
+                        selectedIds.remove(entry.id)
+                        _binding?.let { loadRecentHistorySection(it) }
+                        if (itemsList.isEmpty()) dialog.dismiss() else refreshGrid()
+                    }
+                }
+            )
+        }
+
+        btnSelectMode.setOnClickListener {
+            isSelectionMode = !isSelectionMode
+            selectedIds.clear()
+            btnSelectMode.setColorFilter(
+                if (isSelectionMode) Color.parseColor("#FF1E27") else Color.WHITE
+            )
+            tvHeaderTitle.text = if (isSelectionMode) "Select Items" else "Watch History"
+            refreshGrid()
+        }
+
+        btnTrashAction.setOnClickListener {
+            if (isSelectionMode && selectedIds.isNotEmpty()) {
+                val count = selectedIds.size
+                showRemoveWatchHistoryPopup(
+                    titleText = "Remove $count Selected?",
+                    messageText = "Do you want to remove the selected items from Watch History?",
+                    confirmLabel = "Remove ($count)"
+                ) {
+                    SessionManager.deleteWatchHistoryItems(ctx, selectedIds.toSet())
+                    itemsList.removeAll { selectedIds.contains(it.id) }
+                    selectedIds.clear()
+                    isSelectionMode = false
+                    btnSelectMode.setColorFilter(Color.WHITE)
+                    tvHeaderTitle.text = "Watch History"
+                    _binding?.let { loadRecentHistorySection(it) }
+                    if (itemsList.isEmpty()) dialog.dismiss() else refreshGrid()
+                }
+            } else {
+                showRemoveWatchHistoryPopup(
+                    titleText = "Clear Watch History?",
+                    messageText = "Are you sure you want to clear all movies and series from your Watch History?",
+                    confirmLabel = "Clear All"
+                ) {
+                    SessionManager.clearAllWatchHistory(ctx)
+                    itemsList.clear()
+                    _binding?.let { loadRecentHistorySection(it) }
+                    dialog.dismiss()
+                }
+            }
+        }
+
+        refreshGrid()
+        dialog.setContentView(root)
+        dialog.show()
     }
 
     private fun showFullTmdbSearchDialog() {
@@ -376,7 +650,7 @@ class HomeFragment : Fragment() {
             setPadding(40, 30, 40, 30)
         }
         AlertDialog.Builder(ctx)
-            .setTitle("🔍 Global Movie & Series Search")
+            .setTitle("Global Movie & Series Search")
             .setView(et)
             .setPositiveButton("Search") { _, _ ->
                 val q = et.text.toString().trim()
@@ -384,7 +658,7 @@ class HomeFragment : Fragment() {
                     viewLifecycleOwner.lifecycleScope.launch {
                         val results = OttRepository.searchTmdbCatalog(q)
                         if (results.isNotEmpty()) {
-                            val names = results.map { "${it.title} (${it.year}) ★ ${it.rating}" }.toTypedArray()
+                            val names = results.map { "${it.title} (${it.year})  ★ ${it.rating}" }.toTypedArray()
                             AlertDialog.Builder(ctx)
                                 .setTitle("Results for: $q")
                                 .setItems(names) { _, which ->
@@ -403,7 +677,10 @@ class HomeFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        _binding?.let { loadRecentHistorySection(it) }
+        _binding?.let {
+            loadRecentHistorySection(it)
+            updateHeroFavoriteButtonIcon(it)
+        }
     }
 
     override fun onDestroyView() {
@@ -415,17 +692,22 @@ class HomeFragment : Fragment() {
 }
 
 /**
- * بطاقات Recent الأفقية (Landscape 16:9) مع شريط التقدم الأحمر في الأسفل والدقيقة التي توقف عندها المشاهد
+ * Continue Watching / Watch History Adapter (Landscape 16:9 kima image_dbd5dd.jpg & image_dbd8c1.jpg)
  */
 class RecentLandscapeAdapter(
     private val items: List<WatchHistoryEntry>,
-    private val onClick: (WatchHistoryEntry) -> Unit
+    private val isGridMode: Boolean = false,
+    private val isSelectionMode: Boolean = false,
+    private val selectedIds: Set<String> = emptySet(),
+    private val onClick: (WatchHistoryEntry) -> Unit,
+    private val onRemoveRequest: (WatchHistoryEntry) -> Unit = {}
 ) : RecyclerView.Adapter<RecentLandscapeAdapter.VH>() {
 
     class VH(
         val root: LinearLayout,
+        val cardView: CardView,
         val ivThumb: ImageView,
-        val tvResumeBadge: TextView,
+        val selectBadge: TextView,
         val progressFillView: View,
         val tvTitle: TextView
     ) : RecyclerView.ViewHolder(root)
@@ -433,18 +715,28 @@ class RecentLandscapeAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val ctx = parent.context
         val d = ctx.resources.displayMetrics.density
-        val cardWidthPx = (168 * d).toInt()
-        val cardHeightPx = (96 * d).toInt()
+        val screenW = ctx.resources.displayMetrics.widthPixels
+        val cardWidthPx = if (isGridMode) {
+            (screenW - (38 * d).toInt()) / 2
+        } else {
+            (172 * d).toInt()
+        }
+        val cardHeightPx = (cardWidthPx * 0.56f).toInt()
+        val mediumFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
 
         val wrap = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = ViewGroup.MarginLayoutParams(cardWidthPx, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = (10 * d).toInt()
+                if (isGridMode) {
+                    setMargins((5 * d).toInt(), (4 * d).toInt(), (5 * d).toInt(), (14 * d).toInt())
+                } else {
+                    marginEnd = (12 * d).toInt()
+                }
             }
         }
 
         val card = CardView(ctx).apply {
-            radius = 12f * d
+            radius = 14f * d
             cardElevation = 0f
             setCardBackgroundColor(Color.parseColor("#14161E"))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardHeightPx)
@@ -459,101 +751,118 @@ class RecentLandscapeAdapter(
             scaleType = ImageView.ScaleType.CENTER_CROP
         }
 
-        // شارة الدقيقة التي توقف عندها المستخدم (مثلاً ▶ 56m)
-        val tvBadge = TextView(ctx).apply {
+        val selBadge = TextView(ctx).apply {
+            text = "✓"
             setTextColor(Color.WHITE)
-            textSize = 10.5f
-            setTypeface(typeface, Typeface.BOLD)
-            setBackgroundColor(Color.parseColor("#CC08080C"))
-            setPadding((7 * d).toInt(), (3 * d).toInt(), (7 * d).toInt(), (3 * d).toInt())
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.START
-            ).apply {
-                setMargins((6 * d).toInt(), 0, 0, (8 * d).toInt())
+            textSize = 12f
+            typeface = mediumFont
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams((24 * d).toInt(), (24 * d).toInt(), Gravity.TOP or Gravity.END).apply {
+                setMargins((8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt())
             }
         }
 
-        // الخلفية الرمادية لشريط التقدم أسفل البطاقة
         val progressTrack = FrameLayout(ctx).apply {
-            setBackgroundColor(Color.parseColor("#66FFFFFF"))
+            setBackgroundColor(Color.parseColor("#44FFFFFF"))
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                (4 * d).toInt(),
+                (3.5f * d).toInt(),
                 Gravity.BOTTOM
             )
         }
 
-        // الخط الأحمر الذي يوضح مقدار التقدم في الفيلم
         val progressFill = View(ctx).apply {
             setBackgroundColor(Color.parseColor("#E50914"))
             layoutParams = FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START)
         }
-        progressTrack.addView(progressFill)
 
+        progressTrack.addView(progressFill)
         frame.addView(iv)
-        frame.addView(tvBadge)
+        frame.addView(selBadge)
         frame.addView(progressTrack)
         card.addView(frame)
 
         val tv = TextView(ctx).apply {
             setTextColor(Color.WHITE)
-            textSize = 12.5f
-            setTypeface(typeface, Typeface.BOLD)
+            textSize = 13.5f
+            typeface = mediumFont
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            setPadding((4 * d).toInt(), (6 * d).toInt(), (4 * d).toInt(), 0)
+            setPadding((4 * d).toInt(), (7 * d).toInt(), (4 * d).toInt(), (2 * d).toInt())
         }
 
         wrap.addView(card)
         wrap.addView(tv)
-        return VH(wrap, iv, tvBadge, progressFill, tv)
+        return VH(wrap, card, iv, selBadge, progressFill, tv)
     }
 
     override fun getItemCount(): Int = items.size
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = items[position]
-        val d = holder.itemView.context.resources.displayMetrics.density
-        val cardWidthPx = (168 * d).toInt()
+        val ctx = holder.itemView.context
+        val d = ctx.resources.displayMetrics.density
+        val screenW = ctx.resources.displayMetrics.widthPixels
+        val cardWidthPx = if (isGridMode) {
+            (screenW - (38 * d).toInt()) / 2
+        } else {
+            (172 * d).toInt()
+        }
 
         holder.tvTitle.text = item.title
         val thumbUrl = item.backdropUrl.ifEmpty { item.posterUrl }
         if (thumbUrl.isNotEmpty()) {
-            Glide.with(holder.itemView.context).load(thumbUrl).centerCrop().into(holder.ivThumb)
+            Glide.with(ctx).load(thumbUrl).centerCrop().into(holder.ivThumb)
         }
 
         val posMs = item.positionMs
         val durMs = item.durationMs
-        if (posMs > 5000L && durMs > 10000L) {
-            val ratio = (posMs.toFloat() / durMs.toFloat()).coerceIn(0.06f, 1.0f)
-            holder.progressFillView.layoutParams = FrameLayout.LayoutParams(
-                (cardWidthPx * ratio).toInt(),
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                Gravity.START
-            )
-            val minsWatched = (posMs / 60000L).toInt()
-            val secsWatched = ((posMs % 60000L) / 1000L).toInt()
-            holder.tvResumeBadge.visibility = View.VISIBLE
-            holder.tvResumeBadge.text = if (minsWatched > 0) {
-                "▶ ${minsWatched}m ${secsWatched}s"
-            } else {
-                "▶ ${secsWatched}s"
-            }
+        val ratio = if (posMs > 5000L && durMs > 10000L) {
+            (posMs.toFloat() / durMs.toFloat()).coerceIn(0.12f, 1.0f)
         } else {
-            holder.progressFillView.layoutParams = FrameLayout.LayoutParams(
-                (cardWidthPx * 0.08f).toInt(),
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                Gravity.START
-            )
-            holder.tvResumeBadge.visibility = View.GONE
+            0.28f
+        }
+        holder.progressFillView.layoutParams = FrameLayout.LayoutParams(
+            (cardWidthPx * ratio).toInt(),
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            Gravity.START
+        )
+
+        if (isSelectionMode) {
+            val isSelected = selectedIds.contains(item.id)
+            holder.selectBadge.visibility = View.VISIBLE
+            holder.selectBadge.text = if (isSelected) "✓" else ""
+            holder.selectBadge.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(if (isSelected) Color.parseColor("#E50914") else Color.parseColor("#880E1017"))
+                setStroke((1.5f * d).toInt(), Color.WHITE)
+            }
+            holder.ivThumb.alpha = if (isSelected) 0.72f else 1.0f
+        } else {
+            holder.selectBadge.visibility = View.GONE
+            holder.ivThumb.alpha = 1.0f
         }
 
-        holder.root.setOnClickListener { onClick(item) }
+        holder.cardView.setOnClickListener { onClick(item) }
+        holder.cardView.setOnLongClickListener {
+            onRemoveRequest(item)
+            true
+        }
+        // Ki tadrak 3la el 3onwan ta7t el card takhroj popup ta3 Remove
+        holder.tvTitle.setOnClickListener {
+            if (isSelectionMode) onClick(item) else onRemoveRequest(item)
+        }
+        holder.tvTitle.setOnLongClickListener {
+            onRemoveRequest(item)
+            true
+        }
     }
 }
 
+/**
+ * Hero Banner Adapter (kima image_dc2b97.jpg: Cinematic Title + Genres ta7tou + Smooth Fade)
+ */
 class HeroBannerAdapter(
     private val items: List<VodItem>,
     private val onClick: (VodItem) -> Unit
@@ -564,12 +873,16 @@ class HeroBannerAdapter(
         val ivHeroPoster: ImageView,
         val tvHeroRating: TextView,
         val tvHeroYear: TextView,
-        val tvHeroTitle: TextView
+        val tvHeroTitle: TextView,
+        val tvHeroGenres: TextView
     ) : RecyclerView.ViewHolder(rootCard)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val ctx = parent.context
         val density = ctx.resources.displayMetrics.density
+        val titleFont = Typeface.create("sans-serif-black", Typeface.BOLD)
+        val mediumFont = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        val pillFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
 
         val card = CardView(ctx).apply {
             layoutParams = ViewGroup.MarginLayoutParams(
@@ -579,9 +892,9 @@ class HeroBannerAdapter(
                 val marginH = (6 * density).toInt()
                 setMargins(marginH, 0, marginH, 0)
             }
-            radius = 20f * density
-            cardElevation = 8f * density
-            setCardBackgroundColor(Color.parseColor("#12131A"))
+            radius = 22f * density
+            cardElevation = 10f * density
+            setCardBackgroundColor(Color.parseColor("#101218"))
         }
 
         val container = FrameLayout(ctx).apply {
@@ -599,13 +912,22 @@ class HeroBannerAdapter(
             scaleType = ImageView.ScaleType.CENTER_CROP
         }
 
+        // Smooth Faded Gradient (bach ma ybanouch 7واف مربعة قاطعة فـ الـ Cover)
         val bottomOverlay = View(ctx).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                (130 * density).toInt(),
+                (195 * density).toInt(),
                 Gravity.BOTTOM
             )
-            setBackgroundColor(Color.parseColor("#CC08080C"))
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(
+                    Color.parseColor("#0008080C"),
+                    Color.parseColor("#7508080C"),
+                    Color.parseColor("#D808080C"),
+                    Color.parseColor("#FA08080C")
+                )
+            )
         }
 
         val tvRating = TextView(ctx).apply {
@@ -617,13 +939,15 @@ class HeroBannerAdapter(
                 val m = (14 * density).toInt()
                 setMargins(m, m, m, m)
             }
-            setBackgroundResource(R.drawable.bg_search_box_dark)
+            setBackgroundResource(R.drawable.bg_rating_pill_dark)
+            setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_star_gold, 0, 0, 0)
+            compoundDrawablePadding = (4 * density).toInt()
             gravity = Gravity.CENTER
             val padH = (10 * density).toInt()
             setPadding(padH, 0, padH, 0)
-            setTextColor(Color.parseColor("#FFC107"))
+            setTextColor(Color.parseColor("#FFD700"))
             textSize = 12.5f
-            setTypeface(typeface, Typeface.BOLD)
+            typeface = pillFont
         }
 
         val tvYear = TextView(ctx).apply {
@@ -635,51 +959,87 @@ class HeroBannerAdapter(
                 val m = (14 * density).toInt()
                 setMargins(m, m, m, m)
             }
-            setBackgroundResource(R.drawable.bg_search_box_dark)
+            setBackgroundResource(R.drawable.bg_rating_pill_dark)
             gravity = Gravity.CENTER
             val padH = (10 * density).toInt()
             setPadding(padH, 0, padH, 0)
             setTextColor(Color.WHITE)
             textSize = 12.5f
-            setTypeface(typeface, Typeface.BOLD)
+            typeface = pillFont
         }
 
-        val tvTitle = TextView(ctx).apply {
+        val bottomMetaColumn = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM
             ).apply {
-                val mH = (16 * density).toInt()
-                val mB = (18 * density).toInt()
-                setMargins(mH, 0, mH, mB)
+                setMargins((16 * density).toInt(), 0, (16 * density).toInt(), (16 * density).toInt())
+            }
+        }
+
+        val tvTitle = TextView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            ellipsize = TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER
+            maxLines = 2
+            letterSpacing = 0.03f
+            setShadowLayer(12f, 0f, 4f, Color.BLACK)
+            setTextColor(Color.WHITE)
+            textSize = 25f
+            typeface = titleFont
+        }
+
+        val tvGenres = TextView(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = (5 * density).toInt()
             }
             ellipsize = TextUtils.TruncateAt.END
             gravity = Gravity.CENTER
             maxLines = 1
-            setShadowLayer(8f, 0f, 3f, Color.BLACK)
-            setTextColor(Color.WHITE)
-            textSize = 21f
-            setTypeface(typeface, Typeface.BOLD)
+            letterSpacing = 0.02f
+            setShadowLayer(8f, 0f, 2f, Color.BLACK)
+            setTextColor(Color.parseColor("#E2E8F0"))
+            textSize = 12.5f
+            typeface = mediumFont
         }
+
+        bottomMetaColumn.addView(tvTitle)
+        bottomMetaColumn.addView(tvGenres)
 
         container.addView(ivPoster)
         container.addView(bottomOverlay)
         container.addView(tvRating)
         container.addView(tvYear)
-        container.addView(tvTitle)
+        container.addView(bottomMetaColumn)
         card.addView(container)
 
-        return VH(card, ivPoster, tvRating, tvYear, tvTitle)
+        return VH(card, ivPoster, tvRating, tvYear, tvTitle, tvGenres)
     }
 
     override fun getItemCount(): Int = items.size
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = items[position]
-        holder.tvHeroTitle.text = item.title
-        holder.tvHeroRating.text = "★ ${item.rating}"
+        holder.tvHeroTitle.text = item.title.uppercase(Locale.getDefault())
+        holder.tvHeroRating.text = item.rating
         holder.tvHeroYear.text = item.year
+
+        val rawCat = item.category.ifEmpty { if (item.isSeries) "Drama  •  Series" else "Action  •  Adventure" }
+        holder.tvHeroGenres.text = if (rawCat.contains("•")) {
+            rawCat
+        } else {
+            if (item.isSeries) "$rawCat  •  Drama  •  Mystery" else "$rawCat  •  Adventure  •  Action"
+        }
+
         if (item.posterUrl.isNotEmpty()) {
             Glide.with(holder.itemView.context)
                 .load(item.posterUrl)
@@ -709,10 +1069,10 @@ class VodFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         val binding = FragmentVodGridBinding.bind(view)
         val isSeries = arguments?.getBoolean("IS_SERIES") ?: false
-
         val gridLayoutManager = GridLayoutManager(requireContext(), 3)
         binding.rvVodGrid.layoutManager = gridLayoutManager
-        binding.tvSectionHeader.text = if (isSeries) "TV Series" else "Movies"
+        binding.tvSectionHeader.typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        binding.tvSectionHeader.text = if (isSeries) "TV Shows" else "Movies"
 
         val gridAdapter = VodGridAdapter(catalogList) { vod ->
             val savedPos = SessionManager.getSavedPositionForVod(requireContext(), vod.id)
@@ -760,7 +1120,6 @@ class VodGridAdapter(
     private val items: List<VodItem>,
     private val onClick: (VodItem) -> Unit
 ) : RecyclerView.Adapter<VodGridAdapter.VH>() {
-
     class VH(val binding: ItemVodCardBinding) : RecyclerView.ViewHolder(binding.root)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
@@ -771,7 +1130,7 @@ class VodGridAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = items[position]
         holder.binding.tvVodTitle.text = item.title
-        holder.binding.tvVodMeta.text = "★ ${item.rating}"
+        holder.binding.tvVodMeta.text = item.rating
         if (item.posterUrl.isNotEmpty()) {
             Glide.with(holder.itemView.context).load(item.posterUrl).centerCrop().into(holder.binding.ivPoster)
         }
@@ -780,7 +1139,6 @@ class VodGridAdapter(
 }
 
 class ScheduleFragment : Fragment() {
-
     private var allMatches: List<MatchFixture> = emptyList()
     private var selectedDayTab: String = "TODAY"
     private var selectedLeague: String = "ALL"
@@ -793,7 +1151,6 @@ class ScheduleFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         val binding = FragmentMatchCenterBinding.bind(view)
-
         binding.rvMatchesList.layoutManager = LinearLayoutManager(requireContext())
         binding.rvLeagueFilters.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, true)
 
@@ -804,7 +1161,6 @@ class ScheduleFragment : Fragment() {
             binding.tabLiveNow to "LIVE",
             binding.tabFavMatches to "FAV"
         )
-
         dayTabs.forEach { (tv, code) ->
             tv.setOnClickListener {
                 selectedDayTab = code
@@ -829,11 +1185,9 @@ class ScheduleFragment : Fragment() {
             allMatches = OttRepository.fetchMatchesFromCloudflare()
             val timeNow = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
             binding.tvLastSync.text = "Updated: $timeNow"
-
             val distinctLeagues = allMatches.map { it.league }.distinct()
             val leagueCategories = mutableListOf(Category("ALL", "All (${allMatches.size})"))
             distinctLeagues.forEach { l -> leagueCategories.add(Category(l, l)) }
-
             binding.rvLeagueFilters.adapter = CategoriesAdapter(leagueCategories, selectedLeague) { cat ->
                 selectedLeague = cat.id
                 applyFilters(binding)
@@ -862,7 +1216,7 @@ class ScheduleFragment : Fragment() {
                 })
             },
             onCardDetailsClick = { match ->
-                val options = arrayOf("▶ Watch Match", "👥 Watch Together")
+                val options = arrayOf("Watch Match", "Watch Together")
                 AlertDialog.Builder(requireContext())
                     .setTitle("${match.homeTeam} VS ${match.awayTeam}")
                     .setItems(options) { _, which ->
@@ -901,7 +1255,7 @@ class ScheduleFragment : Fragment() {
                 applyFilters(binding)
             },
             onNotifyClick = {
-                Toast.makeText(requireContext(), "🔔 Reminder set!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(requireContext(), "Reminder set!", Toast.LENGTH_SHORT).show()
             }
         )
     }
@@ -914,7 +1268,6 @@ class MatchesAdapter(
     private val onFavClick: (MatchFixture) -> Unit,
     private val onNotifyClick: (MatchFixture) -> Unit
 ) : RecyclerView.Adapter<MatchesAdapter.VH>() {
-
     class VH(val binding: ItemMatchBinding) : RecyclerView.ViewHolder(binding.root)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
@@ -939,12 +1292,11 @@ class MatchesAdapter(
 }
 
 class SettingsFragment : Fragment() {
-
     private val micPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted && isAdded) {
-            Toast.makeText(requireContext(), "🎙️ Microphone Ready!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "Microphone Ready!", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -957,7 +1309,6 @@ class SettingsFragment : Fragment() {
         val binding = FragmentSettingsBinding.bind(view)
         val ctx = requireContext()
         val devId = SessionManager.getDeviceId(ctx)
-
         binding.etSettingsUserName.setText(SessionManager.getUserName(ctx))
         binding.tvDeviceId.text = "Device ID: $devId | Status: ${SessionManager.getExpireDate(ctx)}"
 
@@ -1002,7 +1353,7 @@ class SettingsFragment : Fragment() {
 
         binding.btnCheckMicPermission.setOnClickListener {
             if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                Toast.makeText(ctx, "🎙️ Microphone Ready!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(ctx, "Microphone Ready!", Toast.LENGTH_SHORT).show()
             } else {
                 micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
