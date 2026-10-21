@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/categoryRoot"
+    android:layout_width="match_parent"
+    android:layout_height="52dp"
+    android:layout_marginVertical="2dp"
+    android:gravity="center_vertical"
+    android:layoutDirection="ltr"
+    android:orientation="horizontal"
+    android:paddingEnd="8dp">
+
+    <View
+        android:id="@+id/selectedIndicatorBar"
+        android:layout_width="3dp"
+        android:layout_height="24dp"
+        android:layout_marginStart="6dp"
+        android:background="#E50914"
+        android:visibility="invisible" />
+
+    <ImageView
+        android:id="@+id/ivCategoryIcon"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:layout_marginStart="8dp"
+        android:background="@drawable/bg_search_box_dark"
+        android:scaleType="centerCrop"
+        android:src="@drawable/ic_header_packages" />
+
+    <TextView
+        android:id="@+id/tvCategoryName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="beIN SPORTS"
+        android:textColor="#F1F5F9"
+        android:textSize="14sp" />
+
+</LinearLayout>

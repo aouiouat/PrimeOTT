@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A0A0F"
+    android:layoutDirection="ltr">
+
+    <!-- المحتوى يملأ الشاشة بالكامل من الحافة للحافة (Edge-to-Edge) بدون أي TopBar -->
+    <FrameLayout
+        android:id="@+id/fragmentContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- الكبسولة السفلية العائمة (Floating Pill Bar) بأيقونات Vector فقط بدون نصوص كما في الصورة 2 -->
+    <LinearLayout
+        android:id="@+id/floatingBottomBar"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_gravity="bottom"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="12dp"
+        android:background="@drawable/bg_floating_nav_pill"
+        android:elevation="20dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="10dp"
+        android:weightSum="6">
+
+        <FrameLayout
+            android:id="@+id/navTabHome"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1">
+            <ImageView
+                android:id="@+id/ivNavHome"
+                android:layout_width="25dp"
+                android:layout_height="25dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_nav_home"
+                android:tint="#C4C7CE" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/navTabMovies"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1">
+            <ImageView
+                android:id="@+id/ivNavMovies"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_nav_movies"
+                android:tint="#C4C7CE" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/navTabSeries"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1">
+            <ImageView
+                android:id="@+id/ivNavSeries"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_nav_series"
+                android:tint="#C4C7CE" />
+        </FrameLayout>
+
+        <!-- زر التلفاز الأحمر الدائري في المنتصف -->
+        <FrameLayout
+            android:id="@+id/navTabLive"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1">
+            <FrameLayout
+                android:id="@+id/liveTvCircleBg"
+                android:layout_width="50dp"
+                android:layout_height="50dp"
+                android:layout_gravity="center"
+                android:background="@drawable/bg_nav_tv_active_circle">
+                <ImageView
+                    android:id="@+id/ivNavLive"
+                    android:layout_width="26dp"
+                    android:layout_height="26dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_nav_live_tv" />
+            </FrameLayout>
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/navTabMatches"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1">
+            <ImageView
+                android:id="@+id/ivNavMatches"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_nav_events"
+                android:tint="#C4C7CE" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/navTabWatch"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1">
+            <ImageView
+                android:id="@+id/ivNavProfile"
+                android:layout_width="25dp"
+                android:layout_height="25dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_nav_profile"
+                android:tint="#C4C7CE" />
+        </FrameLayout>
+
+    </LinearLayout>
+
+</FrameLayout>

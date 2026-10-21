@@ -1,0 +1,401 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/liveTvRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000"
+    android:layoutDirection="ltr"
+    android:orientation="vertical">
+
+    <!-- 1. مشغل البث المباشر العلوي الصافي (Clean Inline Player) -->
+    <FrameLayout
+        android:id="@+id/inlinePlayerContainer"
+        android:layout_width="match_parent"
+        android:layout_height="235dp"
+        android:background="#000000">
+
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/inlinePlayerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:resize_mode="fit"
+            app:show_buffering="when_playing"
+            app:surface_type="texture_view"
+            app:use_controller="false" />
+
+        <!-- طبقة التحكم: مخفية افتراضياً وتظهر/تختفي عند لمس الفيديو (Tap Toggle) -->
+        <FrameLayout
+            android:id="@+id/inlineControlsOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#4D000000"
+            android:visibility="gone">
+
+            <!-- الشريط العلوي داخل الفيديو (أيقونة القائمة في الشاشة الكاملة + أيقونة PiP/WatchParty يمين) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="14dp"
+                android:paddingTop="12dp">
+
+                <!-- تظهر في الشاشة الكاملة أعلى اليسار كما في الصورة 1 -->
+                <TextView
+                    android:id="@+id/btnTopLeftMenu"
+                    android:layout_width="36dp"
+                    android:layout_height="32dp"
+                    android:gravity="center"
+                    android:text="☰"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/tvInlineChannelTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text=""
+                    android:textColor="#FFFFFF"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:visibility="invisible" />
+
+                <!-- أيقونة PiP / Watch Together أعلى اليمين كما في الصورة 2 -->
+                <TextView
+                    android:id="@+id/btnInlineWatchParty"
+                    android:layout_width="36dp"
+                    android:layout_height="32dp"
+                    android:gravity="center"
+                    android:text="⧉"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- الشريط السفلي الموحد (يتكيف تلقائياً بين الوضع المصغر الصورة 2 والوضع الكامل الصورة 1) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:background="#80000000"
+                android:orientation="vertical"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="10dp">
+
+                <!-- سطر شريط الوقت: ● LIVE 00:01 ───●─────── 00:24 [⛶] -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="●"
+                        android:textColor="#FF1E27"
+                        android:textSize="11sp" />
+
+                    <TextView
+                        android:id="@+id/tvLiveElapsed"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="5dp"
+                        android:text="LIVE   00:01"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <!-- شريط التقدم (Progress Track) -->
+                    <FrameLayout
+                        android:layout_width="0dp"
+                        android:layout_height="18dp"
+                        android:layout_marginHorizontal="10dp"
+                        android:layout_weight="1">
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="2.5dp"
+                            android:layout_gravity="center_vertical"
+                            android:background="#88CBD5E1" />
+
+                        <View
+                            android:layout_width="65dp"
+                            android:layout_height="2.5dp"
+                            android:layout_gravity="center_vertical|start"
+                            android:background="#FF1E27" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center_vertical|start"
+                            android:layout_marginStart="58dp"
+                            android:text="●"
+                            android:textColor="#FF1E27"
+                            android:textSize="15sp" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/tvLiveDuration"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="00:24"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <!-- أيقونة التكبير السريع في الوضع المصغر (الصورة 2) -->
+                    <TextView
+                        android:id="@+id/btnMiniExpand"
+                        android:layout_width="34dp"
+                        android:layout_height="28dp"
+                        android:layout_marginStart="10dp"
+                        android:gravity="center"
+                        android:text="⛶"
+                        android:textColor="#FFFFFF"
+                        android:textSize="18sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <!-- صف الأيقونات الـ 7 الخاص بوضع الشاشة الكاملة فقط (الصورة 1) - مخفي في الوضع المصغر -->
+                <LinearLayout
+                    android:id="@+id/fullBottomActionsRow"
+                    android:layout_width="match_parent"
+                    android:layout_height="38dp"
+                    android:layout_marginTop="10dp"
+                    android:gravity="center"
+                    android:orientation="horizontal"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/btnInlineServers"
+                        android:layout_width="48dp"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="☰"
+                        android:textColor="#FFFFFF"
+                        android:textSize="19sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btnInlineAudio"
+                        android:layout_width="48dp"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="ılılı"
+                        android:textColor="#FFFFFF"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btnInlinePlayPause"
+                        android:layout_width="48dp"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="❚❚"
+                        android:textColor="#FFFFFF"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btnInlineQualityBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="22dp"
+                        android:layout_marginHorizontal="12dp"
+                        android:background="#FFFFFF"
+                        android:gravity="center"
+                        android:paddingHorizontal="7dp"
+                        android:text="HD"
+                        android:textColor="#000000"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btnFullPip"
+                        android:layout_width="48dp"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="⧉"
+                        android:textColor="#FFFFFF"
+                        android:textSize="17sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btnInlineAspect"
+                        android:layout_width="48dp"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="⛶"
+                        android:textColor="#FF1E27"
+                        android:textSize="18sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btnInlineFullscreen"
+                        android:layout_width="48dp"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="⤡"
+                        android:textColor="#FFFFFF"
+                        android:textSize="18sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+            </LinearLayout>
+        </FrameLayout>
+    </FrameLayout>
+
+    <View
+        android:id="@+id/playerDividerLine"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#181920" />
+
+    <!-- 2. النصف السفلي المقسوم: Packages | Channels -->
+    <LinearLayout
+        android:id="@+id/bottomListsContainer"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#050507"
+        android:orientation="horizontal"
+        android:paddingBottom="80dp">
+
+        <!-- العمود الأيسر: Packages -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.42"
+            android:orientation="vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingTop="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:layout_width="18dp"
+                    android:layout_height="18dp"
+                    android:layout_marginEnd="8dp"
+                    android:src="@drawable/ic_header_packages" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Packages"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <EditText
+                android:id="@+id/etSearchPackage"
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/bg_search_box_dark"
+                android:drawableStart="@drawable/abc_ic_search_api_material"
+                android:drawablePadding="6dp"
+                android:drawableTint="#7A7F8A"
+                android:hint="Search Pack..."
+                android:paddingHorizontal="10dp"
+                android:singleLine="true"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#7A7F8A"
+                android:textSize="13sp" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvCategories"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scrollbars="none" />
+        </LinearLayout>
+
+        <!-- الخط الفاصل الرمادي الرفيع -->
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:background="#1A1C23" />
+
+        <!-- العمود الأيمن: Channels -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.58"
+            android:orientation="vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingTop="14dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:layout_width="19dp"
+                    android:layout_height="19dp"
+                    android:layout_marginEnd="8dp"
+                    android:src="@drawable/ic_header_channels" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Channels"
+                    android:textColor="#FFFFFF"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:layout_marginBottom="12dp"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/etSearchChannel"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_search_box_dark"
+                    android:drawableStart="@drawable/abc_ic_search_api_material"
+                    android:drawablePadding="6dp"
+                    android:drawableTint="#7A7F8A"
+                    android:hint="Search Channel..."
+                    android:paddingHorizontal="10dp"
+                    android:singleLine="true"
+                    android:textColor="#FFFFFF"
+                    android:textColorHint="#7A7F8A"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/btnFilterFavorites"
+                    android:layout_width="42dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_search_box_dark"
+                    android:gravity="center"
+                    android:text="♡"
+                    android:textColor="#CBD5E1"
+                    android:textSize="18sp" />
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvChannels"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scrollbars="none" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+</LinearLayout>

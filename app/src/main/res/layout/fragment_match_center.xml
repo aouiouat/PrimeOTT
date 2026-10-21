@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#0B0D13"
+    android:padding="12dp">
+
+    <!-- الشريط العلوي: العنوان + وقت آخر تحديث + زر تحديث -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="10dp">
+
+        <TextView
+            android:id="@+id/btnRefreshMatches"
+            android:layout_width="wrap_content"
+            android:layout_height="34dp"
+            android:background="#1E2433"
+            android:gravity="center"
+            android:paddingHorizontal="12dp"
+            android:text="🔄 تحديث"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvLastSync"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="#94A3B8"
+            android:textSize="11sp"
+            android:text="تحديث تلقائي مباشر" />
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="end"
+            android:text="⚽ مركز المباريات والقنوات الناقلة"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- تبويبات الأيام والحالة: أمس | اليوم | الغد | مباشر 🔴 | المفضلة ⭐ -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:orientation="horizontal"
+        android:background="#141824"
+        android:padding="4dp"
+        android:weightSum="5"
+        android:layout_marginBottom="10dp">
+
+        <TextView
+            android:id="@+id/tabFavMatches"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="⭐ المفضلة"
+            android:textColor="#B3B3B3"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tabLiveNow"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="🔴 مباشر"
+            android:textColor="#FF4757"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tabTomorrow"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="مباريات الغد"
+            android:textColor="#B3B3B3"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tabToday"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="#E50914"
+            android:gravity="center"
+            android:text="مباريات اليوم"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tabYesterday"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="نتائج الأمس"
+            android:textColor="#B3B3B3"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- شريط البحث عن فريق أو بطولة -->
+    <EditText
+        android:id="@+id/etSearchMatch"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:background="#151A26"
+        android:hint="🔍 ابحث عن فريق (ريال مدريد، مولودية الجزائر...) أو بطولة"
+        android:paddingHorizontal="12dp"
+        android:textColor="#FFFFFF"
+        android:textColorHint="#64748B"
+        android:textSize="12sp"
+        android:singleLine="true"
+        android:layout_marginBottom="8dp" />
+
+    <!-- شريط فلترة البطولات أفقياً -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvLeagueFilters"
+        android:layout_width="match_parent"
+        android:layout_height="38dp"
+        android:layout_marginBottom="10dp" />
+
+    <!-- قائمة المباريات -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvMatchesList"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+</LinearLayout>

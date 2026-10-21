@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="6dp"
+    android:background="#151A26"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="10dp">
+
+    <Button
+        android:id="@+id/btnKickParticipant"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:backgroundTint="#EF4444"
+        android:text="🚫 طرد"
+        android:textColor="#FFFFFF"
+        android:textSize="10.5sp"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/btnGrantControl"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:layout_marginStart="6dp"
+        android:backgroundTint="#2563EB"
+        android:text="🎮 منحه التحكم"
+        android:textColor="#FFFFFF"
+        android:textSize="10.5sp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/tvPartMicState"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="8dp"
+        android:text="🔇"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/tvPartName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:gravity="end"
+        android:text="👑 عادل (الأدمن)"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+</LinearLayout>
