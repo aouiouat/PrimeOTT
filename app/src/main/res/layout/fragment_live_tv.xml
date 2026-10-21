@@ -8,7 +8,7 @@
     android:layoutDirection="ltr"
     android:orientation="vertical">
 
-    <!-- 1. حاوية المشغل بتصميم Reezn الكامل -->
+    <!-- 1. حاوية المشغل -->
     <FrameLayout
         android:id="@+id/inlinePlayerContainer"
         android:layout_width="match_parent"
@@ -24,37 +24,39 @@
             app:surface_type="surface_view"
             app:use_controller="false" />
 
-        <!-- دائرة التحميل البيضاء النقية في الوسط مثل Reezn -->
+        <!-- دائرة التحميل في الوسط -->
         <ProgressBar
             android:id="@+id/liveLoadingSpinner"
-            android:layout_width="46dp"
-            android:layout_height="46dp"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
             android:layout_gravity="center"
-            android:indeterminateTint="#FFFFFF"
+            android:indeterminateTint="#E50914"
             android:visibility="gone" />
 
-        <!-- طبقة أزرار التحكم (Reezn Player Controls Overlay) -->
+        <!-- طبقة التحكم (تظهر عند لمس المشغل) -->
         <FrameLayout
             android:id="@+id/inlineControlsOverlay"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="#77000000"
+            android:background="#66000000"
             android:visibility="gone">
 
-            <!-- الشريط العلوي: < Channel Name | 🔒 📺 🎛️ 🗗 [HD] -->
+            <!-- الشريط العلوي: مخفي في المشغل الصغير، ويظهر فقط عند تكبير الشاشة (Fullscreen) -->
             <LinearLayout
+                android:id="@+id/topFullBar"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_gravity="top"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
-                android:paddingHorizontal="14dp"
-                android:paddingTop="12dp">
+                android:paddingHorizontal="16dp"
+                android:paddingTop="14dp"
+                android:visibility="gone">
 
                 <TextView
                     android:id="@+id/btnTopLeftMenu"
-                    android:layout_width="34dp"
-                    android:layout_height="34dp"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
                     android:gravity="center"
                     android:text="❮"
                     android:textColor="#FFFFFF"
@@ -65,57 +67,42 @@
                     android:id="@+id/tvInlineChannelTitle"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
+                    android:layout_marginStart="8dp"
                     android:layout_weight="1"
                     android:ellipsize="end"
                     android:maxLines="1"
-                    android:text="beIN SPORTS 2"
+                    android:text=""
                     android:textColor="#FFFFFF"
-                    android:textSize="15.5sp"
+                    android:textSize="16sp"
                     android:textStyle="bold" />
 
-                <!-- قفل الشاشة 🔒 -->
                 <TextView
                     android:id="@+id/btnLockPlayer"
-                    android:layout_width="36dp"
-                    android:layout_height="32dp"
+                    android:layout_width="38dp"
+                    android:layout_height="34dp"
                     android:gravity="center"
                     android:text="🔓"
                     android:textColor="#FFFFFF"
                     android:textSize="15sp" />
 
-                <!-- مشاركة Watch Together -->
                 <TextView
                     android:id="@+id/btnInlineWatchParty"
-                    android:layout_width="36dp"
-                    android:layout_height="32dp"
+                    android:layout_width="38dp"
+                    android:layout_height="34dp"
                     android:gravity="center"
                     android:text="📺"
                     android:textColor="#FFFFFF"
                     android:textSize="15sp" />
 
-                <!-- أيقونة السيرفرات Preferences -->
                 <TextView
                     android:id="@+id/btnInlineServers"
-                    android:layout_width="36dp"
-                    android:layout_height="32dp"
+                    android:layout_width="38dp"
+                    android:layout_height="34dp"
                     android:gravity="center"
                     android:text="🎛️"
                     android:textColor="#FFFFFF"
                     android:textSize="15sp" />
 
-                <!-- تكبير/تصغير الشاشة -->
-                <TextView
-                    android:id="@+id/btnMiniExpand"
-                    android:layout_width="36dp"
-                    android:layout_height="32dp"
-                    android:gravity="center"
-                    android:text="⛶"
-                    android:textColor="#FFFFFF"
-                    android:textSize="16sp"
-                    android:textStyle="bold" />
-
-                <!-- شارة الجودة المؤطرة [HD] مثل أقصى يمين صورة Reezn -->
                 <TextView
                     android:id="@+id/btnInlineQualityBadge"
                     android:layout_width="wrap_content"
@@ -130,7 +117,7 @@
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <!-- أزرار المنتصف الثلاثة مثل Reezn: القناة السابقة |◀  ||  ▶| القناة التالية -->
+            <!-- أزرار المنتصف: في المشغل الصغير يظهر زر Pause فقط، وفي الشاشة الكاملة يظهر ⏮ ⏸ ⏭ -->
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -145,17 +132,18 @@
                     android:gravity="center"
                     android:text="⏮"
                     android:textColor="#FFFFFF"
-                    android:textSize="22sp" />
+                    android:textSize="22sp"
+                    android:visibility="gone" />
 
                 <TextView
                     android:id="@+id/btnInlinePlayPause"
-                    android:layout_width="68dp"
-                    android:layout_height="68dp"
-                    android:layout_marginHorizontal="26dp"
+                    android:layout_width="64dp"
+                    android:layout_height="64dp"
+                    android:layout_marginHorizontal="24dp"
                     android:gravity="center"
                     android:text="⏸"
                     android:textColor="#FFFFFF"
-                    android:textSize="36sp"
+                    android:textSize="34sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -165,18 +153,21 @@
                     android:gravity="center"
                     android:text="⏭"
                     android:textColor="#FFFFFF"
-                    android:textSize="22sp" />
+                    android:textSize="22sp"
+                    android:visibility="gone" />
             </LinearLayout>
 
-            <!-- الشريط السفلي المطابق لـ Reezn: شارة [Live] الحمراء + الخط + (Subtitle & Audio | Aspect Ratio | My List) -->
+            <!-- الشريط السفلي -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_gravity="bottom"
+                android:background="#80000000"
                 android:orientation="vertical"
-                android:paddingHorizontal="16dp"
-                android:paddingBottom="10dp">
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="10dp">
 
+                <!-- شريط اللايف الأساسي (يظهر في المشغل الصغير والكبير): [Live بالأحمر] + خط اللايف الطويل + أيقونة التكبير [⛶] -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -195,37 +186,75 @@
                         android:textSize="11.5sp"
                         android:textStyle="bold" />
 
+                    <!-- الخط الطويل الخاص بالبث المباشر مع النقطة الحمراء التي توضح موضع البث -->
+                    <FrameLayout
+                        android:id="@+id/liveProgressTrackContainer"
+                        android:layout_width="0dp"
+                        android:layout_height="18dp"
+                        android:layout_marginHorizontal="12dp"
+                        android:layout_weight="1">
+
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="2.5dp"
+                            android:layout_gravity="center_vertical"
+                            android:background="#66FFFFFF" />
+
+                        <View
+                            android:id="@+id/liveRedProgressFill"
+                            android:layout_width="180dp"
+                            android:layout_height="2.5dp"
+                            android:layout_gravity="center_vertical|start"
+                            android:background="#E50914" />
+
+                        <TextView
+                            android:id="@+id/liveRedThumbDot"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center_vertical|start"
+                            android:layout_marginStart="173dp"
+                            android:text="●"
+                            android:textColor="#E50914"
+                            android:textSize="14sp" />
+                    </FrameLayout>
+
                     <TextView
                         android:id="@+id/tvLiveDuration"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:textColor="#CCFFFFFF"
+                        android:text="LIVE"
+                        android:textColor="#FFFFFF"
                         android:textSize="11sp"
+                        android:textStyle="bold"
                         android:visibility="gone" />
+
+                    <!-- أيقونة تكبير وتصغير المشغل ⛶ -->
+                    <TextView
+                        android:id="@+id/btnMiniExpand"
+                        android:layout_width="34dp"
+                        android:layout_height="28dp"
+                        android:gravity="center"
+                        android:text="⛶"
+                        android:textColor="#FFFFFF"
+                        android:textSize="19sp"
+                        android:textStyle="bold" />
                 </LinearLayout>
 
-                <!-- خط البث الرمادي الأنيق تحت كلمة Live مباشرة -->
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="2.5dp"
-                    android:layout_marginTop="7dp"
-                    android:background="#88FFFFFF" />
-
-                <!-- أزرار Reezn الثلاثة أسفل الخط: Subtitle & Audio | Aspect Ratio | My List -->
+                <!-- شريط أزرار الشاشة الكاملة (مخفي في المشغل الصغير، ويظهر فقط عند تكبير المشغل Fullscreen) -->
                 <LinearLayout
                     android:id="@+id/fullBottomActionsRow"
                     android:layout_width="match_parent"
                     android:layout_height="36dp"
-                    android:layout_marginTop="6dp"
+                    android:layout_marginTop="8dp"
                     android:gravity="center"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:visibility="gone">
 
                     <TextView
                         android:id="@+id/btnInlineAudio"
                         android:layout_width="wrap_content"
                         android:layout_height="match_parent"
-                        android:layout_marginHorizontal="12dp"
+                        android:layout_marginHorizontal="14dp"
                         android:gravity="center"
                         android:text="💬  Subtitle &amp; Audio"
                         android:textColor="#FFFFFF"
@@ -236,7 +265,7 @@
                         android:id="@+id/btnInlineAspect"
                         android:layout_width="wrap_content"
                         android:layout_height="match_parent"
-                        android:layout_marginHorizontal="12dp"
+                        android:layout_marginHorizontal="14dp"
                         android:gravity="center"
                         android:text="⛶  Aspect Ratio"
                         android:textColor="#FFFFFF"
@@ -247,7 +276,7 @@
                         android:id="@+id/btnFullPip"
                         android:layout_width="wrap_content"
                         android:layout_height="match_parent"
-                        android:layout_marginHorizontal="12dp"
+                        android:layout_marginHorizontal="14dp"
                         android:gravity="center"
                         android:text="🔖  My List"
                         android:textColor="#FFFFFF"
@@ -259,7 +288,7 @@
                         android:layout_width="36dp"
                         android:layout_height="match_parent"
                         android:gravity="center"
-                        android:text="⛶"
+                        android:text="✕"
                         android:textColor="#FFFFFF"
                         android:textSize="16sp"
                         android:visibility="gone" />

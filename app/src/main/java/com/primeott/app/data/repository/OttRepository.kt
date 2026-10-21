@@ -53,7 +53,6 @@ object OttRepository {
     private const val TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500"
     private const val TMDB_BACKDROP_BASE = "https://image.tmdb.org/t/p/w780"
 
-    // فلتر صارم لضمان جلب الأفلام والمسلسلات الصادرة والمتوفرة فعلياً على سيرفرات المشاهدة والترجمة
     private const val RELEASED_MOVIE_FILTER = "primary_release_date.lte=2025-12-31&with_release_type=4|5|6&vote_count.gte=120"
     private const val RELEASED_TV_FILTER = "first_air_date.lte=2025-12-31&vote_count.gte=60"
 
@@ -61,6 +60,7 @@ object OttRepository {
     private val favoriteMatchIds = mutableSetOf<String>()
     private var cachedCategories = listOf<Category>()
     private var cachedCustomChannels = listOf<Channel>()
+    private val channelCategoryNameMap = HashMap<String, String>()
     private var cachedMovies = listOf<VodItem>()
     private var cachedSeries = listOf<VodItem>()
     private var cachedMatches = listOf<MatchFixture>()
@@ -105,12 +105,7 @@ object OttRepository {
         }
     }
 
-    /**
-     * مصادر الاستخراج الصامتة الحقيقية لكل فيلم أو حلقة عبر TMDB_ID
-     * (تُستخرج منها روابط .m3u8/.mp4 في الخلفية وتشتغل داخل ExoPlayer الخاص بنا فقط)
-     */
     fun buildRealProviderSources(tmdbId: String, isSeries: Boolean, season: Int = 1, episode: Int = 1): List<StreamSource> {
-        // يتم جلب السيرفرات وأسمائها حصرياً من لوحة تحكم Cloudflare (/api/v2/vod-stream)
         return emptyList()
     }
 
@@ -147,7 +142,6 @@ object OttRepository {
             val overview = obj.optString("overview", "")
             val posterUrl = "$TMDB_POSTER_BASE$posterPath"
             val backdropUrl = if (backdropPath.isNotEmpty() && backdropPath != "null") "$TMDB_BACKDROP_BASE$backdropPath" else posterUrl
-            val providerSources = buildRealProviderSources(tmdbId, isTv)
 
             list.add(
                 VodItem(
@@ -157,7 +151,7 @@ object OttRepository {
                     rating = rating,
                     year = year,
                     posterUrl = posterUrl,
-                    streamUrls = providerSources.map { it.url },
+                    streamUrls = emptyList(),
                     isSeries = isTv,
                     description = overview,
                     backdropUrl = backdropUrl
@@ -342,7 +336,7 @@ object OttRepository {
                 cast = castList,
                 recommended = recommendedList.ifEmpty { similarList },
                 similar = similarList.ifEmpty { recommendedList },
-                providerEmbedUrls = buildRealProviderSources(vod.id, vod.isSeries),
+                providerEmbedUrls = emptyList(),
                 numberOfSeasons = numSeasons
             )
         } catch (e: Exception) {
@@ -361,16 +355,12 @@ object OttRepository {
                 cast = emptyList(),
                 recommended = cachedMovies.take(12),
                 similar = cachedMovies.drop(12).take(12),
-                providerEmbedUrls = buildRealProviderSources(vod.id, vod.isSeries),
+                providerEmbedUrls = emptyList(),
                 numberOfSeasons = 1
             )
         }
     }
 
-    /**
-     * جلب الترجمات الحقيقية وترتيبها ذكياً بحيث تكون نسخ WEB-DL / WEBRip
-     * (المطابقة 100% لتوقيت سيرفرات المشاهدة) في المركز الأول دائماً!
-     */
     suspend fun fetchRealSubtitlesForMovie(
         tmdbId: String,
         imdbId: String,
@@ -389,7 +379,6 @@ object OttRepository {
             }
         }
 
-        // 1. Wyzie Subtitles API (يجلب من SubDL + OpenSubtitles مع اسم النسخة الدقيق)
         val idsToQuery = mutableListOf(tmdbId)
         if (resolvedImdbId.isNotEmpty()) idsToQuery.add(resolvedImdbId)
 
@@ -428,7 +417,6 @@ object OttRepository {
             } catch (e: Exception) {}
         }
 
-        // 2. OpenSubtitles v3 Official JSON API
         if (resolvedImdbId.isNotEmpty()) {
             try {
                 val cleanImdb = if (resolvedImdbId.startsWith("tt")) resolvedImdbId else "tt$resolvedImdbId"
@@ -464,7 +452,6 @@ object OttRepository {
             } catch (e: Exception) {}
         }
 
-        // ترتيب ذكي جداً: اللغة أولاً، ثم تقديم نسخ WEB-DL / WEBRip / AMZN / NF على نسخ BluRay
         return@withContext tracks.sortedWith(
             compareBy<SubtitleTrack>(
                 {
@@ -665,6 +652,9 @@ object OttRepository {
         }
     }
 
+    /**
+     * قراءة الباقات والقنوات بأمان تام مع دعم تعدد السيرفرات والجودات ومطابقة الباقة بالـ ID أو الاسم
+     */
     suspend fun fetchLiveCategories(): List<Category> = withContext(Dispatchers.IO) {
         try {
             val jsonStr = fastGet("${SessionManager.CLOUDFLARE_API_URL}/api/v2/catalog")
@@ -673,42 +663,69 @@ object OttRepository {
                 val catsArr = root.optJSONArray("categories") ?: JSONArray()
                 val catList = ArrayList<Category>(catsArr.length())
                 for (i in 0 until catsArr.length()) {
-                    val c = catsArr.getJSONObject(i)
+                    val c = catsArr.optJSONObject(i) ?: continue
                     catList.add(
                         Category(
-                            id = c.optString("id"),
-                            name = c.optString("name"),
+                            id = c.optString("id").trim(),
+                            name = c.optString("name").trim(),
                             iconUrl = c.optString("icon_url", "")
                         )
                     )
                 }
+
                 val chArr = root.optJSONArray("channels") ?: JSONArray()
                 val chList = ArrayList<Channel>(chArr.length())
+                channelCategoryNameMap.clear()
+
                 for (i in 0 until chArr.length()) {
-                    val ch = chArr.getJSONObject(i)
+                    val ch = chArr.optJSONObject(i) ?: continue
                     val srcArr = ch.optJSONArray("sources") ?: JSONArray()
-                    val sources = ArrayList<StreamSource>(srcArr.length())
+                    val sources = ArrayList<StreamSource>()
+
                     for (j in 0 until srcArr.length()) {
-                        val s = srcArr.getJSONObject(j)
-                        val lbl = s.optString("label", "Server ${j + 1}")
-                        val u = s.optString("url", "")
+                        val s = srcArr.optJSONObject(j) ?: continue
+                        val lbl = s.optString("label", "Server ${j + 1}").trim().ifEmpty { "Server ${j + 1}" }
+                        var u = s.optString("url", "").trim()
                         val qArr = s.optJSONArray("qualities")
                         val qList = ArrayList<QualityOption>()
                         if (qArr != null) {
                             for (k in 0 until qArr.length()) {
                                 val qo = qArr.optJSONObject(k) ?: continue
-                                val ql = qo.optString("label", "")
-                                val qu = qo.optString("url", "")
+                                val ql = qo.optString("label", "").trim()
+                                val qu = qo.optString("url", "").trim()
                                 if (ql.isNotEmpty() && qu.isNotEmpty()) {
                                     qList.add(QualityOption(ql, qu))
                                 }
                             }
                         }
+                        if (u.isEmpty() && qList.isNotEmpty()) {
+                            u = qList.first().url
+                        }
                         if (u.isNotEmpty()) {
                             sources.add(StreamSource(label = lbl, url = u, qualities = qList))
                         }
                     }
+
+                    val chId = ch.optString("id", "ch_$i").trim()
+                    val catId = ch.optString("category_id", "").trim()
+                    val catName = ch.optString("category_name", "").trim()
+                    channelCategoryNameMap[chId] = catName
+
+                    if (sources.isNotEmpty()) {
+                        chList.add(
+                            Channel(
+                                id = chId,
+                                categoryId = catId,
+                                name = ch.optString("name", "Channel"),
+                                logoUrl = ch.optString("logo_url", ""),
+                                streamUrls = sources.map { it.url },
+                                isFavorite = favoriteChannelIds.contains(chId),
+                                namedSources = sources
+                            )
+                        )
+                    }
                 }
+
                 cachedCustomChannels = chList
                 cachedCategories = catList
                 return@withContext catList
@@ -723,7 +740,24 @@ object OttRepository {
         if (cachedCustomChannels.isEmpty()) {
             fetchLiveCategories()
         }
-        return@withContext cachedCustomChannels.filter { it.categoryId == categoryId }
+        if (categoryId.isEmpty() || categoryId == "ALL") {
+            return@withContext cachedCustomChannels
+        }
+
+        // 1. المطابقة المباشرة بـ category_id
+        val byId = cachedCustomChannels.filter { it.categoryId == categoryId }
+        if (byId.isNotEmpty()) return@withContext byId
+
+        // 2. إذا تم تعديل الباقة في اللوحة وتغير الـ ID، نطابق باسم الباقة (category_name) حتى لا تختفي القنوات أبداً
+        val catName = cachedCategories.firstOrNull { it.id == categoryId }?.name ?: ""
+        if (catName.isNotEmpty()) {
+            val byName = cachedCustomChannels.filter {
+                channelCategoryNameMap[it.id].equals(catName, ignoreCase = true)
+            }
+            if (byName.isNotEmpty()) return@withContext byName
+        }
+
+        return@withContext byId
     }
 
     suspend fun fetchMatchesFromCloudflare(): List<MatchFixture> = withContext(Dispatchers.IO) {

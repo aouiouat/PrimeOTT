@@ -16,6 +16,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -84,6 +85,29 @@ class LiveTvFragment : Fragment() {
         }
     }
 
+    private fun updateLiveTrackPositionIndicator() {
+        val b = _binding ?: return
+        b.liveProgressTrackContainer.post {
+            val trackW = b.liveProgressTrackContainer.width
+            if (trackW > 40) {
+                // وضع مؤشر البث المباشر عند 88% من الخط الطويل ليبين للمشاهد أنه في البث الحي المباشر
+                val livePosPx = (trackW * 0.88f).toInt()
+                b.liveRedProgressFill.layoutParams = FrameLayout.LayoutParams(
+                    livePosPx,
+                    dp(3),
+                    Gravity.CENTER_VERTICAL or Gravity.START
+                )
+                b.liveRedThumbDot.layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.CENTER_VERTICAL or Gravity.START
+                ).apply {
+                    marginStart = (livePosPx - dp(6)).coerceAtLeast(0)
+                }
+            }
+        }
+    }
+
     private fun togglePlayerOverlayWithAutoHide() {
         val b = _binding ?: return
         b.inlineControlsOverlay.removeCallbacks(autoHideRunnable)
@@ -91,6 +115,7 @@ class LiveTvFragment : Fragment() {
             b.inlineControlsOverlay.visibility = View.GONE
         } else {
             b.inlineControlsOverlay.visibility = View.VISIBLE
+            updateLiveTrackPositionIndicator()
             b.inlineControlsOverlay.postDelayed(autoHideRunnable, 3500)
         }
     }
@@ -177,8 +202,6 @@ class LiveTvFragment : Fragment() {
         binding.btnTopLeftMenu.setOnClickListener {
             if (isInlineFullscreen) {
                 setFullscreenMode(false)
-            } else {
-                showReeznPreferencesPanel()
             }
         }
 
@@ -187,7 +210,7 @@ class LiveTvFragment : Fragment() {
             binding.btnLockPlayer.text = if (isPlayerLocked) "🔒" else "🔓"
             Toast.makeText(
                 requireContext(),
-                if (isPlayerLocked) "🔒 تم قفل اللمس" else "🔓 تم إلغاء القفل",
+                if (isPlayerLocked) "🔒 تم قفل التحكم" else "🔓 تم فتح التحكم",
                 Toast.LENGTH_SHORT
             ).show()
         }
@@ -204,7 +227,6 @@ class LiveTvFragment : Fragment() {
             }
         }
 
-        // الانتقال للقناة السابقة |◀ مثل Reezn
         binding.btnPrevChannel.setOnClickListener {
             resetOverlayAutoHideTimer()
             if (currentCategoryChannels.isEmpty()) return@setOnClickListener
@@ -213,7 +235,6 @@ class LiveTvFragment : Fragment() {
             playChannelInline(currentCategoryChannels[prevIdx])
         }
 
-        // الانتقال للقناة التالية ▶| مثل Reezn
         binding.btnNextChannel.setOnClickListener {
             resetOverlayAutoHideTimer()
             if (currentCategoryChannels.isEmpty()) return@setOnClickListener
@@ -222,7 +243,6 @@ class LiveTvFragment : Fragment() {
             playChannelInline(currentCategoryChannels[nextIdx])
         }
 
-        // فتح القائمة الجانبية المزدوجة (Source | Choose Video Quality) مثل Reezn
         binding.btnInlineServers.setOnClickListener {
             resetOverlayAutoHideTimer()
             showReeznPreferencesPanel()
@@ -232,26 +252,17 @@ class LiveTvFragment : Fragment() {
             showReeznPreferencesPanel()
         }
 
-        // فتح نافذة المسارات الصوتية (Subtitle & Audio)
         binding.btnInlineAudio.setOnClickListener {
             resetOverlayAutoHideTimer()
             showAudioAndSubtitlesDialog()
         }
 
-        // تغيير أبعاد الشاشة (Aspect Ratio)
         binding.btnInlineAspect.setOnClickListener {
             resetOverlayAutoHideTimer()
             resizeModeIndex = (resizeModeIndex + 1) % resizeModes.size
             binding.inlinePlayerView.resizeMode = resizeModes[resizeModeIndex]
-            val modeName = when (resizeModes[resizeModeIndex]) {
-                AspectRatioFrameLayout.RESIZE_MODE_FILL -> "Stretch Fill (ملء الشاشة)"
-                AspectRatioFrameLayout.RESIZE_MODE_ZOOM -> "Crop Zoom (تقريب)"
-                else -> "Original Fit (أصلي)"
-            }
-            Toast.makeText(requireContext(), "⛶ $modeName", Toast.LENGTH_SHORT).show()
         }
 
-        // زر My List لإضافة القناة للمفضلة فوراً
         binding.btnFullPip.setOnClickListener {
             resetOverlayAutoHideTimer()
             val ch = currentPlayingChannel ?: return@setOnClickListener
@@ -264,6 +275,7 @@ class LiveTvFragment : Fragment() {
             renderChannelsList()
         }
 
+        // زر تكبير وتصغير المشغل ⛶
         binding.btnMiniExpand.setOnClickListener {
             setFullscreenMode(!isInlineFullscreen)
         }
@@ -322,8 +334,66 @@ class LiveTvFragment : Fragment() {
     }
 
     /**
-     * القائمة الجانبية الاحترافية المطابقة 100% لتطبيق Reezn (image_cbefc6.jpg):
-     * Preferences -> عمود Source على اليسار (جميع السيرفرات المضافة) | عمود Choose Video Quality على اليمين (Auto + جودات السيرفر)
+     * التحويل بين المشغل الصغير البسيط (Pause + Live Red + Line + Expand)
+     * وبين المشغل المكبر الكامل (جميع أزرار Reezn: الشريط العلوي + تقليب القنوات + Subtitle & Audio + Aspect Ratio + My List)
+     */
+    private fun setFullscreenMode(enterFullscreen: Boolean) {
+        val act = activity ?: return
+        val b = _binding ?: return
+        isInlineFullscreen = enterFullscreen
+        val bottomBar = act.findViewById<View>(R.id.floatingBottomBar)
+
+        if (enterFullscreen) {
+            b.bottomListsContainer.visibility = View.GONE
+            b.playerDividerLine.visibility = View.GONE
+            bottomBar?.visibility = View.GONE
+
+            // إظهار عناصر الشاشة الكاملة فقط عند التكبير
+            b.topFullBar.visibility = View.VISIBLE
+            b.btnPrevChannel.visibility = View.VISIBLE
+            b.btnNextChannel.visibility = View.VISIBLE
+            b.fullBottomActionsRow.visibility = View.VISIBLE
+
+            b.inlinePlayerContainer.layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+
+            WindowCompat.setDecorFitsSystemWindows(act.window, false)
+            WindowInsetsControllerCompat(act.window, b.root).let { controller ->
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+                controller.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+            act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        } else {
+            act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            WindowCompat.setDecorFitsSystemWindows(act.window, true)
+            WindowInsetsControllerCompat(act.window, b.root).show(WindowInsetsCompat.Type.systemBars())
+
+            val heightPx = (235 * resources.displayMetrics.density).toInt()
+            b.inlinePlayerContainer.layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                heightPx
+            )
+
+            // في المشغل الصغير نخفي كل الأزرار الإضافية ونترك فقط Pause + Live Red + خط اللايف + أيقونة التكبير
+            b.topFullBar.visibility = View.GONE
+            b.btnPrevChannel.visibility = View.GONE
+            b.btnNextChannel.visibility = View.GONE
+            b.fullBottomActionsRow.visibility = View.GONE
+
+            b.playerDividerLine.visibility = View.VISIBLE
+            b.bottomListsContainer.visibility = View.VISIBLE
+            bottomBar?.visibility = View.VISIBLE
+        }
+        b.inlinePlayerContainer.requestLayout()
+        updateLiveTrackPositionIndicator()
+        resetOverlayAutoHideTimer()
+    }
+
+    /**
+     * القائمة الجانبية لـ Reezn (Preferences -> Source | Choose Video Quality)
      */
     private fun showReeznPreferencesPanel() {
         if (currentSources.isEmpty()) return
@@ -344,7 +414,6 @@ class LiveTvFragment : Fragment() {
             layoutParams = ViewGroup.LayoutParams(panelWidth, panelHeight)
         }
 
-        // العنوان العلوي: Preferences
         val tvTitle = TextView(ctx).apply {
             text = "Preferences"
             setTextColor(Color.WHITE)
@@ -354,7 +423,6 @@ class LiveTvFragment : Fragment() {
         }
         rootPanel.addView(tvTitle)
 
-        // صف العناوين الفرعية: Source | Choose Video Quality
         val subHeadersRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 0, 0, dp(10))
@@ -377,7 +445,6 @@ class LiveTvFragment : Fragment() {
         subHeadersRow.addView(tvQualityHeader)
         rootPanel.addView(subHeadersRow)
 
-        // الحاوية المزدوجة للقائمتين القابلتين للتمرير (عمود السيرفرات + عمود الجودات)
         val columnsContainer = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
@@ -417,7 +484,6 @@ class LiveTvFragment : Fragment() {
 
             val activeKey = livePlayerEngine?.getSelectedQualityKey() ?: "AUTO"
 
-            // 1. بناء عمود السيرفرات (Source) على اليسار (يدعم 15+ سيرفر)
             currentSources.forEachIndexed { idx, src ->
                 val isSelectedServer = (idx == currentSourceIndex)
                 val btnSource = TextView(ctx).apply {
@@ -441,10 +507,7 @@ class LiveTvFragment : Fragment() {
                 leftSourcesCol.addView(btnSource)
             }
 
-            // 2. بناء عمود الجودات (Choose Video Quality) على اليمين للسيرفر المختار حالياً فقط!
             val currentServer = currentSources.getOrNull(currentSourceIndex)
-
-            // الخيار الأول دائماً: Auto (يختار تلقائياً حسب سرعة الإنترنت)
             val isAutoSelected = (activeKey == "AUTO")
             val btnAuto = TextView(ctx).apply {
                 text = if (isAutoSelected) "✓   Auto" else "      Auto"
@@ -465,7 +528,6 @@ class LiveTvFragment : Fragment() {
             }
             rightQualitiesCol.addView(btnAuto)
 
-            // أ) إذا كان الأدمن قد وضع روابط جودات مخصصة لهذا السيرفر في اللوحة، نظهرها هنا
             val customQualities = currentServer?.qualities.orEmpty()
             customQualities.forEach { qOpt ->
                 val qKey = "CUSTOM_${qOpt.label}"
@@ -491,7 +553,6 @@ class LiveTvFragment : Fragment() {
                 rightQualitiesCol.addView(btnQ)
             }
 
-            // ب) إذا كان السيرفر يحتوي على جودات HLS متعددة (مثل 1080p (5.1mb/s), 720p (2mb/s)) نظهرها تلقائياً!
             val hlsQualities = livePlayerEngine?.getDetectedHlsQualities().orEmpty()
             if (customQualities.isEmpty() && hlsQualities.size > 1) {
                 hlsQualities.forEach { hTrack ->
@@ -529,9 +590,6 @@ class LiveTvFragment : Fragment() {
         dialog.show()
     }
 
-    /**
-     * نافذة اختيار المسار الصوتي / المعلق (Subtitle & Audio)
-     */
     private fun showAudioAndSubtitlesDialog() {
         val ctx = requireContext()
         val dialog = Dialog(ctx)
@@ -593,49 +651,6 @@ class LiveTvFragment : Fragment() {
         dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    private fun setFullscreenMode(enterFullscreen: Boolean) {
-        val act = activity ?: return
-        val b = _binding ?: return
-        isInlineFullscreen = enterFullscreen
-        val bottomBar = act.findViewById<View>(R.id.floatingBottomBar)
-
-        if (enterFullscreen) {
-            b.bottomListsContainer.visibility = View.GONE
-            b.playerDividerLine.visibility = View.GONE
-            bottomBar?.visibility = View.GONE
-
-            b.tvInlineChannelTitle.visibility = View.VISIBLE
-            b.inlinePlayerContainer.layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-
-            WindowCompat.setDecorFitsSystemWindows(act.window, false)
-            WindowInsetsControllerCompat(act.window, b.root).let { controller ->
-                controller.hide(WindowInsetsCompat.Type.systemBars())
-                controller.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
-            act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        } else {
-            act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            WindowCompat.setDecorFitsSystemWindows(act.window, true)
-            WindowInsetsControllerCompat(act.window, b.root).show(WindowInsetsCompat.Type.systemBars())
-
-            val heightPx = (235 * resources.displayMetrics.density).toInt()
-            b.inlinePlayerContainer.layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                heightPx
-            )
-
-            b.playerDividerLine.visibility = View.VISIBLE
-            b.bottomListsContainer.visibility = View.VISIBLE
-            bottomBar?.visibility = View.VISIBLE
-        }
-        b.inlinePlayerContainer.requestLayout()
-        resetOverlayAutoHideTimer()
-    }
-
     private fun loadInitialPackagesAndChannels() {
         viewLifecycleOwner.lifecycleScope.launch {
             allCategories = OttRepository.fetchLiveCategories()
@@ -643,6 +658,9 @@ class LiveTvFragment : Fragment() {
                 selectedCategoryId = allCategories.first().id
                 renderCategoriesList(allCategories)
                 loadChannelsForCategory(selectedCategoryId, autoPlayFirst = true)
+            } else {
+                // إذا لم تكن هناك باقات، نعرض جميع القنوات مباشرة
+                loadChannelsForCategory("", autoPlayFirst = true)
             }
         }
     }
@@ -694,7 +712,6 @@ class LiveTvFragment : Fragment() {
         }
         currentPlayingChannel = ch
         binding.tvInlineChannelTitle.text = ch.name
-        binding.tvInlineChannelTitle.visibility = View.VISIBLE
 
         val isFav = OttRepository.isChannelFavorite(ch.id)
         binding.btnFullPip.text = if (isFav) "♥  My List" else "🔖  My List"
