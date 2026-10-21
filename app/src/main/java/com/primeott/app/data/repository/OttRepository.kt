@@ -1,11 +1,15 @@
+@file:Suppress("SpellCheckingInspection")
+
 package com.primeott.app.data.repository
 
 import android.content.Context
-import androidx.compose.remote.creation.compose.state.toString
 import androidx.core.text.HtmlCompat
 import com.primeott.app.data.remote.SessionManager
 import com.primeott.app.domain.model.*
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -18,24 +22,6 @@ import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
-
-data class StreamOverride(
-    val streamId: String,
-    val customName: String,
-    val customIcon: String,
-    val customUrl: String,
-    val status: String,
-    val isDeleted: Boolean
-)
-
-data class RoomSyncResult(
-    val status: String,
-    val room: WatchRoom?,
-    val participants: List<RoomParticipant>,
-    val messages: List<RoomChatMessage>,
-    val errorMessage: String = "",
-    val requirePassword: Boolean = false
-)
 
 data class HomeCatalogSections(
     val heroItems: List<VodItem>,
@@ -52,22 +38,29 @@ data class HomeCatalogSections(
     val documentaries: List<VodItem>
 )
 
+data class RoomSyncResult(
+    val status: String,
+    val room: WatchRoom?,
+    val participants: List<RoomParticipant>,
+    val messages: List<RoomChatMessage>,
+    val errorMessage: String = "",
+    val requirePassword: Boolean = false
+)
+
 object OttRepository {
 
     private const val TMDB_API_KEY = "8265bd1679663a7ea12ac168da84d2e8"
     private const val TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500"
     private const val TMDB_BACKDROP_BASE = "https://image.tmdb.org/t/p/w780"
 
-    private const val RELEASED_MOVIE_FILTER = "primary_release_date.lte=2026-10-21&with_release_type=4|5|6&vote_count.gte=40"
-    private const val RELEASED_TV_FILTER = "first_air_date.lte=2026-10-21&vote_count.gte=30"
+    private const val RELEASED_MOVIE_FILTER = "primary_release_date.lte=2026-10-21&with_release_type=4|5|6&vote_count.gte=30"
+    private const val RELEASED_TV_FILTER = "first_air_date.lte=2026-10-21&vote_count.gte=20"
 
     private val favoriteChannelIds = mutableSetOf<String>()
     private val favoriteMatchIds = mutableSetOf<String>()
     private var cachedCategories = listOf<Category>()
     private var cachedCustomChannels = listOf<Channel>()
     private val channelCategoryNameMap = HashMap<String, String>()
-    private var cachedMovies = listOf<VodItem>()
-    private var cachedSeries = listOf<VodItem>()
     private var cachedMatches = listOf<MatchFixture>()
     private var cachedHomeSections: HomeCatalogSections? = null
 
@@ -105,13 +98,9 @@ object OttRepository {
         val req = Request.Builder().url(url).post(body).build()
         okHttpClient.newCall(req).execute().use { res ->
             val str = res.body?.string() ?: "{}"
-            val json = try { JSONObject(str) } catch (e: Exception) { JSONObject() }
+            val json = try { JSONObject(str) } catch (_: Exception) { JSONObject() }
             return Pair(res.code, json)
         }
-    }
-
-    fun buildRealProviderSources(tmdbId: String, isSeries: Boolean, season: Int = 1, episode: Int = 1): List<StreamSource> {
-        return emptyList()
     }
 
     private fun parseTmdbArrayToVodList(arr: JSONArray?, defaultCategory: String, forceSeries: Boolean? = null): List<VodItem> {
@@ -119,7 +108,7 @@ object OttRepository {
         val list = ArrayList<VodItem>(arr.length())
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
-            val tmdbId = obj.optInt("id", 0).toString()
+            val tmdbId = "${obj.optInt("id", 0)}"
             if (tmdbId == "0") continue
 
             val posterPath = obj.optString("poster_path", "")
@@ -166,105 +155,137 @@ object OttRepository {
         return list
     }
 
-    /**
-     * تحميل متوازٍ فائق السرعة لجميع أقسام الصفحة الرئيسية الـ 11 في نفس اللحظة
-     */
-    suspend fun fetchHomeSections(): HomeCatalogSections = kotlinx.coroutines.coroutineScope {
+    suspend fun fetchHomeSections(): HomeCatalogSections = coroutineScope {
         cachedHomeSections?.let { return@coroutineScope it }
 
-        val dTrending = kotlinx.coroutines.toString(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(fastGet("https://api.themoviedb.org/3/trending/all/day?api_key=$TMDB_API_KEY&language=en-US&page=1"))
+        val dTrending: Deferred<List<VodItem>> = async(Dispatchers.IO) {
+            try {
+                val raw = fastGet("https://api.themoviedb.org/3/trending/all/day?api_key=$TMDB_API_KEY&language=en-US&page=1")
+                val json = JSONObject(raw)
                 parseTmdbArrayToVodList(json.optJSONArray("results"), "Trending")
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        val dPopMovies = kotlinx.coroutines.toString(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1"))
+        val dPopMovies: Deferred<List<VodItem>> = async(Dispatchers.IO) {
+            try {
+                val raw = fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1")
+                val json = JSONObject(raw)
                 parseTmdbArrayToVodList(json.optJSONArray("results"), "Movie", false)
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        val dPopTv = kotlinx.coroutines.toString(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1"))
+        val dPopTv: Deferred<List<VodItem>> = async(Dispatchers.IO) {
+            try {
+                val raw = fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1")
+                val json = JSONObject(raw)
                 parseTmdbArrayToVodList(json.optJSONArray("results"), "TV Show", true)
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        val dTopMovies = kotlinx.coroutines.toString(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=1500&$RELEASED_MOVIE_FILTER&page=1"))
+        val dTopMovies: Deferred<List<VodItem>> = async(Dispatchers.IO) {
+            try {
+                val raw = fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=1500&$RELEASED_MOVIE_FILTER&page=1")
+                val json = JSONObject(raw)
                 parseTmdbArrayToVodList(json.optJSONArray("results"), "Top Rated", false)
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        val dTopTv = kotlinx.coroutines.toString(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=800&$RELEASED_TV_FILTER&page=1"))
+        val dTopTv: Deferred<List<VodItem>> = async(Dispatchers.IO) {
+            try {
+                val raw = fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=800&$RELEASED_TV_FILTER&page=1")
+                val json = JSONObject(raw)
                 parseTmdbArrayToVodList(json.optJSONArray("results"), "Top Rated TV", true)
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        val dTurkish = kotlinx.coroutines.toString(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=TR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1"))
+        val dTurkish: Deferred<List<VodItem>> = async(Dispatchers.IO) {
+            try {
+                val raw = fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=TR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1")
+                val json = JSONObject(raw)
                 parseTmdbArrayToVodList(json.optJSONArray("results"), "Turkish Drama", true)
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        val dKorean = kotlinx.coroutines.toString(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=KR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1"))
+        val dKorean: Deferred<List<VodItem>> = async(Dispatchers.IO) {
+            try {
+                val raw = fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=KR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1")
+                val json = JSONObject(raw)
                 parseTmdbArrayToVodList(json.optJSONArray("results"), "Korean Drama", true)
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        val dAction = kotlinx.coroutines.toString(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=28,53&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1"))
+        val dAction: Deferred<List<VodItem>> = async(Dispatchers.IO) {
+            try {
+                val raw = fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=28,53&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1")
+                val json = JSONObject(raw)
                 parseTmdbArrayToVodList(json.optJSONArray("results"), "Action & Thriller", false)
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        val dAnime = kotlinx.coroutines.toString(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_genres=16&with_origin_country=JP&sort_by=popularity.desc&page=1"))
+        val dAnime: Deferred<List<VodItem>> = async(Dispatchers.IO) {
+            try {
+                val raw = fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_genres=16&with_origin_country=JP&sort_by=popularity.desc&page=1")
+                val json = JSONObject(raw)
                 parseTmdbArrayToVodList(json.optJSONArray("results"), "Anime", true)
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        val dSciFi = kotlinx.coroutines.toString(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=878,14&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1"))
+        val dSciFi: Deferred<List<VodItem>> = async(Dispatchers.IO) {
+            try {
+                val raw = fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=878,14&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1")
+                val json = JSONObject(raw)
                 parseTmdbArrayToVodList(json.optJSONArray("results"), "Sci-Fi & Fantasy", false)
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        val dDocs = kotlinx.coroutines.toString(Dispatchers.IO) {
-            runCatching {
-                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=99&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1"))
+        val dDocs: Deferred<List<VodItem>> = async(Dispatchers.IO) {
+            try {
+                val raw = fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=99&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1")
+                val json = JSONObject(raw)
                 parseTmdbArrayToVodList(json.optJSONArray("results"), "Documentary", false)
-            }.getOrDefault(emptyList())
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        val trendingToday = dTrending.await()
-        val popularMovies = dPopMovies.await()
-        val popularTv = dPopTv.await()
-        val topRatedMovies = dTopMovies.await()
-        val topRatedTv = dTopTv.await()
-        val turkishDrama = dTurkish.await()
-        val koreanDrama = dKorean.await()
-        val actionMovies = dAction.await()
-        val animeShows = dAnime.await()
-        val sciFiMovies = dSciFi.await()
-        val documentaries = dDocs.await()
+        val trendingToday: List<VodItem> = dTrending.await()
+        val popularMovies: List<VodItem> = dPopMovies.await()
+        val popularTv: List<VodItem> = dPopTv.await()
+        val topRatedMovies: List<VodItem> = dTopMovies.await()
+        val topRatedTv: List<VodItem> = dTopTv.await()
+        val turkishDrama: List<VodItem> = dTurkish.await()
+        val koreanDrama: List<VodItem> = dKorean.await()
+        val actionMovies: List<VodItem> = dAction.await()
+        val animeShows: List<VodItem> = dAnime.await()
+        val sciFiMovies: List<VodItem> = dSciFi.await()
+        val documentaries: List<VodItem> = dDocs.await()
 
-        val hero = (trendingToday.take(7) + popularMovies.take(5)).distinctBy { it.id }
+        val finalTrending: List<VodItem> = trendingToday.ifEmpty { popularMovies }
+        val heroList: List<VodItem> = (finalTrending.take(7) + popularMovies.take(5)).distinctBy { it.id }
+
         val result = HomeCatalogSections(
-            heroItems = hero,
-            trendingToday = trendingToday.ifEmpty { popularMovies },
+            heroItems = heroList,
+            trendingToday = finalTrending,
             popularMovies = popularMovies,
             popularTvShows = popularTv,
             topRatedMovies = topRatedMovies,
@@ -276,7 +297,7 @@ object OttRepository {
             sciFiMovies = sciFiMovies,
             documentaries = documentaries
         )
-        if (hero.isNotEmpty()) {
+        if (heroList.isNotEmpty()) {
             cachedHomeSections = result
         }
         result
@@ -298,7 +319,7 @@ object OttRepository {
             }
             val root = JSONObject(fastGet(endpoint))
             return@withContext parseTmdbArrayToVodList(root.optJSONArray("results"), if (isSeries) "Series" else "Movie", isSeries)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return@withContext emptyList()
         }
     }
@@ -309,7 +330,7 @@ object OttRepository {
             val url = "https://api.themoviedb.org/3/search/multi?api_key=$TMDB_API_KEY&query=$encoded&page=1"
             val root = JSONObject(fastGet(url))
             return@withContext parseTmdbArrayToVodList(root.optJSONArray("results"), "Search")
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return@withContext emptyList()
         }
     }
@@ -355,7 +376,7 @@ object OttRepository {
                 } else ""
                 castList.add(
                     CastMember(
-                        id = c.optInt("id").toString(),
+                        id = "${c.optInt("id", 0)}",
                         name = c.optString("name", "Actor"),
                         character = c.optString("character", ""),
                         profileUrl = profileUrl
@@ -402,7 +423,7 @@ object OttRepository {
                 providerEmbedUrls = emptyList(),
                 numberOfSeasons = numSeasons
             )
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return@withContext MovieFullDetails(
                 id = vod.id,
                 imdbId = "",
@@ -416,8 +437,8 @@ object OttRepository {
                 backdropUrl = vod.posterUrl,
                 trailerYoutubeKey = "",
                 cast = emptyList(),
-                recommended = cachedMovies.take(12),
-                similar = cachedMovies.drop(12).take(12),
+                recommended = emptyList(),
+                similar = emptyList(),
                 providerEmbedUrls = emptyList(),
                 numberOfSeasons = 1
             )
@@ -435,11 +456,11 @@ object OttRepository {
 
         var resolvedImdbId = imdbId.trim()
         if (resolvedImdbId.isEmpty()) {
-            runCatching {
+            try {
                 val type = if (isSeries) "tv" else "movie"
                 val extJson = JSONObject(fastGet("https://api.themoviedb.org/3/$type/$tmdbId/external_ids?api_key=$TMDB_API_KEY"))
                 resolvedImdbId = extJson.optString("imdb_id", "")
-            }
+            } catch (_: Exception) {}
         }
 
         val idsToQuery = mutableListOf(tmdbId)
@@ -477,7 +498,7 @@ object OttRepository {
                         }
                     }
                 }
-            } catch (e: Exception) {}
+            } catch (_: Exception) {}
         }
 
         if (resolvedImdbId.isNotEmpty()) {
@@ -496,7 +517,8 @@ object OttRepository {
                         val o = subsArr.optJSONObject(i) ?: continue
                         val subUrl = o.optString("url", "")
                         if (subUrl.isEmpty()) continue
-                        val langCode = normalizeLangCode(o.optString("lang", "eng"))
+                        val rawLang = o.optString("lang", "eng")
+                        val langCode = normalizeLangCode(rawLang)
                         if (langCode !in listOf("ar", "en", "fr", "es", "tr")) continue
                         val display = formatLangDisplayName(langCode, "")
                         if (tracks.none { it.url == subUrl }) {
@@ -512,11 +534,11 @@ object OttRepository {
                         }
                     }
                 }
-            } catch (e: Exception) {}
+            } catch (_: Exception) {}
         }
 
         return@withContext tracks.sortedWith(
-            compareBy<SubtitleTrack>(
+            compareBy(
                 {
                     when (it.languageCode) {
                         "ar" -> 0
@@ -579,7 +601,7 @@ object OttRepository {
                 }
                 return@withContext parseSrtOrVttContent(textContent)
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return@withContext emptyList()
         }
     }
@@ -618,24 +640,6 @@ object OttRepository {
             }
         }
         return cues
-    }
-
-    suspend fun fetchMovies(): List<VodItem> = withContext(Dispatchers.IO) {
-        if (cachedMovies.isNotEmpty()) return@withContext cachedMovies
-        val page1 = fetchVodCatalogPage(isSeries = false, page = 1)
-        val page2 = fetchVodCatalogPage(isSeries = false, page = 2)
-        val combined = (page1 + page2).distinctBy { it.id }
-        if (combined.isNotEmpty()) cachedMovies = combined
-        return@withContext cachedMovies
-    }
-
-    suspend fun fetchSeries(): List<VodItem> = withContext(Dispatchers.IO) {
-        if (cachedSeries.isNotEmpty()) return@withContext cachedSeries
-        val page1 = fetchVodCatalogPage(isSeries = true, page = 1)
-        val page2 = fetchVodCatalogPage(isSeries = true, page = 2)
-        val combined = (page1 + page2).distinctBy { it.id }
-        if (combined.isNotEmpty()) cachedSeries = combined
-        return@withContext cachedSeries
     }
 
     suspend fun syncWithCloudflare() = withContext(Dispatchers.IO) {
@@ -694,9 +698,7 @@ object OttRepository {
                     cachedMatches = list
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (_: Exception) {}
     }
 
     suspend fun activateSubscription(code: String, deviceId: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
@@ -710,14 +712,11 @@ object OttRepository {
                 return@withContext Pair(true, json.optString("expire_date", "2027-01-01"))
             }
             return@withContext Pair(false, json.optString("message", "Invalid Code"))
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return@withContext Pair(false, "Network Error")
         }
     }
 
-    /**
-     * قراءة الباقات والقنوات بأمان تام مع دعم تعدد السيرفرات والجودات ومطابقة الباقة بالـ ID أو الاسم
-     */
     suspend fun fetchLiveCategories(): List<Category> = withContext(Dispatchers.IO) {
         try {
             val jsonStr = fastGet("${SessionManager.CLOUDFLARE_API_URL}/api/v2/catalog")
@@ -793,9 +792,7 @@ object OttRepository {
                 cachedCategories = catList
                 return@withContext catList
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (_: Exception) {}
         return@withContext cachedCategories
     }
 
@@ -807,11 +804,9 @@ object OttRepository {
             return@withContext cachedCustomChannels
         }
 
-        // 1. المطابقة المباشرة بـ category_id
         val byId = cachedCustomChannels.filter { it.categoryId == categoryId }
         if (byId.isNotEmpty()) return@withContext byId
 
-        // 2. إذا تم تعديل الباقة في اللوحة وتغير الـ ID، نطابق باسم الباقة (category_name) حتى لا تختفي القنوات أبداً
         val catName = cachedCategories.firstOrNull { it.id == categoryId }?.name ?: ""
         if (catName.isNotEmpty()) {
             val byName = cachedCustomChannels.filter {
@@ -868,7 +863,7 @@ object OttRepository {
                 )
             }
             return@withContext list
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return@withContext emptyList()
         }
     }
@@ -907,7 +902,7 @@ object OttRepository {
                 return@withContext Pair(true, json.optString("room_code"))
             }
             return@withContext Pair(false, json.optString("message", "Error creating room"))
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return@withContext Pair(false, "Network Error")
         }
     }
@@ -934,7 +929,7 @@ object OttRepository {
             }
             val (_, json) = fastPostJson("${SessionManager.CLOUDFLARE_API_URL}/api/watch/join", payload)
             return@withContext parseRoomStateJson(json)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return@withContext RoomSyncResult("error", null, emptyList(), emptyList(), "Connection Error")
         }
     }
@@ -958,7 +953,7 @@ object OttRepository {
             }
             val (_, json) = fastPostJson("${SessionManager.CLOUDFLARE_API_URL}/api/watch/sync", payload)
             return@withContext parseRoomStateJson(json)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return@withContext RoomSyncResult("network_error", null, emptyList(), emptyList())
         }
     }
@@ -978,7 +973,7 @@ object OttRepository {
             }
             val (code, _) = fastPostJson("${SessionManager.CLOUDFLARE_API_URL}/api/watch/message", payload)
             return@withContext code in 200..299
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return@withContext false
         }
     }
@@ -998,7 +993,7 @@ object OttRepository {
             }
             val (code, _) = fastPostJson("${SessionManager.CLOUDFLARE_API_URL}/api/watch/manage", payload)
             return@withContext code in 200..299
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return@withContext false
         }
     }
@@ -1052,12 +1047,12 @@ object OttRepository {
                 )
             }
         }
-        val msgsArr = json.optJSONArray("messages")
-        val msgs = mutableListOf<RoomChatMessage>()
-        if (msgsArr != null) {
-            for (i in 0 until msgsArr.length()) {
-                val m = msgsArr.getJSONObject(i)
-                msgs.add(
+        val messagesArray = json.optJSONArray("messages")
+        val messagesList = mutableListOf<RoomChatMessage>()
+        if (messagesArray != null) {
+            for (i in 0 until messagesArray.length()) {
+                val m = messagesArray.getJSONObject(i)
+                messagesList.add(
                     RoomChatMessage(
                         id = m.optLong("id"),
                         senderId = m.optString("sender_id"),
@@ -1069,6 +1064,6 @@ object OttRepository {
                 )
             }
         }
-        return RoomSyncResult("success", roomObj, parts, msgs)
+        return RoomSyncResult("success", roomObj, parts, messagesList)
     }
 }
