@@ -1,11 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- قاعدة زجاجية سوداء محمرة -->
     <item>
-        <shape android:shape="oval">
-            <solid android:color="#33E50914" />
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="315"
+                android:startColor="#48E50914"
+                android:centerColor="#268A050C"
+                android:endColor="#D90B0C10"
+                android:type="linear" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+
+    <!-- لمعة الزجاج والإطار الأحمر المضيء -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="#28FF4757"
+                android:endColor="#05000000"
+                android:type="linear" />
+            <corners android:radius="22dp" />
             <stroke
-                android:width="1.5dp"
-                android:color="#AAE50914" />
+                android:width="1.2dp"
+                android:color="#A6E50914" />
         </shape>
     </item>
 </layer-list>

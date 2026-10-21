@@ -4,9 +4,15 @@ import android.content.Intent
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Bundle
+import android.view.View
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import androidx.activity.OnBackPressedCallback
+import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.widget.ImageViewCompat
+import androidx.interpolator.view.animation.FastOutSlowInInterpolator
+import androidx.media3.common.util.UnstableApi
 import com.primeott.app.data.repository.OttRepository
 import com.primeott.app.databinding.ActivityMainBinding
 import com.primeott.app.presentation.livetv.LiveTvFragment
@@ -18,6 +24,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var activeTag: String = ""
+    private val tabOrder = listOf("HOME", "MOVIES", "SERIES", "LIVE", "MATCHES", "WATCH")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -26,22 +33,21 @@ class MainActivity : AppCompatActivity() {
 
         OttRepository.initFavorites(this)
 
-        // الدخول مباشرة إلى صفحة HOME عند فتح التطبيق
         if (savedInstanceState == null) {
-            switchToTab("HOME")
+            switchToTab("HOME", animate = false)
         }
 
-        binding.navTabHome.setOnClickListener { switchToTab("HOME") }
-        binding.navTabMovies.setOnClickListener { switchToTab("MOVIES") }
-        binding.navTabSeries.setOnClickListener { switchToTab("SERIES") }
-        binding.navTabLive.setOnClickListener { switchToTab("LIVE") }
-        binding.navTabMatches.setOnClickListener { switchToTab("MATCHES") }
-        binding.navTabWatch.setOnClickListener { switchToTab("WATCH") }
+        binding.navTabHome.setOnClickListener { switchToTab("HOME", animate = true) }
+        binding.navTabMovies.setOnClickListener { switchToTab("MOVIES", animate = true) }
+        binding.navTabSeries.setOnClickListener { switchToTab("SERIES", animate = true) }
+        binding.navTabLive.setOnClickListener { switchToTab("LIVE", animate = true) }
+        binding.navTabMatches.setOnClickListener { switchToTab("MATCHES", animate = true) }
+        binding.navTabWatch.setOnClickListener { switchToTab("WATCH", animate = true) }
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (activeTag != "HOME") {
-                    switchToTab("HOME")
+                    switchToTab("HOME", animate = true)
                 } else {
                     finish()
                 }
@@ -64,7 +70,6 @@ class MainActivity : AppCompatActivity() {
             data.path?.substringAfter("/join/")?.trim()
         } else null
         val roomCode = (codeFromQuery ?: codeFromPath)?.uppercase() ?: return
-
         if (roomCode.isNotEmpty()) {
             startActivity(Intent(this, WatchRoomActivity::class.java).apply {
                 putExtra(WatchRoomActivity.EXTRA_ROOM_CODE, roomCode)
@@ -72,11 +77,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun switchToTab(tag: String) {
+    @OptIn(UnstableApi::class)
+    private fun switchToTab(tag: String, animate: Boolean = true) {
         if (activeTag == tag && supportFragmentManager.findFragmentByTag(tag) != null) return
 
+        val oldIndex = tabOrder.indexOf(activeTag)
+        val newIndex = tabOrder.indexOf(tag)
+        val movingForward = oldIndex == -1 || newIndex >= oldIndex
+
         val tx = supportFragmentManager.beginTransaction()
-        tx.setCustomAnimations(R.anim.fade_in, R.anim.fade_out)
 
         supportFragmentManager.fragments.forEach { frag ->
             if (frag.isVisible) tx.hide(frag)
@@ -98,21 +107,113 @@ class MainActivity : AppCompatActivity() {
             tx.show(target)
         }
 
-        tx.commitAllowingStateLoss()
+        tx.commitNowAllowingStateLoss()
+
+        // Smooth Slide bla ramcha ka7la (alpha tabda men 0.85f machi 0f)
+        if (animate) {
+            target.view?.let { pageView ->
+                val slidePx = (16f * resources.displayMetrics.density) * if (movingForward) 1f else -1f
+                pageView.animate().cancel()
+                pageView.alpha = 0.85f
+                pageView.translationX = slidePx
+                pageView.animate()
+                    .alpha(1f)
+                    .translationX(0f)
+                    .setDuration(190)
+                    .setInterpolator(DecelerateInterpolator(1.5f))
+                    .start()
+            }
+        }
+
         activeTag = tag
-        updateBottomBarIcons(tag)
+        updateBottomBarIcons(tag, animate)
     }
 
-    private fun updateBottomBarIcons(tag: String) {
-        val activeTint = ColorStateList.valueOf(Color.parseColor("#E50914"))
-        val inactiveTint = ColorStateList.valueOf(Color.parseColor("#C4C7CE"))
+    private fun updateBottomBarIcons(tag: String, animate: Boolean) {
+        val activeTint = ColorStateList.valueOf(Color.parseColor("#FF1E27"))
+        val inactiveTint = ColorStateList.valueOf(Color.parseColor("#E2E6F0"))
 
-        ImageViewCompat.setImageTintList(binding.ivNavHome, if (tag == "HOME") activeTint else inactiveTint)
-        ImageViewCompat.setImageTintList(binding.ivNavMovies, if (tag == "MOVIES") activeTint else inactiveTint)
-        ImageViewCompat.setImageTintList(binding.ivNavSeries, if (tag == "SERIES") activeTint else inactiveTint)
-        ImageViewCompat.setImageTintList(binding.ivNavMatches, if (tag == "MATCHES") activeTint else inactiveTint)
-        ImageViewCompat.setImageTintList(binding.ivNavProfile, if (tag == "WATCH") activeTint else inactiveTint)
+        val tabs = listOf(
+            Triple("HOME", binding.navTabHome, binding.ivNavHome),
+            Triple("MOVIES", binding.navTabMovies, binding.ivNavMovies),
+            Triple("SERIES", binding.navTabSeries, binding.ivNavSeries),
+            Triple("LIVE", binding.navTabLive, binding.ivNavLive),
+            Triple("MATCHES", binding.navTabMatches, binding.ivNavMatches),
+            Triple("WATCH", binding.navTabWatch, binding.ivNavProfile)
+        )
 
-        binding.liveTvCircleBg.alpha = if (tag == "LIVE") 1.0f else 0.65f
+        var selectedTabView: View = binding.navTabHome
+
+        tabs.forEach { (tabTag, tabContainer, iconView) ->
+            val isSelected = (tabTag == tag)
+            iconView.isSelected = isSelected
+            ImageViewCompat.setImageTintList(iconView, if (isSelected) activeTint else inactiveTint)
+
+            iconView.animate().cancel()
+            if (isSelected) {
+                selectedTabView = tabContainer
+                if (animate) {
+                    // Takbar chwiy برك (1.12f) داخل الـ Focus Capsule
+                    iconView.scaleX = 0.94f
+                    iconView.scaleY = 0.94f
+                    iconView.animate()
+                        .scaleX(1.12f)
+                        .scaleY(1.12f)
+                        .setDuration(240)
+                        .setInterpolator(OvershootInterpolator(1.4f))
+                        .start()
+                } else {
+                    iconView.scaleX = 1.12f
+                    iconView.scaleY = 1.12f
+                }
+            } else {
+                // Ki troh menha tweli lel 7ajm el asli (1.0f)
+                if (animate) {
+                    iconView.animate()
+                        .scaleX(1.0f)
+                        .scaleY(1.0f)
+                        .setDuration(180)
+                        .setInterpolator(DecelerateInterpolator())
+                        .start()
+                } else {
+                    iconView.scaleX = 1.0f
+                    iconView.scaleY = 1.0f
+                }
+            }
+        }
+
+        moveActiveCircleToTab(selectedTabView, animate)
+    }
+
+    private fun moveActiveCircleToTab(targetTab: View, animate: Boolean) {
+        val circle = binding.liveTvCircleBg
+        val row = binding.navTabsRow
+
+        val applyPosition = {
+            val destX = (row.left + targetTab.left - circle.left) +
+                    (targetTab.width - circle.width) / 2f
+            circle.animate().cancel()
+            if (animate) {
+                circle.scaleX = 0.92f
+                circle.scaleY = 0.92f
+                circle.animate()
+                    .translationX(destX)
+                    .scaleX(1.0f)
+                    .scaleY(1.0f)
+                    .setDuration(240)
+                    .setInterpolator(FastOutSlowInInterpolator())
+                    .start()
+            } else {
+                circle.translationX = destX
+                circle.scaleX = 1.0f
+                circle.scaleY = 1.0f
+            }
+        }
+
+        if (targetTab.width == 0 || circle.width == 0) {
+            targetTab.post { applyPosition() }
+        } else {
+            applyPosition()
+        }
     }
 }
