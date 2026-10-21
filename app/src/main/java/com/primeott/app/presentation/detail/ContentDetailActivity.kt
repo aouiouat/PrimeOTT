@@ -194,6 +194,13 @@ class ContentDetailActivity : AppCompatActivity() {
                     btnTopServerHd.text = qualityBadge
                 }
             },
+            onFirstFrameRendered = {
+                runOnUiThread {
+                    // بمجرد ظهور أول صورة من الفيلم الحقيقي، يختفي الـ Loader وتختفي الواجهة الشفافة لمشاهدة نظيفة
+                    loadingContainer.visibility = View.GONE
+                    controlsOverlay.visibility = View.GONE
+                }
+            },
             onPlaybackExhausted = {
                 runOnUiThread {
                     hasLockedPrimaryStream = false
@@ -859,6 +866,9 @@ class ContentDetailActivity : AppCompatActivity() {
                         lower.contains("/playlist/") ||
                         lower.contains("master.txt") ||
                         lower.contains("m3u8-proxy")) &&
+                        !lower.contains("netnaija.film/wp-content") &&
+                        !lower.contains("promo") &&
+                        !lower.contains("trailer") &&
                         !lower.endsWith(".js") &&
                         !lower.endsWith(".css") &&
                         !lower.endsWith(".png") &&
@@ -914,51 +924,66 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
+    // متغير يحفظ الجودات المختارة حالياً (null = أعلى جودة تلقائية)
+    private var selectedQualityHeight: Int? = null
+
     private fun startStreamExtractionForEpisodeOrMovie(vod: VodItem, season: Int = 1, episode: Int = 1) {
         snifferTimeoutJob?.cancel()
         hasLockedPrimaryStream = false
+        selectedQualityHeight = null
         playerEngine.pauseAndReleaseSocket()
         resolvedDirectStreams.clear()
+        providerTargets = emptyList()
 
         tvElapsed.text = "0:00"
         tvDuration.text = "--:--"
         seekBar.progress = 0
         tvSubtitleOverlay.text = ""
         tvSubtitleOverlay.visibility = View.GONE
-        loadingContainer.visibility = View.VISIBLE
-        tvLoadingStatus.text = "Connecting to Fast CDN..."
+        loadingContainer.visibility = View.GONE
+        tvLoadingStatus.text = "Connecting to fastest server..."
 
-        providerTargets = OttRepository.buildRealProviderSources(vod.id, vod.isSeries, season, episode)
-        currentProviderIndex = 0
-
-        // 1. الاستخراج المباشر الفائق السرعة عبر HTTP (يرجع أول رابط فور جهوزه في ~0.4 ثانية)
+        // جلب السيرفرات المفعلة في لوحة التحكم فقط وفحص أسرعها
         lifecycleScope.launch {
-            val allResolved = PrimeVodExtractor.resolveDirectStreamsFast(
+            val panelServers = PrimeVodExtractor.fetchPanelConfiguredServers(
                 tmdbId = vod.id,
                 imdbId = fullDetails?.imdbId.orEmpty(),
                 title = vod.title,
                 isSeries = vod.isSeries,
                 season = season,
                 episode = episode,
-                onFastestSourceFound = { fastestSource ->
-                    onRawStreamIntercepted(
-                        url = fastestSource.url,
-                        referer = fastestSource.referer,
-                        origin = fastestSource.origin,
-                        userAgent = fastestSource.userAgent
-                    )
+                onFastestDirectReady = { fastestServer ->
+                    runOnUiThread {
+                        val idx = providerTargets.indexOfFirst { it.label == fastestServer.label }.coerceAtLeast(0)
+                        currentProviderIndex = idx
+                        onRawStreamIntercepted(
+                            url = fastestServer.url,
+                            referer = fastestServer.referer,
+                            origin = fastestServer.origin,
+                            userAgent = fastestServer.userAgent
+                        )
+                    }
                 }
             )
-            if (allResolved.size > 1) {
-                playerEngine.appendBackupSourcesSilently(allResolved)
-            }
-        }
 
-        // 2. تشغيل المستخرج الخفي كضمان إضافي إذا لم يرجع HTTP المباشر خلال 1.1 ثانية
-        lifecycleScope.launch {
-            delay(1100L)
+            providerTargets = panelServers
+
+            if (panelServers.isEmpty()) {
+                tvLoadingStatus.text = "No active servers in Admin Panel"
+                loadingSpinner.visibility = View.GONE
+                return@launch
+            }
+
+            // إذا لم يكن السيرفر الأول مباشراً، نمرره للمستخرج الخفي الصامت
             if (!hasLockedPrimaryStream) {
-                loadProviderInHeadlessSniffer(0)
+                val firstDirectIdx = panelServers.indexOfFirst { it.isDirectStream }
+                if (firstDirectIdx != -1) {
+                    currentProviderIndex = firstDirectIdx
+                    val s = panelServers[firstDirectIdx]
+                    onRawStreamIntercepted(s.url, s.referer, s.origin, s.userAgent)
+                } else {
+                    loadProviderInHeadlessSniffer(0)
+                }
             }
         }
     }
@@ -1213,85 +1238,105 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * نافذة موحدة مطابقة 100% لـ PrimeTV OTT:
+     * تعرض اسم السيرفر الذي وضعه الأدمن في اللوحة + الجودات الحقيقية الموجودة فعلياً في هذا السيرفر فقط (4K / 1080p / 720p / 480p)
+     */
     private fun showPrimeServersAndQualityPopup() {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
-        val widthPx = (310 * resources.displayMetrics.density).toInt()
+        val widthPx = (290 * resources.displayMetrics.density).toInt()
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = makeRoundedBg("#16181F", 14, "#2A2E3B")
-            setPadding(dp(20), dp(16), dp(20), dp(16))
+            setPadding(dp(18), dp(14), dp(18), dp(14))
             layoutParams = ViewGroup.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
 
-        val qualities = playerEngine.getAvailableQualityTracks()
-        if (qualities.isNotEmpty()) {
-            val qHeader = TextView(this).apply {
-                text = "🎞️ Video Quality (ExoPlayer)"
-                textSize = 14f
-                setTypeface(typeface, Typeface.BOLD)
-                setTextColor("#94A3B8".toColorInt())
-                setPadding(dp(8), dp(4), dp(8), dp(8))
-            }
-            card.addView(qHeader)
-
-            val autoTv = TextView(this).apply {
-                text = "Auto (Best Quality)"
-                textSize = 14.5f
-                setTypeface(typeface, Typeface.BOLD)
+        if (providerTargets.isEmpty()) {
+            val emptyTv = TextView(this).apply {
+                text = "No servers configured in panel"
                 setTextColor(Color.WHITE)
-                setPadding(dp(12), dp(8), dp(12), dp(8))
-                setOnClickListener {
-                    playerEngine.selectVideoQualityHeight(null)
-                    dialog.dismiss()
-                }
+                textSize = 14f
+                setPadding(dp(12), dp(12), dp(12), dp(12))
             }
-            card.addView(autoTv)
+            card.addView(emptyTv)
+            dialog.setContentView(card)
+            dialog.show()
+            return
+        }
 
-            qualities.forEach { qTrack ->
-                val qRow = TextView(this).apply {
-                    text = qTrack.label
+        val realQualities = playerEngine.getAvailableQualityTracks()
+        val currentDetectedBadge = playerEngine.getCurrentDetectedQualityLabel()
+
+        providerTargets.forEachIndexed { srvIdx, server ->
+            val isCurrentServer = (srvIdx == currentProviderIndex)
+
+            if (isCurrentServer && realQualities.isNotEmpty()) {
+                // عرض اسم السيرفر (الذي سماه الأدمن) مع كل جودة حقيقية موجودة فعلياً في البث (4K / 1080p / 720p / 480p)
+                realQualities.forEach { qTrack ->
+                    val shortQ = when {
+                        qTrack.height >= 2160 -> "4K"
+                        qTrack.height >= 1080 -> "1080p"
+                        qTrack.height >= 720 -> "720p"
+                        qTrack.height >= 480 -> "480p"
+                        else -> "${qTrack.height}p"
+                    }
+                    val isSelectedQuality = (selectedQualityHeight == qTrack.height) ||
+                            (selectedQualityHeight == null && qTrack == realQualities.first())
+
+                    val row = TextView(this).apply {
+                        text = "${server.label} $shortQ"
+                        textSize = 14.5f
+                        setTypeface(typeface, Typeface.BOLD)
+                        setTextColor(if (isSelectedQuality) "#E50914".toColorInt() else Color.WHITE)
+                        setPadding(dp(12), dp(11), dp(12), dp(11))
+                        setOnClickListener {
+                            selectedQualityHeight = qTrack.height
+                            playerEngine.selectVideoQualityHeight(qTrack.height)
+                            btnTopServerHd.text = shortQ
+                            dialog.dismiss()
+                        }
+                    }
+                    card.addView(row)
+                }
+            } else if (isCurrentServer) {
+                // إذا كان السيرفر يحتوي على جودة واحدة فقط (مثلاً ملف MP4 مباشر 1080p) يعرضها وحدها فقط
+                val row = TextView(this).apply {
+                    text = "${server.label} $currentDetectedBadge"
                     textSize = 14.5f
                     setTypeface(typeface, Typeface.BOLD)
-                    setTextColor(Color.WHITE)
-                    setPadding(dp(12), dp(8), dp(12), dp(8))
+                    setTextColor("#E50914".toColorInt())
+                    setPadding(dp(12), dp(11), dp(12), dp(11))
+                    setOnClickListener { dialog.dismiss() }
+                }
+                card.addView(row)
+            } else {
+                // باقي السيرفرات الموجودة في لوحة التحكم (للتبديل إليها عند الرغبة)
+                val row = TextView(this).apply {
+                    text = server.label
+                    textSize = 14.5f
+                    setTypeface(typeface, Typeface.BOLD)
+                    setTextColor("#CBD5E1".toColorInt())
+                    setPadding(dp(12), dp(11), dp(12), dp(11))
                     setOnClickListener {
-                        playerEngine.selectVideoQualityHeight(qTrack.height)
+                        currentProviderIndex = srvIdx
+                        selectedQualityHeight = null
+                        hasLockedPrimaryStream = false
+                        resolvedDirectStreams.clear()
+                        loadingContainer.visibility = View.VISIBLE
+                        if (server.isDirectStream) {
+                            onRawStreamIntercepted(server.url, server.referer, server.origin, server.userAgent)
+                        } else {
+                            loadProviderInHeadlessSniffer(srvIdx)
+                        }
                         dialog.dismiss()
                     }
                 }
-                card.addView(qRow)
+                card.addView(row)
             }
-        }
-
-        val sHeader = TextView(this).apply {
-            text = "⚡ Direct CDN Sources"
-            textSize = 14f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor("#94A3B8".toColorInt())
-            setPadding(dp(8), dp(12), dp(8), dp(8))
-        }
-        card.addView(sHeader)
-
-        providerTargets.forEachIndexed { idx, provider ->
-            val isSel = idx == currentProviderIndex
-            val tv = TextView(this).apply {
-                text = if (isSel) "✓  ${provider.label}" else "    ${provider.label}"
-                textSize = 14f
-                setTypeface(typeface, Typeface.BOLD)
-                setTextColor(if (isSel) "#E50914".toColorInt() else Color.WHITE)
-                setPadding(dp(12), dp(10), dp(12), dp(10))
-                setOnClickListener {
-                    hasLockedPrimaryStream = false
-                    resolvedDirectStreams.clear()
-                    loadingContainer.visibility = View.VISIBLE
-                    loadProviderInHeadlessSniffer(idx)
-                    dialog.dismiss()
-                }
-            }
-            card.addView(tv)
         }
 
         dialog.setContentView(card)

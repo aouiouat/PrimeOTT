@@ -110,83 +110,8 @@ object OttRepository {
      * (تُستخرج منها روابط .m3u8/.mp4 في الخلفية وتشتغل داخل ExoPlayer الخاص بنا فقط)
      */
     fun buildRealProviderSources(tmdbId: String, isSeries: Boolean, season: Int = 1, episode: Int = 1): List<StreamSource> {
-        return if (isSeries) {
-            listOf(
-                StreamSource(
-                    label = "Prime Server 1 (VidLink 1080p)",
-                    url = "https://vidlink.pro/tv/$tmdbId/$season/$episode?autoplay=true",
-                    referer = "https://vidlink.pro/",
-                    origin = "https://vidlink.pro",
-                    isDirectStream = false
-                ),
-                StreamSource(
-                    label = "Prime Server 2 (VixSrc FHD)",
-                    url = "https://vixsrc.to/tv/$tmdbId/$season/$episode",
-                    referer = "https://vixsrc.to/",
-                    origin = "https://vixsrc.to",
-                    isDirectStream = false
-                ),
-                StreamSource(
-                    label = "Prime Server 3 (VidSrc VIP)",
-                    url = "https://vidsrc.cc/v2/embed/tv/$tmdbId/$season/$episode?autoPlay=true",
-                    referer = "https://vidsrc.cc/",
-                    origin = "https://vidsrc.cc",
-                    isDirectStream = false
-                ),
-                StreamSource(
-                    label = "Prime Server 4 (EmbedSu HD)",
-                    url = "https://embed.su/embed/tv/$tmdbId/$season/$episode",
-                    referer = "https://embed.su/",
-                    origin = "https://embed.su",
-                    isDirectStream = false
-                ),
-                StreamSource(
-                    label = "Prime Server 5 (AutoEmbed)",
-                    url = "https://autoembed.cc/embed/player.php?id=$tmdbId&s=$season&e=$episode",
-                    referer = "https://autoembed.cc/",
-                    origin = "https://autoembed.cc",
-                    isDirectStream = false
-                )
-            )
-        } else {
-            listOf(
-                StreamSource(
-                    label = "Prime Server 1 (VidLink 1080p)",
-                    url = "https://vidlink.pro/movie/$tmdbId?autoplay=true",
-                    referer = "https://vidlink.pro/",
-                    origin = "https://vidlink.pro",
-                    isDirectStream = false
-                ),
-                StreamSource(
-                    label = "Prime Server 2 (VixSrc FHD)",
-                    url = "https://vixsrc.to/movie/$tmdbId",
-                    referer = "https://vixsrc.to/",
-                    origin = "https://vixsrc.to",
-                    isDirectStream = false
-                ),
-                StreamSource(
-                    label = "Prime Server 3 (VidSrc VIP)",
-                    url = "https://vidsrc.cc/v2/embed/movie/$tmdbId?autoPlay=true",
-                    referer = "https://vidsrc.cc/",
-                    origin = "https://vidsrc.cc",
-                    isDirectStream = false
-                ),
-                StreamSource(
-                    label = "Prime Server 4 (EmbedSu HD)",
-                    url = "https://embed.su/embed/movie/$tmdbId",
-                    referer = "https://embed.su/",
-                    origin = "https://embed.su",
-                    isDirectStream = false
-                ),
-                StreamSource(
-                    label = "Prime Server 5 (AutoEmbed)",
-                    url = "https://autoembed.cc/embed/player.php?id=$tmdbId",
-                    referer = "https://autoembed.cc/",
-                    origin = "https://autoembed.cc",
-                    isDirectStream = false
-                )
-            )
-        }
+        // يتم جلب السيرفرات وأسمائها حصرياً من لوحة تحكم Cloudflare (/api/v2/vod-stream)
+        return emptyList()
     }
 
     private fun parseTmdbArrayToVodList(arr: JSONArray?, defaultCategory: String, forceSeries: Boolean? = null): List<VodItem> {

@@ -12,6 +12,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -30,26 +31,18 @@ object PrimeVodExtractor {
     private const val TMDB_STILL_BASE = "https://image.tmdb.org/t/p/w300"
     private const val BROWSER_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
-    // عميل HTTP سريع جداً مخصص للاستخراج الفوري (مهلة 5 ثوانٍ فقط لعدم تأخير بدء الفيلم)
-    private val fastExtractorClient: OkHttpClient = OttRepository.okHttpClient.newBuilder()
+    private val fastClient: OkHttpClient = OttRepository.okHttpClient.newBuilder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(6, TimeUnit.SECONDS)
         .build()
 
-    private var xtreamVodCacheLoaded = false
-    private val xtreamVodByTmdbId = HashMap<String, StreamSource>()
-    private val xtreamVodByTitle = HashMap<String, StreamSource>()
-
-    private fun httpGetFast(url: String, referer: String = "", extraHeaders: Map<String, String> = emptyMap()): String {
+    private fun httpGetFast(url: String, referer: String = ""): String {
         val builder = Request.Builder()
             .url(url)
             .header("User-Agent", BROWSER_UA)
             .header("Accept", "*/*")
-        if (referer.isNotEmpty()) {
-            builder.header("Referer", referer)
-        }
-        extraHeaders.forEach { (k, v) -> builder.header(k, v) }
-        fastExtractorClient.newCall(builder.build()).execute().use { res ->
+        if (referer.isNotEmpty()) builder.header("Referer", referer)
+        fastClient.newCall(builder.build()).execute().use { res ->
             return res.body?.string() ?: ""
         }
     }
@@ -68,12 +61,9 @@ object PrimeVodExtractor {
                 if (id == "0" || seen.contains(id)) continue
                 val posterPath = obj.optString("poster_path", "")
                 if (posterPath.isEmpty() || posterPath == "null") continue
+                if (obj.optInt("vote_count", 0) < 25) continue
 
-                val voteCount = obj.optInt("vote_count", 0)
-                if (voteCount < 25) continue
-
-                val mediaType = obj.optString("media_type", "movie")
-                val isTv = mediaType == "tv"
+                val isTv = obj.optString("media_type", "movie") == "tv"
                 val date = if (isTv) obj.optString("first_air_date", "") else obj.optString("release_date", "")
                 if (date.isEmpty() || date > "2025-12-31") continue
 
@@ -86,7 +76,6 @@ object PrimeVodExtractor {
                 val rating = String.format(Locale.US, "%.1f", obj.optDouble("vote_average", 7.4))
                 val year = if (date.length >= 4) date.take(4) else "2024"
                 val overview = obj.optString("overview", "")
-                val sources = OttRepository.buildRealProviderSources(id, isTv)
 
                 list.add(
                     VodItem(
@@ -96,16 +85,14 @@ object PrimeVodExtractor {
                         rating = rating,
                         year = year,
                         posterUrl = "$TMDB_POSTER_BASE$posterPath",
-                        streamUrls = sources.map { it.url },
+                        streamUrls = emptyList(),
                         isSeries = isTv,
                         description = overview
                     )
                 )
                 if (list.size >= 35) break
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) {}
         return@withContext list
     }
 
@@ -125,251 +112,158 @@ object PrimeVodExtractor {
                 val runtime = e.optInt("runtime", 45)
                 list.add(SeriesEpisode(epNum, name, overview, stillUrl, runtime))
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) {}
         return@withContext list
     }
 
     /**
-     * استخراج فوري متوازٍ: يرسل السيرفر الأسرع فوراً عبر onFastestSourceFound ليشتغل الفيلم في أقل من ثانية!
+     * يجلب فقط وحصرياً السيرفرات المفعلة في لوحة التحكم (/api/v2/vod-stream)
+     * ويفحصها بالتوازي ليختار أسرع سيرفر شغال بينها مع الاحتفاظ بالاسم الذي اختاره الأدمن!
      */
-    suspend fun resolveDirectStreamsFast(
+    suspend fun fetchPanelConfiguredServers(
         tmdbId: String,
         imdbId: String = "",
         title: String = "",
         isSeries: Boolean = false,
         season: Int = 1,
         episode: Int = 1,
-        onFastestSourceFound: (StreamSource) -> Unit = {}
+        onFastestDirectReady: (StreamSource) -> Unit = {}
     ): List<StreamSource> = coroutineScope {
-        val results = ArrayList<StreamSource>()
-        var firstDispatched = false
-
-        fun notifyFound(list: List<StreamSource>) {
-            synchronized(results) {
-                for (src in list) {
-                    if (results.none { it.url == src.url }) {
-                        results.add(src)
-                        if (!firstDispatched) {
-                            firstDispatched = true
-                            onFastestSourceFound(src)
-                        }
-                    }
-                }
-            }
-        }
-
-        val jobs = listOf(
-            async(Dispatchers.IO) {
-                val r = resolveFromVixSrcDirect(tmdbId, isSeries, season, episode)
-                if (r.isNotEmpty()) notifyFound(r)
-                r
-            },
-            async(Dispatchers.IO) {
-                val r = resolveFromXtreamVodIfAvailable(tmdbId, title, isSeries)
-                if (r.isNotEmpty()) notifyFound(r)
-                r
-            },
-            async(Dispatchers.IO) {
-                val r = resolveFromVidSrcRcpChain(tmdbId, imdbId, isSeries, season, episode)
-                if (r.isNotEmpty()) notifyFound(r)
-                r
-            },
-            async(Dispatchers.IO) {
-                val r = resolveFromAutoEmbedDirect(tmdbId, isSeries, season, episode)
-                if (r.isNotEmpty()) notifyFound(r)
-                r
-            }
-        )
-
-        jobs.awaitAll()
-        results
-    }
-
-    private fun resolveFromXtreamVodIfAvailable(tmdbId: String, title: String, isSeries: Boolean): List<StreamSource> {
-        if (isSeries) return emptyList()
-        try {
-            if (!xtreamVodCacheLoaded) {
-                xtreamVodCacheLoaded = true
-                val base = SessionManager.XTREAM_BASE_URL
-                val u = SessionManager.XTREAM_USER
-                val p = SessionManager.XTREAM_PASS
-                val api = "$base/player_api.php?username=$u&password=$p&action=get_vod_streams"
-                val raw = httpGetFast(api)
-                if (raw.trim().startsWith("[")) {
-                    val arr = JSONArray(raw)
-                    for (i in 0 until arr.length()) {
-                        val o = arr.optJSONObject(i) ?: continue
-                        val streamId = o.optInt("stream_id", 0)
-                        if (streamId == 0) continue
-                        val ext = o.optString("container_extension", "mp4").ifEmpty { "mp4" }
-                        val directUrl = "$base/movie/$u/$p/$streamId.$ext"
-                        val name = o.optString("name", "").lowercase(Locale.ROOT).trim()
-                        val itemTmdb = o.optString("tmdb", "").ifEmpty { o.optString("tmdb_id", "") }
-                        val src = StreamSource("Prime Direct 1080p", directUrl, isDirectStream = true)
-                        if (itemTmdb.isNotEmpty() && itemTmdb != "0") {
-                            xtreamVodByTmdbId[itemTmdb] = src
-                        }
-                        if (name.isNotEmpty()) {
-                            xtreamVodByTitle[name] = src
-                        }
-                    }
-                }
-            }
-            xtreamVodByTmdbId[tmdbId]?.let { return listOf(it) }
-            val cleanTitle = title.lowercase(Locale.ROOT).trim()
-            if (cleanTitle.isNotEmpty()) {
-                xtreamVodByTitle[cleanTitle]?.let { return listOf(it) }
-            }
-        } catch (e: Exception) {}
-        return emptyList()
-    }
-
-    /**
-     * أسرع مزود عالمي (VixSrc CDN): يستخرج رابط الـ Master HLS `.m3u8` في ~300ms مباشرة عبر HTTP
-     */
-    private fun resolveFromVixSrcDirect(tmdbId: String, isSeries: Boolean, season: Int, episode: Int): List<StreamSource> {
-        val list = ArrayList<StreamSource>()
-        try {
-            val pageUrl = if (isSeries) {
-                "https://vixsrc.to/tv/$tmdbId/$season/$episode"
-            } else {
-                "https://vixsrc.to/movie/$tmdbId"
-            }
-            val html = httpGetFast(pageUrl, "https://vixsrc.to/")
-            val urlMatch = Regex("""['"]?(https?://[^'"\s<>]+/playlist/\d+[^'"\s<>]*)['"]?""").find(html)
-            val tokenMatch = Regex("""['"]token['"]\s*:\s*['"]([^'"]+)['"]""").find(html)
-            val expiresMatch = Regex("""['"]expires['"]\s*:\s*['"]([^'"]+)['"]""").find(html)
-
-            if (urlMatch != null && tokenMatch != null && expiresMatch != null) {
-                val basePlaylist = urlMatch.groupValues[1]
-                val token = tokenMatch.groupValues[1]
-                val expires = expiresMatch.groupValues[1]
-                val sep = if (basePlaylist.contains("?")) "&" else "?"
-                val finalM3u8 = "${basePlaylist}${sep}token=$token&expires=$expires&h=1"
-                list.add(
-                    StreamSource(
-                        label = "Prime Server 1080p (Fast CDN)",
-                        url = finalM3u8,
-                        referer = pageUrl,
-                        origin = "https://vixsrc.to",
-                        userAgent = BROWSER_UA,
-                        isDirectStream = true
-                    )
-                )
-            }
-
-            val m3u8Regex = Regex("""https?://[^\s"'<>\\]+?\.m3u8[^\s"'<>\\]*""", RegexOption.IGNORE_CASE)
-            m3u8Regex.findAll(html).forEach { m ->
-                val link = m.value.replace("\\/", "/")
-                if (list.none { it.url == link }) {
+        val panelServers = withContext(Dispatchers.IO) {
+            val list = ArrayList<StreamSource>()
+            try {
+                val typeStr = if (isSeries) "tv" else "movie"
+                val encTitle = URLEncoder.encode(title, "UTF-8")
+                val apiUrl = "${SessionManager.CLOUDFLARE_API_URL}/api/v2/vod-stream?tmdb_id=$tmdbId&imdb_id=$imdbId&type=$typeStr&s=$season&e=$episode&title=$encTitle"
+                val root = JSONObject(httpGetFast(apiUrl))
+                val arr = root.optJSONArray("streams") ?: JSONArray()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val url = o.optString("url", "")
+                    if (url.isEmpty()) continue
+                    val srvName = o.optString("server_name", o.optString("label", "Prime Server"))
                     list.add(
                         StreamSource(
-                            label = "Prime Server 1080p (HLS)",
-                            url = link,
-                            referer = pageUrl,
-                            origin = "https://vixsrc.to",
-                            userAgent = BROWSER_UA,
-                            isDirectStream = true
+                            label = srvName,
+                            url = url,
+                            referer = o.optString("referer", ""),
+                            origin = o.optString("origin", ""),
+                            userAgent = o.optString("user_agent", BROWSER_UA),
+                            isDirectStream = o.optBoolean("is_direct", false)
                         )
                     )
                 }
-            }
-        } catch (e: Exception) {}
-        return list
-    }
-
-    private fun resolveFromVidSrcRcpChain(
-        tmdbId: String,
-        imdbId: String,
-        isSeries: Boolean,
-        season: Int,
-        episode: Int
-    ): List<StreamSource> {
-        val list = ArrayList<StreamSource>()
-        val queryId = imdbId.ifEmpty { tmdbId }
-        val embedUrls = if (isSeries) {
-            listOf(
-                "https://vidsrc.xyz/embed/tv?tmdb=$tmdbId&season=$season&episode=$episode",
-                "https://vidsrc.net/embed/tv/$queryId/$season-$episode"
-            )
-        } else {
-            listOf(
-                "https://vidsrc.xyz/embed/movie?tmdb=$tmdbId",
-                "https://vidsrc.net/embed/movie/$queryId"
-            )
+            } catch (e: Exception) {}
+            list
         }
 
-        val iframeRegex = Regex("""<iframe[^>]+src=['"]((?:https?:)?//[^'"]+/rcp/[^'"]+)['"]""", RegexOption.IGNORE_CASE)
-        val proRcpRegex = Regex("""['"](/(?:prorcp|srcrcp)/[A-Za-z0-9+/=_-]+)['"]""")
-        val m3u8Regex = Regex("""https?://[^\s"'<>\\]+?\.m3u8[^\s"'<>\\]*""", RegexOption.IGNORE_CASE)
+        if (panelServers.isEmpty()) return@coroutineScope emptyList()
 
-        for (embedUrl in embedUrls) {
-            try {
-                val html1 = httpGetFast(embedUrl, "https://vidsrc.xyz/")
-                m3u8Regex.findAll(html1).forEach { m ->
-                    val u = m.value.replace("\\/", "/")
-                    list.add(StreamSource("Prime Server 2 (VidSrc FHD)", u, embedUrl, userAgent = BROWSER_UA, isDirectStream = true))
+        var fastestDispatched = false
+        val lock = Any()
+
+        // فحص متوازٍ لجميع السيرفرات التي وضعها الأدمن لاختيار الأسرع بينها تلقائياً
+        val resolvedList = panelServers.map { srv ->
+            async(Dispatchers.IO) {
+                if (srv.isDirectStream) {
+                    synchronized(lock) {
+                        if (!fastestDispatched) {
+                            fastestDispatched = true
+                            onFastestDirectReady(srv)
+                        }
+                    }
+                    srv
+                } else {
+                    // محاولة استخراج رابط .m3u8 أو .mp4 مباشر من رابط السيرفر الذي وضعه الأدمن
+                    val directExtracted = tryExtractM3u8FromAdminServer(srv)
+                    if (directExtracted != null) {
+                        synchronized(lock) {
+                            if (!fastestDispatched) {
+                                fastestDispatched = true
+                                onFastestDirectReady(directExtracted)
+                            }
+                        }
+                        directExtracted
+                    } else {
+                        srv
+                    }
                 }
+            }
+        }.awaitAll()
 
-                val iframeMatch = iframeRegex.find(html1) ?: continue
+        resolvedList
+    }
+
+    private fun tryExtractM3u8FromAdminServer(srv: StreamSource): StreamSource? {
+        // استبعاد موقع netnaija من الاستخراج النصي العشوائي لأن صفحته تحتوي على فيديو إعلاني ثابت مدته 1:34
+        if (srv.url.contains("netnaija", ignoreCase = true)) {
+            return null
+        }
+        try {
+            val html = httpGetFast(srv.url, srv.referer)
+
+            // 1. فحص VixSrc Master Playlist (يرجع الفيلم الكامل بدقة 1080p فوراً من هاتف المستخدم)
+            val urlMatch = Regex("""['"]?(https?://[^'"\s<>]+/playlist/\d+[^'"\s<>]*)['"]?""").find(html)
+            val tokenMatch = Regex("""['"]token['"]\s*:\s*['"]([^'"]+)['"]""").find(html)
+            val expiresMatch = Regex("""['"]expires['"]\s*:\s*['"]([^'"]+)['"]""").find(html)
+            if (urlMatch != null && tokenMatch != null && expiresMatch != null) {
+                val basePlaylist = urlMatch.groupValues[1]
+                val sep = if (basePlaylist.contains("?")) "&" else "?"
+                val finalM3u8 = "${basePlaylist}${sep}token=${tokenMatch.groupValues[1]}&expires=${expiresMatch.groupValues[1]}&h=1"
+                return srv.copy(
+                    url = finalM3u8,
+                    referer = srv.url,
+                    origin = "https://vixsrc.to",
+                    isDirectStream = true
+                )
+            }
+
+            // 2. فحص روابط .m3u8 المباشرة (مع استبعاد أي رابط يحتوي على كلمة promo أو trailer أو ad)
+            val m3u8Regex = Regex("""https?://[^\s"'<>\\]+?\.m3u8[^\s"'<>\\]*""", RegexOption.IGNORE_CASE)
+            m3u8Regex.findAll(html).forEach { m ->
+                val link = m.value.replace("\\/", "/")
+                if (!link.contains("promo", true) && !link.contains("trailer", true) && !link.contains("example.com", true)) {
+                    return srv.copy(url = link, isDirectStream = true)
+                }
+            }
+
+            // 3. فحص سلسلة VidSrc RCP -> ProRCP
+            val iframeRegex = Regex("""<iframe[^>]+src=['"]((?:https?:)?//[^'"]+/rcp/[^'"]+)['"]""", RegexOption.IGNORE_CASE)
+            val proRcpRegex = Regex("""['"](/(?:prorcp|srcrcp)/[A-Za-z0-9+/=_-]+)['"]""")
+            val iframeMatch = iframeRegex.find(html)
+            if (iframeMatch != null) {
                 var rcpUrl = iframeMatch.groupValues[1]
                 if (rcpUrl.startsWith("//")) rcpUrl = "https:$rcpUrl"
                 val rcpHost = runCatching {
-                    val uri = android.net.Uri.parse(rcpUrl)
-                    "${uri.scheme}://${uri.host}"
+                    val u = android.net.Uri.parse(rcpUrl)
+                    "${u.scheme}://${u.host}"
                 }.getOrDefault("https://cloudnestra.com")
-
-                val html2 = httpGetFast(rcpUrl, embedUrl)
-                m3u8Regex.findAll(html2).forEach { m ->
-                    val u = m.value.replace("\\/", "/")
-                    list.add(StreamSource("Prime Server 2 (Cloud FHD)", u, "$rcpHost/", rcpHost, BROWSER_UA, true))
+                val html2 = httpGetFast(rcpUrl, srv.url)
+                m3u8Regex.find(html2)?.let { m ->
+                    return srv.copy(
+                        url = m.value.replace("\\/", "/"),
+                        referer = "$rcpHost/",
+                        origin = rcpHost,
+                        isDirectStream = true
+                    )
                 }
-
                 val proMatch = proRcpRegex.find(html2)
                 if (proMatch != null) {
-                    val proUrl = "$rcpHost${proMatch.groupValues[1]}"
-                    val html3 = httpGetFast(proUrl, rcpUrl)
-                    m3u8Regex.findAll(html3).forEach { m ->
-                        val u = m.value.replace("\\/", "/")
-                        if (!u.contains("example.com")) {
-                            list.add(StreamSource("Prime Server 2 (VIP 1080p)", u, "$rcpHost/", rcpHost, BROWSER_UA, true))
+                    val html3 = httpGetFast("$rcpHost${proMatch.groupValues[1]}", rcpUrl)
+                    m3u8Regex.find(html3)?.let { m ->
+                        val link = m.value.replace("\\/", "/")
+                        if (!link.contains("example.com")) {
+                            return srv.copy(
+                                url = link,
+                                referer = "$rcpHost/",
+                                origin = rcpHost,
+                                isDirectStream = true
+                            )
                         }
                     }
                 }
-                if (list.isNotEmpty()) break
-            } catch (e: Exception) {}
-        }
-        return list
-    }
-
-    private fun resolveFromAutoEmbedDirect(
-        tmdbId: String,
-        isSeries: Boolean,
-        season: Int,
-        episode: Int
-    ): List<StreamSource> {
-        val list = ArrayList<StreamSource>()
-        val ep = if (isSeries) {
-            "https://autoembed.cc/embed/player.php?id=$tmdbId&s=$season&e=$episode"
-        } else {
-            "https://autoembed.cc/embed/player.php?id=$tmdbId"
-        }
-        val m3u8Regex = Regex("""https?://[^\s"'<>\\]+?\.m3u8[^\s"'<>\\]*""", RegexOption.IGNORE_CASE)
-        val mp4Regex = Regex("""https?://[^\s"'<>\\]+?\.mp4[^\s"'<>\\]*""", RegexOption.IGNORE_CASE)
-
-        try {
-            val html = httpGetFast(ep, "https://autoembed.cc/")
-            m3u8Regex.findAll(html).forEach { m ->
-                val link = m.value.replace("\\/", "/")
-                list.add(StreamSource("Prime Server 3 (AutoEmbed)", link, ep, userAgent = BROWSER_UA, isDirectStream = true))
-            }
-            mp4Regex.findAll(html).forEach { m ->
-                val link = m.value.replace("\\/", "/")
-                list.add(StreamSource("Prime Server 3 (Direct MP4)", link, ep, userAgent = BROWSER_UA, isDirectStream = true))
             }
         } catch (e: Exception) {}
-        return list
+        return null
     }
 }
