@@ -1,5 +1,6 @@
 package com.primeott.app.presentation.livetv
 
+import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.Intent
 import android.content.pm.ActivityInfo
@@ -34,12 +35,14 @@ import com.primeott.app.databinding.FragmentLiveTvBinding
 import com.primeott.app.domain.model.Category
 import com.primeott.app.domain.model.Channel
 import com.primeott.app.domain.model.StreamSource
+import com.primeott.app.presentation.player.LiveTvPlayerEngine
 import com.primeott.app.presentation.player.PrimePlayerEngine
 import com.primeott.app.presentation.watch.WatchRoomActivity
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 @UnstableApi
 class LiveTvFragment : Fragment() {
@@ -47,7 +50,7 @@ class LiveTvFragment : Fragment() {
     private var _binding: FragmentLiveTvBinding? = null
     private val binding get() = _binding!!
 
-    private var playerEngine: PrimePlayerEngine? = null
+    private var livePlayerEngine: LiveTvPlayerEngine? = null
     private var timerJob: Job? = null
     private var elapsedSeconds: Int = 1
 
@@ -113,32 +116,33 @@ class LiveTvFragment : Fragment() {
             }
         )
 
-        initInlinePlayerEngine()
+        initDedicatedLivePlayerEngine()
         setupTapGestureAndControls()
         startLiveClockCounter()
         loadInitialPackagesAndChannels()
     }
 
     @OptIn(UnstableApi::class)
-    private fun initInlinePlayerEngine() {
-        playerEngine = PrimePlayerEngine(
+    private fun initDedicatedLivePlayerEngine() {
+        livePlayerEngine = LiveTvPlayerEngine(
             context = requireContext(),
             scope = viewLifecycleOwner.lifecycleScope,
             onSourceSwitched = { idx, src ->
                 currentSourceIndex = idx
                 _binding?.btnInlineQualityBadge?.text = src.label
-                _binding?.btnInlinePlayPause?.text = "❚❚"
+                _binding?.btnInlinePlayPause?.text = "⏸"
+            },
+            onBufferingChanged = { isBuffering ->
+                _binding?.liveLoadingSpinner?.visibility = if (isBuffering) View.VISIBLE else View.GONE
             },
             onPlaybackExhausted = {
-                if (isAdded) {
-                    Toast.makeText(requireContext(), "⚠️ تعذر تشغيل جميع مصادر هذه القناة", Toast.LENGTH_SHORT).show()
-                }
+                _binding?.liveLoadingSpinner?.visibility = View.GONE
             }
         )
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     private fun setupTapGestureAndControls() {
-        // GestureDetector يضمن التقاط لمسة Tap واحدة على PlayerView لإظهار/إخفاء الأزرار فوراً
         val gestureDetector = GestureDetector(
             requireContext(),
             object : GestureDetector.SimpleOnGestureListener() {
@@ -160,13 +164,13 @@ class LiveTvFragment : Fragment() {
 
         binding.btnInlinePlayPause.setOnClickListener {
             resetOverlayAutoHideTimer()
-            val engine = playerEngine ?: return@setOnClickListener
+            val engine = livePlayerEngine ?: return@setOnClickListener
             if (engine.isPlaying()) {
                 engine.pause()
                 binding.btnInlinePlayPause.text = "▶"
             } else {
                 engine.resume()
-                binding.btnInlinePlayPause.text = "❚❚"
+                binding.btnInlinePlayPause.text = "⏸"
             }
         }
 
@@ -182,9 +186,10 @@ class LiveTvFragment : Fragment() {
             resetOverlayAutoHideTimer()
             showServersPopupDialog()
         }
+
         binding.btnInlineAudio.setOnClickListener {
             resetOverlayAutoHideTimer()
-            Toast.makeText(requireContext(), "🔊 المسار الصوتي الافتراضي", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "🔊 المسار الصوتي الافتراضي نشط", Toast.LENGTH_SHORT).show()
         }
 
         binding.btnInlineAspect.setOnClickListener {
@@ -193,7 +198,6 @@ class LiveTvFragment : Fragment() {
             binding.inlinePlayerView.resizeMode = resizeModes[resizeModeIndex]
         }
 
-        // زر التكبير في الوضع المصغر (الصورة 2) وزر التصغير في الوضع الكامل (الصورة 1)
         binding.btnMiniExpand.setOnClickListener {
             setFullscreenMode(true)
         }
@@ -221,7 +225,7 @@ class LiveTvFragment : Fragment() {
                 )
                 if (ok) {
                     if (isInlineFullscreen) setFullscreenMode(false)
-                    playerEngine?.pauseAndReleaseSocket()
+                    livePlayerEngine?.pauseAndReleaseSocket()
                     startActivity(Intent(requireContext(), WatchRoomActivity::class.java).apply {
                         putExtra(WatchRoomActivity.EXTRA_ROOM_CODE, code)
                     })
@@ -254,24 +258,17 @@ class LiveTvFragment : Fragment() {
         }
     }
 
-    /**
-     * يحول المشغل بين الوضع المصغر (الصورة 2) والوضع الكامل بالعرض (الصورة 1)
-     * بدون إعادة تشغيل Activity وبدون قطع البث
-     */
     private fun setFullscreenMode(enterFullscreen: Boolean) {
         val act = activity ?: return
         val b = _binding ?: return
         isInlineFullscreen = enterFullscreen
-
         val bottomBar = act.findViewById<View>(R.id.floatingBottomBar)
 
         if (enterFullscreen) {
-            // إخفاء القوائم والشريط السفلي أولاً ثم تدوير المشغل بالعرض
             b.bottomListsContainer.visibility = View.GONE
             b.playerDividerLine.visibility = View.GONE
             bottomBar?.visibility = View.GONE
 
-            // إظهار تصميم الشاشة الكاملة (الصورة 1)
             b.btnMiniExpand.visibility = View.GONE
             b.btnInlineWatchParty.visibility = View.GONE
             b.btnTopLeftMenu.visibility = View.VISIBLE
@@ -288,11 +285,9 @@ class LiveTvFragment : Fragment() {
                 controller.systemBarsBehavior =
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             }
-
             act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         } else {
             act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-
             WindowCompat.setDecorFitsSystemWindows(act.window, true)
             WindowInsetsControllerCompat(act.window, b.root).show(WindowInsetsCompat.Type.systemBars())
 
@@ -302,7 +297,6 @@ class LiveTvFragment : Fragment() {
                 heightPx
             )
 
-            // إظهار تصميم الوضع المصغر (الصورة 2)
             b.btnMiniExpand.visibility = View.VISIBLE
             b.btnInlineWatchParty.visibility = View.VISIBLE
             b.btnTopLeftMenu.visibility = View.GONE
@@ -312,7 +306,6 @@ class LiveTvFragment : Fragment() {
             b.bottomListsContainer.visibility = View.VISIBLE
             bottomBar?.visibility = View.VISIBLE
         }
-
         b.inlinePlayerContainer.requestLayout()
         resetOverlayAutoHideTimer()
     }
@@ -322,15 +315,19 @@ class LiveTvFragment : Fragment() {
         timerJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
                 delay(1000)
-                if (playerEngine?.isPlaying() == true) {
+                if (livePlayerEngine?.isPlaying() == true) {
                     elapsedSeconds++
-                    val mins = elapsedSeconds / 60
-                    val secs = elapsedSeconds % 60
-                    val bufferedSecs = (elapsedSeconds + 23)
-                    val bMins = bufferedSecs / 60
-                    val bSecs = bufferedSecs % 60
-                    _binding?.tvLiveElapsed?.text = String.format("LIVE   %02d:%02d", mins, secs)
-                    _binding?.tvLiveDuration?.text = String.format("%02d:%02d", bMins, bSecs)
+                    val b = _binding ?: continue
+                    // تحديث النص فقط عندما تكون لوحة التحكم ظاهرة لمنع إعادة رسم حاوية الفيديو كل ثانية!
+                    if (b.inlineControlsOverlay.visibility == View.VISIBLE) {
+                        val mins = elapsedSeconds / 60
+                        val secs = elapsedSeconds % 60
+                        val bufferedSecs = (elapsedSeconds + 23)
+                        val bMins = bufferedSecs / 60
+                        val bSecs = bufferedSecs % 60
+                        b.tvLiveElapsed.text = String.format(Locale.US, "LIVE   %02d:%02d", mins, secs)
+                        b.tvLiveDuration.text = String.format(Locale.US, "%02d:%02d", bMins, bSecs)
+                    }
                 }
             }
         }
@@ -389,6 +386,10 @@ class LiveTvFragment : Fragment() {
     }
 
     private fun playChannelInline(ch: Channel) {
+        // إذا ضغط المستخدم على نفس القناة الشغالة حالياً لا نعيد تحميلها
+        if (currentPlayingChannel?.id == ch.id && livePlayerEngine?.isPlaying() == true) {
+            return
+        }
         currentPlayingChannel = ch
         elapsedSeconds = 1
         binding.tvInlineChannelTitle.text = ch.name
@@ -408,9 +409,8 @@ class LiveTvFragment : Fragment() {
         }
 
         currentSourceIndex = 0
-        // تبقى طبقة الأزرار مخفية حتى يلمس المستخدم الفيديو (Tap)
         binding.inlineControlsOverlay.visibility = View.GONE
-        playerEngine?.playSources(binding.inlinePlayerView, currentSources, 0, 0L)
+        livePlayerEngine?.playSources(binding.inlinePlayerView, currentSources, 0)
         renderChannelsList()
     }
 
@@ -452,7 +452,7 @@ class LiveTvFragment : Fragment() {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(8, 24, 8, 24)
                 setOnClickListener {
-                    playerEngine?.switchSource(idx, 0L)
+                    livePlayerEngine?.switchSource(idx)
                     dialog.dismiss()
                 }
             }
@@ -484,28 +484,28 @@ class LiveTvFragment : Fragment() {
         super.onHiddenChanged(hidden)
         if (hidden) {
             if (isInlineFullscreen) setFullscreenMode(false)
-            playerEngine?.pauseAndReleaseSocket()
+            livePlayerEngine?.pauseAndReleaseSocket()
             _binding?.btnInlinePlayPause?.text = "▶"
         } else {
-            if (currentPlayingChannel != null && playerEngine?.isPlaying() == false) {
-                playerEngine?.resume()
-                _binding?.btnInlinePlayPause?.text = "❚❚"
+            if (currentPlayingChannel != null && livePlayerEngine?.isPlaying() == false) {
+                livePlayerEngine?.resume()
+                _binding?.btnInlinePlayPause?.text = "⏸"
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        if (!isHidden && currentPlayingChannel != null && playerEngine?.isPlaying() == false) {
-            playerEngine?.resume()
-            _binding?.btnInlinePlayPause?.text = "❚❚"
+        if (!isHidden && currentPlayingChannel != null && livePlayerEngine?.isPlaying() == false) {
+            livePlayerEngine?.resume()
+            _binding?.btnInlinePlayPause?.text = "⏸"
         }
     }
 
     override fun onPause() {
         super.onPause()
         if (!requireActivity().isChangingConfigurations) {
-            playerEngine?.pause()
+            livePlayerEngine?.pauseAndReleaseSocket()
             _binding?.btnInlinePlayPause?.text = "▶"
         }
     }
@@ -513,8 +513,8 @@ class LiveTvFragment : Fragment() {
     override fun onDestroyView() {
         timerJob?.cancel()
         _binding?.inlineControlsOverlay?.removeCallbacks(autoHideRunnable)
-        playerEngine?.release()
-        playerEngine = null
+        livePlayerEngine?.release()
+        livePlayerEngine = null
         _binding = null
         super.onDestroyView()
     }

@@ -8,7 +8,7 @@
     android:layoutDirection="ltr"
     android:orientation="vertical">
 
-    <!-- 1. مشغل البث المباشر العلوي الصافي (Clean Inline Player) -->
+    <!-- 1. المشغل المدمج السريع (texture_view يمنع خطأ SurfaceFlinger 45Hz في أجهزة سامسونج) -->
     <FrameLayout
         android:id="@+id/inlinePlayerContainer"
         android:layout_width="match_parent"
@@ -20,11 +20,19 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             app:resize_mode="fit"
-            app:show_buffering="when_playing"
+            app:show_buffering="never"
             app:surface_type="surface_view"
             app:use_controller="false" />
 
-        <!-- طبقة التحكم: مخفية افتراضياً وتظهر/تختفي عند لمس الفيديو (Tap Toggle) -->
+        <!-- دائرة التحميل الحمراء النظيفة (تختفي تلقائياً فور ظهور أول فريم من القناة) -->
+        <ProgressBar
+            android:id="@+id/liveLoadingSpinner"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_gravity="center"
+            android:indeterminateTint="#E50914"
+            android:visibility="gone" />
+
         <FrameLayout
             android:id="@+id/inlineControlsOverlay"
             android:layout_width="match_parent"
@@ -32,7 +40,6 @@
             android:background="#4D000000"
             android:visibility="gone">
 
-            <!-- الشريط العلوي داخل الفيديو (أيقونة القائمة في الشاشة الكاملة + أيقونة PiP/WatchParty يمين) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -42,7 +49,6 @@
                 android:paddingHorizontal="14dp"
                 android:paddingTop="12dp">
 
-                <!-- تظهر في الشاشة الكاملة أعلى اليسار كما في الصورة 1 -->
                 <TextView
                     android:id="@+id/btnTopLeftMenu"
                     android:layout_width="36dp"
@@ -64,19 +70,17 @@
                     android:textStyle="bold"
                     android:visibility="invisible" />
 
-                <!-- أيقونة PiP / Watch Together أعلى اليمين كما في الصورة 2 -->
                 <TextView
                     android:id="@+id/btnInlineWatchParty"
                     android:layout_width="36dp"
                     android:layout_height="32dp"
                     android:gravity="center"
-                    android:text="⧉"
+                    android:text="👥"
                     android:textColor="#FFFFFF"
                     android:textSize="20sp"
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <!-- الشريط السفلي الموحد (يتكيف تلقائياً بين الوضع المصغر الصورة 2 والوضع الكامل الصورة 1) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -86,7 +90,6 @@
                 android:paddingHorizontal="14dp"
                 android:paddingVertical="10dp">
 
-                <!-- سطر شريط الوقت: ● LIVE 00:01 ───●─────── 00:24 [⛶] -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -110,7 +113,6 @@
                         android:textSize="12sp"
                         android:textStyle="bold" />
 
-                    <!-- شريط التقدم (Progress Track) -->
                     <FrameLayout
                         android:layout_width="0dp"
                         android:layout_height="18dp"
@@ -148,7 +150,6 @@
                         android:textSize="12sp"
                         android:textStyle="bold" />
 
-                    <!-- أيقونة التكبير السريع في الوضع المصغر (الصورة 2) -->
                     <TextView
                         android:id="@+id/btnMiniExpand"
                         android:layout_width="34dp"
@@ -161,7 +162,6 @@
                         android:textStyle="bold" />
                 </LinearLayout>
 
-                <!-- صف الأيقونات الـ 7 الخاص بوضع الشاشة الكاملة فقط (الصورة 1) - مخفي في الوضع المصغر -->
                 <LinearLayout
                     android:id="@+id/fullBottomActionsRow"
                     android:layout_width="match_parent"
@@ -186,7 +186,7 @@
                         android:layout_width="48dp"
                         android:layout_height="match_parent"
                         android:gravity="center"
-                        android:text="ılılı"
+                        android:text="ılı"
                         android:textColor="#FFFFFF"
                         android:textSize="14sp"
                         android:textStyle="bold" />
@@ -196,7 +196,7 @@
                         android:layout_width="48dp"
                         android:layout_height="match_parent"
                         android:gravity="center"
-                        android:text="❚❚"
+                        android:text="⏸"
                         android:textColor="#FFFFFF"
                         android:textSize="16sp"
                         android:textStyle="bold" />
@@ -219,7 +219,7 @@
                         android:layout_width="48dp"
                         android:layout_height="match_parent"
                         android:gravity="center"
-                        android:text="⧉"
+                        android:text="👥"
                         android:textColor="#FFFFFF"
                         android:textSize="17sp"
                         android:textStyle="bold" />
@@ -239,7 +239,7 @@
                         android:layout_width="48dp"
                         android:layout_height="match_parent"
                         android:gravity="center"
-                        android:text="⤡"
+                        android:text="✕"
                         android:textColor="#FFFFFF"
                         android:textSize="18sp"
                         android:textStyle="bold" />
@@ -254,7 +254,7 @@
         android:layout_height="1dp"
         android:background="#181920" />
 
-    <!-- 2. النصف السفلي المقسوم: Packages | Channels -->
+    <!-- 2. Packages | Channels -->
     <LinearLayout
         android:id="@+id/bottomListsContainer"
         android:layout_width="match_parent"
@@ -264,7 +264,6 @@
         android:orientation="horizontal"
         android:paddingBottom="80dp">
 
-        <!-- العمود الأيسر: Packages -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
@@ -318,13 +317,11 @@
                 android:scrollbars="none" />
         </LinearLayout>
 
-        <!-- الخط الفاصل الرمادي الرفيع -->
         <View
             android:layout_width="1dp"
             android:layout_height="match_parent"
             android:background="#1A1C23" />
 
-        <!-- العمود الأيمن: Channels -->
         <LinearLayout
             android:layout_width="0dp"
             android:layout_height="match_parent"
@@ -395,7 +392,5 @@
                 android:layout_height="match_parent"
                 android:scrollbars="none" />
         </LinearLayout>
-
     </LinearLayout>
-
 </LinearLayout>
