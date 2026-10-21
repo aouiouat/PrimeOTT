@@ -13,7 +13,8 @@ import com.primeott.app.data.repository.OttRepository
 import com.primeott.app.databinding.ActivitySplashBinding
 import com.primeott.app.presentation.common.AnimUtils
 import com.primeott.app.presentation.common.LocaleHelper
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 
 class SplashActivity : AppCompatActivity() {
@@ -32,11 +33,15 @@ class SplashActivity : AppCompatActivity() {
 
         binding.tvSplashLogoIcon.scaleX = 0.75f
         binding.tvSplashLogoIcon.scaleY = 0.75f
-        binding.tvSplashLogoIcon.animate().scaleX(1.0f).scaleY(1.0f).setDuration(500).start()
+        binding.tvSplashLogoIcon.animate().scaleX(1.0f).scaleY(1.0f).setDuration(450).start()
 
+        // تحميل مسبق متوازٍ لصفحة Home وإعدادات السيرفر والباقات أثناء شاشة البداية
         lifecycleScope.launch {
-            OttRepository.syncWithCloudflare()
-            delay(750)
+            awaitAll(
+                async { OttRepository.syncWithCloudflare() },
+                async { OttRepository.fetchHomeSections() },
+                async { OttRepository.fetchLiveCategories() }
+            )
             if (SessionManager.isOnboardingCompleted(this@SplashActivity)) {
                 goToMain()
             } else {
@@ -58,21 +63,21 @@ class SplashActivity : AppCompatActivity() {
         binding.btnLangEn.setOnClickListener { selectLang("en") }
 
         binding.btnFinishSetup.setOnClickListener {
-            val userName = binding.etUserDisplayName.text.toString().trim().ifEmpty { "مشاهد Prime" }
+            val userName = binding.etUserDisplayName.text.toString().trim().ifEmpty { "Prime User" }
             val code = binding.etOnboardCode.text.toString().trim()
             SessionManager.setUserName(this, userName)
 
             if (code.isNotEmpty()) {
                 binding.btnFinishSetup.isEnabled = false
                 binding.tvAuthStatusMsg.visibility = View.VISIBLE
-                binding.tvAuthStatusMsg.text = "⏳ جاري التحقق من كود الاشتراك..."
+                binding.tvAuthStatusMsg.text = "⏳..."
                 lifecycleScope.launch {
                     val (ok, msg) = OttRepository.activateSubscription(code, SessionManager.getDeviceId(this@SplashActivity))
                     binding.btnFinishSetup.isEnabled = true
                     if (ok) {
                         SessionManager.saveActivation(this@SplashActivity, "TOKEN_$code", msg)
                         SessionManager.setOnboardingCompleted(this@SplashActivity, true)
-                        Toast.makeText(this@SplashActivity, "✅ تم تفعيل اشتراكك بنجاح!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@SplashActivity, "✅ Activated!", Toast.LENGTH_SHORT).show()
                         goToMain()
                     } else {
                         binding.tvAuthStatusMsg.setTextColor(Color.parseColor("#FF4757"))
@@ -86,7 +91,7 @@ class SplashActivity : AppCompatActivity() {
         }
 
         binding.btnSkipGuest.setOnClickListener {
-            val userName = binding.etUserDisplayName.text.toString().trim().ifEmpty { "مشاهد Prime" }
+            val userName = binding.etUserDisplayName.text.toString().trim().ifEmpty { "Prime User" }
             SessionManager.setUserName(this, userName)
             SessionManager.setOnboardingCompleted(this, true)
             goToMain()

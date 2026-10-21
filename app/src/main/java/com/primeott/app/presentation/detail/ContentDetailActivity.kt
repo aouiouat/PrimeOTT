@@ -152,6 +152,13 @@ class ContentDetailActivity : AppCompatActivity() {
     private lateinit var tvMoreLikeHeader: TextView
     private lateinit var rvMoreLike: RecyclerView
 
+    // متغير يحفظ الجودات المختارة حالياً (null = أعلى جودة تلقائية)
+    private var selectedQualityHeight: Int? = null
+
+    // 1. متغيرات متابعة موضع الاستكمال والحفظ الدوري
+    private var pendingResumePositionMs: Long = 0L
+    private var lastSavedTick: Int = 0
+
     private val autoHideRunnable = Runnable {
         controlsOverlay.visibility = View.GONE
     }
@@ -196,7 +203,6 @@ class ContentDetailActivity : AppCompatActivity() {
             },
             onFirstFrameRendered = {
                 runOnUiThread {
-                    // بمجرد ظهور أول صورة من الفيلم الحقيقي، يختفي الـ Loader وتختفي الواجهة الشفافة لمشاهدة نظيفة
                     loadingContainer.visibility = View.GONE
                     controlsOverlay.visibility = View.GONE
                 }
@@ -835,7 +841,6 @@ class ContentDetailActivity : AppCompatActivity() {
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                 }
 
-                // التقاط ملف الترجمة القادم من نفس السيرفر لأنه متزامن 100% مع الفيديو
                 if ((lower.contains(".vtt") || lower.contains(".srt")) && !lower.contains("thumb") && !lower.contains("sprite")) {
                     val isAr = lower.contains("ar") || lower.contains("ara")
                     val subTrack = SubtitleTrack(
@@ -907,7 +912,6 @@ class ContentDetailActivity : AppCompatActivity() {
                 hasLockedPrimaryStream = true
                 snifferTimeoutJob?.cancel()
 
-                // إيقاف وتجميد WebView الخفي تماماً لكي لا يستهلك 1% من المعالج أو الرام أثناء مشاهدة الفيلم!
                 headlessSnifferWebView.stopLoading()
                 headlessSnifferWebView.loadUrl("about:blank")
                 headlessSnifferWebView.onPause()
@@ -915,17 +919,14 @@ class ContentDetailActivity : AppCompatActivity() {
 
                 resolvedDirectStreams.add(0, newDirectSource)
                 tvLoadingStatus.text = "Starting 1080p Playback..."
-                playerEngine.playSources(playerView, resolvedDirectStreams.toList(), 0, 0L)
+                // 3. تمرير pendingResumePositionMs للاستكمال من آخر دقيقة
+                playerEngine.playSources(playerView, resolvedDirectStreams.toList(), 0, pendingResumePositionMs)
             } else {
-                // إذا كان المشغل يشتغل بالفعل، نضيف الرابط كبديل صامت دون مقاطعة الفيلم
                 resolvedDirectStreams.add(newDirectSource)
                 playerEngine.appendBackupSourcesSilently(listOf(newDirectSource))
             }
         }
     }
-
-    // متغير يحفظ الجودات المختارة حالياً (null = أعلى جودة تلقائية)
-    private var selectedQualityHeight: Int? = null
 
     private fun startStreamExtractionForEpisodeOrMovie(vod: VodItem, season: Int = 1, episode: Int = 1) {
         snifferTimeoutJob?.cancel()
@@ -943,7 +944,6 @@ class ContentDetailActivity : AppCompatActivity() {
         loadingContainer.visibility = View.GONE
         tvLoadingStatus.text = "Connecting to fastest server..."
 
-        // جلب السيرفرات المفعلة في لوحة التحكم فقط وفحص أسرعها
         lifecycleScope.launch {
             val panelServers = PrimeVodExtractor.fetchPanelConfiguredServers(
                 tmdbId = vod.id,
@@ -974,7 +974,6 @@ class ContentDetailActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // إذا لم يكن السيرفر الأول مباشراً، نمرره للمستخرج الخفي الصامت
             if (!hasLockedPrimaryStream) {
                 val firstDirectIdx = panelServers.indexOfFirst { it.isDirectStream }
                 if (firstDirectIdx != -1) {
@@ -1024,7 +1023,10 @@ class ContentDetailActivity : AppCompatActivity() {
         activeSubtitleCues = emptyList()
         availableSubtitles = emptyList()
 
-        SessionManager.addRecentChannel(this, vod.id, vod.title, vod.backdropUrl.ifEmpty { vod.posterUrl })
+        // 2. قراءة موضع التوقف المحفوظ وتسجيل الفيلم في سجل المشاهدة
+        pendingResumePositionMs = SessionManager.getSavedPositionForVod(this, vod.id)
+            .coerceAtLeast(vod.savedPositionMs)
+        SessionManager.saveWatchProgress(this, vod, pendingResumePositionMs, vod.totalDurationMs)
 
         tvTopPlayerTitle.text = vod.title
         tvMovieTitle.text = vod.title
@@ -1035,7 +1037,6 @@ class ContentDetailActivity : AppCompatActivity() {
 
         startStreamExtractionForEpisodeOrMovie(vod, 1, 1)
 
-        // جلب الترجمات المتوافقة مع WEB-DL تلقائياً
         lifecycleScope.launch {
             val subs = OttRepository.fetchRealSubtitlesForMovie(vod.id, "", vod.isSeries, 1, 1)
             if (subs.isNotEmpty()) {
@@ -1103,7 +1104,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 rvEpisodes.adapter = EpisodesHorizontalAdapter(episodes, selectedEpisode) { ep ->
                     selectedEpisode = ep.episodeNumber
                     val vod = currentVod ?: return@EpisodesHorizontalAdapter
-                    tvTopPlayerTitle.text = "${vod.title} - S${seasonNum}:E${ep.episodeNumber}"
+                    tvTopPlayerTitle.text = "${vod.title} S${seasonNum}:E${ep.episodeNumber}"
                     startStreamExtractionForEpisodeOrMovie(vod, seasonNum, ep.episodeNumber)
                     lifecycleScope.launch {
                         availableSubtitles = OttRepository.fetchRealSubtitlesForMovie(
@@ -1141,9 +1142,6 @@ class ContentDetailActivity : AppCompatActivity() {
         loadSeason(1)
     }
 
-    /**
-     * اختيار أول ترجمة عربية متزامنة (WEB-DL) وتجربتها تلقائياً
-     */
     private suspend fun autoSelectPreferredSubtitle() {
         if (availableSubtitles.isEmpty()) return
         val arabicTracks = availableSubtitles.filter { it.languageCode == "ar" }
@@ -1215,13 +1213,21 @@ class ContentDetailActivity : AppCompatActivity() {
                 val pos = p.currentPosition.coerceAtLeast(0L)
                 val dur = p.duration
 
+                // 4. حفظ الموضع تلقائياً كل 3 ثوانٍ وتحديث الشريط
                 if (!isUserSeeking && dur > 0) {
                     seekBar.progress = ((pos * 1000L) / dur).toInt().coerceIn(0, 1000)
                     tvElapsed.text = formatTimeMs(pos)
                     tvDuration.text = formatTimeMs(dur)
+
+                    lastSavedTick++
+                    if (lastSavedTick >= 15 && pos > 5000L) {
+                        lastSavedTick = 0
+                        currentVod?.let { v ->
+                            SessionManager.saveWatchProgress(this@ContentDetailActivity, v, pos, dur)
+                        }
+                    }
                 }
 
-                // عرض الترجمة مع تطبيق معايرة التوقيت (subtitleOffsetMs) لتطابق الصوت 100%
                 if (selectedSubtitleId != "NONE" && activeSubtitleCues.isNotEmpty() && p.isPlaying) {
                     val syncedPos = (pos - subtitleOffsetMs).coerceAtLeast(0L)
                     val cue = activeSubtitleCues.firstOrNull { syncedPos in it.startMs..it.endMs }
@@ -1238,10 +1244,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * نافذة موحدة مطابقة 100% لـ PrimeTV OTT:
-     * تعرض اسم السيرفر الذي وضعه الأدمن في اللوحة + الجودات الحقيقية الموجودة فعلياً في هذا السيرفر فقط (4K / 1080p / 720p / 480p)
-     */
     private fun showPrimeServersAndQualityPopup() {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -1275,7 +1277,6 @@ class ContentDetailActivity : AppCompatActivity() {
             val isCurrentServer = (srvIdx == currentProviderIndex)
 
             if (isCurrentServer && realQualities.isNotEmpty()) {
-                // عرض اسم السيرفر (الذي سماه الأدمن) مع كل جودة حقيقية موجودة فعلياً في البث (4K / 1080p / 720p / 480p)
                 realQualities.forEach { qTrack ->
                     val shortQ = when {
                         qTrack.height >= 2160 -> "4K"
@@ -1303,7 +1304,6 @@ class ContentDetailActivity : AppCompatActivity() {
                     card.addView(row)
                 }
             } else if (isCurrentServer) {
-                // إذا كان السيرفر يحتوي على جودة واحدة فقط (مثلاً ملف MP4 مباشر 1080p) يعرضها وحدها فقط
                 val row = TextView(this).apply {
                     text = "${server.label} $currentDetectedBadge"
                     textSize = 14.5f
@@ -1314,7 +1314,6 @@ class ContentDetailActivity : AppCompatActivity() {
                 }
                 card.addView(row)
             } else {
-                // باقي السيرفرات الموجودة في لوحة التحكم (للتبديل إليها عند الرغبة)
                 val row = TextView(this).apply {
                     text = server.label
                     textSize = 14.5f
@@ -1386,9 +1385,6 @@ class ContentDetailActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    /**
-     * نافذة الترجمة الاحترافية مع شريط معايرة التزامن الفوري (-0.5s | 0.0s | +0.5s)
-     */
     private fun showSubtitlesDialog() {
         val dialog = Dialog(this)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -1426,7 +1422,6 @@ class ContentDetailActivity : AppCompatActivity() {
         headerRow.addView(refreshBtn)
         root.addView(headerRow)
 
-        // شريط ضبط تزامن الترجمة الفوري مع الصوت (Subtitle Timing Sync Bar)
         val syncBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1569,7 +1564,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 }
                 val badgeText = if (isWebDl) "⚡ 100% WEB-DL Synced" else "✓ OpenSubtitles"
                 val relTv = TextView(this).apply {
-                    text = "${track.releaseName}   •   $badgeText"
+                    text = "${track.releaseName}  $badgeText"
                     setTextColor(if (isWebDl) "#34D399".toColorInt() else "#94A3B8".toColorInt())
                     textSize = 11f
                 }
@@ -1736,6 +1731,12 @@ class ContentDetailActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        // 4. حفظ الموضع عند الخروج من الشاشة أو الانتقال لتطبيق آخر
+        val p = playerEngine.player
+        val vod = currentVod
+        if (p != null && vod != null && p.currentPosition > 5000L && p.duration > 10000L) {
+            SessionManager.saveWatchProgress(this, vod, p.currentPosition, p.duration)
+        }
         if (!isChangingConfigurations) {
             playerEngine.pause()
         }

@@ -13,6 +13,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
@@ -44,6 +45,9 @@ data class HomeCatalogSections(
     val topRatedTv: List<VodItem>,
     val turkishDrama: List<VodItem>,
     val koreanDrama: List<VodItem>,
+    val actionMovies: List<VodItem>,
+    val animeShows: List<VodItem>,
+    val sciFiMovies: List<VodItem>,
     val documentaries: List<VodItem>
 )
 
@@ -53,8 +57,8 @@ object OttRepository {
     private const val TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500"
     private const val TMDB_BACKDROP_BASE = "https://image.tmdb.org/t/p/w780"
 
-    private const val RELEASED_MOVIE_FILTER = "primary_release_date.lte=2025-12-31&with_release_type=4|5|6&vote_count.gte=120"
-    private const val RELEASED_TV_FILTER = "first_air_date.lte=2025-12-31&vote_count.gte=60"
+    private const val RELEASED_MOVIE_FILTER = "primary_release_date.lte=2026-10-21&with_release_type=4|5|6&vote_count.gte=40"
+    private const val RELEASED_TV_FILTER = "first_air_date.lte=2026-10-21&vote_count.gte=30"
 
     private val favoriteChannelIds = mutableSetOf<String>()
     private val favoriteMatchIds = mutableSetOf<String>()
@@ -125,10 +129,10 @@ object OttRepository {
             val isTv = forceSeries ?: (mediaType == "tv" || obj.has("first_air_date") || obj.has("name"))
 
             val rawDate = if (isTv) obj.optString("first_air_date", "") else obj.optString("release_date", "")
-            if (rawDate.isEmpty() || rawDate > "2026-01-15") continue
+            if (rawDate.isEmpty() || rawDate > "2026-11-01") continue
 
             val voteCount = obj.optInt("vote_count", 0)
-            if (voteCount < 15) continue
+            if (voteCount < 10) continue
 
             val title = if (isTv) {
                 obj.optString("name").ifEmpty { obj.optString("original_name", "Series") }
@@ -138,7 +142,7 @@ object OttRepository {
 
             val vote = obj.optDouble("vote_average", 7.2)
             val rating = String.format(Locale.US, "%.1f", if (vote > 0.1) vote else 7.2)
-            val year = if (rawDate.length >= 4) rawDate.take(4) else "2025"
+            val year = if (rawDate.length >= 4) rawDate.take(4) else "2026"
             val overview = obj.optString("overview", "")
             val posterUrl = "$TMDB_POSTER_BASE$posterPath"
             val backdropUrl = if (backdropPath.isNotEmpty() && backdropPath != "null") "$TMDB_BACKDROP_BASE$backdropPath" else posterUrl
@@ -161,65 +165,120 @@ object OttRepository {
         return list
     }
 
-    suspend fun fetchHomeSections(): HomeCatalogSections = withContext(Dispatchers.IO) {
-        cachedHomeSections?.let { return@withContext it }
+    /**
+     * تحميل متوازٍ فائق السرعة لجميع أقسام الصفحة الرئيسية الـ 11 في نفس اللحظة
+     */
+    suspend fun fetchHomeSections(): HomeCatalogSections = kotlinx.coroutines.coroutineScope {
+        cachedHomeSections?.let { return@coroutineScope it }
 
-        val trendingToday = runCatching {
-            val json = JSONObject(fastGet("https://api.themoviedb.org/3/trending/movie/week?api_key=$TMDB_API_KEY&language=en-US&page=1"))
-            parseTmdbArrayToVodList(json.optJSONArray("results"), "Movie", false)
-        }.getOrDefault(emptyList())
+        val dTrending = kotlinx.coroutines.toString(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject(fastGet("https://api.themoviedb.org/3/trending/all/day?api_key=$TMDB_API_KEY&language=en-US&page=1"))
+                parseTmdbArrayToVodList(json.optJSONArray("results"), "Trending")
+            }.getOrDefault(emptyList())
+        }
 
-        val popularMovies = runCatching {
-            val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1"))
-            parseTmdbArrayToVodList(json.optJSONArray("results"), "Movie", false)
-        }.getOrDefault(emptyList())
+        val dPopMovies = kotlinx.coroutines.toString(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1"))
+                parseTmdbArrayToVodList(json.optJSONArray("results"), "Movie", false)
+            }.getOrDefault(emptyList())
+        }
 
-        val popularTv = runCatching {
-            val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1"))
-            parseTmdbArrayToVodList(json.optJSONArray("results"), "TV Show", true)
-        }.getOrDefault(emptyList())
+        val dPopTv = kotlinx.coroutines.toString(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1"))
+                parseTmdbArrayToVodList(json.optJSONArray("results"), "TV Show", true)
+            }.getOrDefault(emptyList())
+        }
 
-        val topRatedMovies = runCatching {
-            val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=1500&$RELEASED_MOVIE_FILTER&page=1"))
-            parseTmdbArrayToVodList(json.optJSONArray("results"), "Top Rated", false)
-        }.getOrDefault(emptyList())
+        val dTopMovies = kotlinx.coroutines.toString(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=1500&$RELEASED_MOVIE_FILTER&page=1"))
+                parseTmdbArrayToVodList(json.optJSONArray("results"), "Top Rated", false)
+            }.getOrDefault(emptyList())
+        }
 
-        val topRatedTv = runCatching {
-            val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=800&$RELEASED_TV_FILTER&page=1"))
-            parseTmdbArrayToVodList(json.optJSONArray("results"), "Top Rated TV", true)
-        }.getOrDefault(emptyList())
+        val dTopTv = kotlinx.coroutines.toString(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=800&$RELEASED_TV_FILTER&page=1"))
+                parseTmdbArrayToVodList(json.optJSONArray("results"), "Top Rated TV", true)
+            }.getOrDefault(emptyList())
+        }
 
-        val turkishDrama = runCatching {
-            val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=TR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1"))
-            parseTmdbArrayToVodList(json.optJSONArray("results"), "Turkish Drama", true)
-        }.getOrDefault(emptyList())
+        val dTurkish = kotlinx.coroutines.toString(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=TR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1"))
+                parseTmdbArrayToVodList(json.optJSONArray("results"), "Turkish Drama", true)
+            }.getOrDefault(emptyList())
+        }
 
-        val koreanDrama = runCatching {
-            val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=KR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1"))
-            parseTmdbArrayToVodList(json.optJSONArray("results"), "Korean Drama", true)
-        }.getOrDefault(emptyList())
+        val dKorean = kotlinx.coroutines.toString(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=KR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=1"))
+                parseTmdbArrayToVodList(json.optJSONArray("results"), "Korean Drama", true)
+            }.getOrDefault(emptyList())
+        }
 
-        val documentaries = runCatching {
-            val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=99&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1"))
-            parseTmdbArrayToVodList(json.optJSONArray("results"), "Documentary", false)
-        }.getOrDefault(emptyList())
+        val dAction = kotlinx.coroutines.toString(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=28,53&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1"))
+                parseTmdbArrayToVodList(json.optJSONArray("results"), "Action & Thriller", false)
+            }.getOrDefault(emptyList())
+        }
 
-        val hero = (trendingToday.take(6) + popularMovies.take(6)).distinctBy { it.id }
+        val dAnime = kotlinx.coroutines.toString(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_genres=16&with_origin_country=JP&sort_by=popularity.desc&page=1"))
+                parseTmdbArrayToVodList(json.optJSONArray("results"), "Anime", true)
+            }.getOrDefault(emptyList())
+        }
+
+        val dSciFi = kotlinx.coroutines.toString(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=878,14&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1"))
+                parseTmdbArrayToVodList(json.optJSONArray("results"), "Sci-Fi & Fantasy", false)
+            }.getOrDefault(emptyList())
+        }
+
+        val dDocs = kotlinx.coroutines.toString(Dispatchers.IO) {
+            runCatching {
+                val json = JSONObject(fastGet("https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=99&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=1"))
+                parseTmdbArrayToVodList(json.optJSONArray("results"), "Documentary", false)
+            }.getOrDefault(emptyList())
+        }
+
+        val trendingToday = dTrending.await()
+        val popularMovies = dPopMovies.await()
+        val popularTv = dPopTv.await()
+        val topRatedMovies = dTopMovies.await()
+        val topRatedTv = dTopTv.await()
+        val turkishDrama = dTurkish.await()
+        val koreanDrama = dKorean.await()
+        val actionMovies = dAction.await()
+        val animeShows = dAnime.await()
+        val sciFiMovies = dSciFi.await()
+        val documentaries = dDocs.await()
+
+        val hero = (trendingToday.take(7) + popularMovies.take(5)).distinctBy { it.id }
         val result = HomeCatalogSections(
             heroItems = hero,
-            trendingToday = trendingToday,
+            trendingToday = trendingToday.ifEmpty { popularMovies },
             popularMovies = popularMovies,
             popularTvShows = popularTv,
             topRatedMovies = topRatedMovies,
             topRatedTv = topRatedTv,
             turkishDrama = turkishDrama,
             koreanDrama = koreanDrama,
+            actionMovies = actionMovies,
+            animeShows = animeShows,
+            sciFiMovies = sciFiMovies,
             documentaries = documentaries
         )
         if (hero.isNotEmpty()) {
             cachedHomeSections = result
         }
-        return@withContext result
+        result
     }
 
     suspend fun fetchVodCatalogPage(isSeries: Boolean, page: Int = 1, genreOrFilter: String = ""): List<VodItem> = withContext(Dispatchers.IO) {
@@ -227,6 +286,9 @@ object OttRepository {
             val endpoint = when {
                 genreOrFilter == "TR" -> "https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=TR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=$page"
                 genreOrFilter == "KR" -> "https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=KR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=$page"
+                genreOrFilter == "ACTION" -> "https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=28,53&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=$page"
+                genreOrFilter == "ANIME" -> "https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_genres=16&with_origin_country=JP&sort_by=popularity.desc&page=$page"
+                genreOrFilter == "SCIFI" -> "https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=878,14&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=$page"
                 genreOrFilter == "DOC" -> "https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=99&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=$page"
                 genreOrFilter == "TOP_MOVIE" -> "https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=1500&$RELEASED_MOVIE_FILTER&page=$page"
                 genreOrFilter == "TOP_TV" -> "https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=800&$RELEASED_TV_FILTER&page=$page"
@@ -242,7 +304,7 @@ object OttRepository {
 
     suspend fun searchTmdbCatalog(query: String): List<VodItem> = withContext(Dispatchers.IO) {
         try {
-            val encoded = java.net.URLEncoder.encode(query.trim(), "UTF-8")
+            val encoded = URLEncoder.encode(query.trim(), "UTF-8")
             val url = "https://api.themoviedb.org/3/search/multi?api_key=$TMDB_API_KEY&query=$encoded&page=1"
             val root = JSONObject(fastGet(url))
             return@withContext parseTmdbArrayToVodList(root.optJSONArray("results"), "Search")

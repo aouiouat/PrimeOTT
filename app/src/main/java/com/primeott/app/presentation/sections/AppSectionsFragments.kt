@@ -3,12 +3,10 @@ package com.primeott.app.presentation.sections
 import android.Manifest
 import android.app.AlertDialog
 import android.app.Dialog
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.text.TextUtils
 import android.view.Gravity
@@ -46,6 +44,7 @@ import com.primeott.app.databinding.ItemVodCardBinding
 import com.primeott.app.domain.model.Category
 import com.primeott.app.domain.model.MatchFixture
 import com.primeott.app.domain.model.VodItem
+import com.primeott.app.domain.model.WatchHistoryEntry
 import com.primeott.app.presentation.common.LocaleHelper
 import com.primeott.app.presentation.detail.ContentDetailActivity
 import com.primeott.app.presentation.livetv.CategoriesAdapter
@@ -80,8 +79,11 @@ class HomeFragment : Fragment() {
         binding.rvHomeSeries.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         binding.rvRecentWatched.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
 
-        // إضافة حاوية الأقسام الإضافية (Popular Movies, Top Rated, Turkish Drama, Korean Drama, Documentaries)
         val parentLinear = binding.rvHomeSeries.parent as? LinearLayout
+        // تغيير عنوان القسم الثاني في XML ليكون Popular Movies مباشرة تحت Trending Today
+        val secondHeaderLayout = parentLinear?.getChildAt(parentLinear.indexOfChild(binding.rvHomeSeries) - 1) as? LinearLayout
+        (secondHeaderLayout?.getChildAt(0) as? TextView)?.text = "Popular Movies"
+
         if (parentLinear != null && extraSectionsContainer == null) {
             extraSectionsContainer = LinearLayout(requireContext()).apply {
                 orientation = LinearLayout.VERTICAL
@@ -112,8 +114,7 @@ class HomeFragment : Fragment() {
         loadRecentHistorySection(binding)
 
         binding.btnClearHistory.setOnClickListener {
-            requireContext().getSharedPreferences("prime_ott_secure_prefs", Context.MODE_PRIVATE)
-                .edit().remove("recent_stream_ids").apply()
+            SessionManager.clearAllWatchHistory(requireContext())
             loadRecentHistorySection(binding)
         }
 
@@ -126,7 +127,7 @@ class HomeFragment : Fragment() {
         }
 
         binding.btnSeeAllSeries.setOnClickListener {
-            showSeeAllInfiniteDialog("Popular TV Shows", true, "")
+            showSeeAllInfiniteDialog("Popular Movies", false, "")
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
@@ -140,25 +141,29 @@ class HomeFragment : Fragment() {
                 startHeroAutoSlider(binding)
             }
 
+            // 1. القسم الأول: Trending Today
             binding.rvHomeChannels.adapter = VodGridAdapter(sections.trendingToday) { vod ->
                 openVodDetail(vod)
             }
 
-            binding.rvHomeSeries.adapter = VodGridAdapter(sections.popularTvShows) { vod ->
+            // 2. القسم الثاني: Popular Movies
+            binding.rvHomeSeries.adapter = VodGridAdapter(sections.popularMovies) { vod ->
                 openVodDetail(vod)
             }
 
-            // بناء باقي الأقسام الـ 6 كما في فيديو PrimeTV OTT الأصلي بالضبط
+            // 3. باقي الأقسام بالترتيب المطلوب بالضبط
             extraSectionsContainer?.removeAllViews()
-            addHomeRowSection("Popular Movies", sections.popularMovies, false, "")
+            addHomeRowSection("Popular TV Shows", sections.popularTvShows, true, "")
             addHomeRowSection("Top Rated Movies", sections.topRatedMovies, false, "TOP_MOVIE")
             addHomeRowSection("Top Rated TV", sections.topRatedTv, true, "TOP_TV")
             addHomeRowSection("Turkish Drama", sections.turkishDrama, true, "TR")
             addHomeRowSection("Korean Drama", sections.koreanDrama, true, "KR")
+            addHomeRowSection("Action & Thriller", sections.actionMovies, false, "ACTION")
+            addHomeRowSection("Anime & Animation", sections.animeShows, true, "ANIME")
+            addHomeRowSection("Sci-Fi & Fantasy", sections.sciFiMovies, false, "SCIFI")
             addHomeRowSection("Documentaries", sections.documentaries, false, "DOC")
         }
 
-        // زر Watch Now في الهيرو يفتح صفحة الفيلم ذات المشغل المدمج مباشرة كما في الفيديو الأول
         binding.btnWatchFeatured.setOnClickListener {
             if (heroItems.isNotEmpty()) {
                 val currentIdx = binding.heroViewPager.currentItem.coerceIn(0, heroItems.lastIndex)
@@ -322,35 +327,45 @@ class HomeFragment : Fragment() {
     }
 
     private fun openVodDetail(vod: VodItem) {
-        SessionManager.addRecentChannel(requireContext(), vod.id, vod.title, vod.backdropUrl.ifEmpty { vod.posterUrl })
+        val savedEntry = SessionManager.getWatchHistoryList(requireContext()).firstOrNull { it.id == vod.id }
+        val vodWithProgress = if (savedEntry != null) {
+            vod.copy(savedPositionMs = savedEntry.positionMs, totalDurationMs = savedEntry.durationMs)
+        } else {
+            SessionManager.saveWatchProgress(requireContext(), vod, 0L, 0L)
+            vod
+        }
         startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
-            putExtra(ContentDetailActivity.EXTRA_VOD, vod)
+            putExtra(ContentDetailActivity.EXTRA_VOD, vodWithProgress)
         })
     }
 
     private fun loadRecentHistorySection(binding: FragmentHomeBinding) {
-        val recents = SessionManager.getRecentEntries(requireContext())
-        if (recents.isEmpty()) {
+        val historyList = SessionManager.getWatchHistoryList(requireContext())
+        if (historyList.isEmpty()) {
             binding.recentHeaderRow.visibility = View.GONE
             binding.rvRecentWatched.visibility = View.GONE
             return
         }
         binding.recentHeaderRow.visibility = View.VISIBLE
         binding.rvRecentWatched.visibility = View.VISIBLE
-        val recentItems = recents.map {
-            VodItem(
-                id = it.first,
-                title = it.second,
-                category = "Movie",
-                rating = "7.5",
-                year = "2026",
-                posterUrl = it.third,
-                backdropUrl = it.third,
-                streamUrls = emptyList()
+
+        binding.rvRecentWatched.adapter = RecentLandscapeAdapter(historyList) { entry ->
+            val vod = VodItem(
+                id = entry.id,
+                title = entry.title,
+                category = if (entry.isSeries) "Series" else "Movie",
+                rating = entry.rating,
+                year = entry.year,
+                posterUrl = entry.posterUrl,
+                backdropUrl = entry.backdropUrl,
+                streamUrls = emptyList(),
+                isSeries = entry.isSeries,
+                savedPositionMs = entry.positionMs,
+                totalDurationMs = entry.durationMs
             )
-        }
-        binding.rvRecentWatched.adapter = RecentLandscapeAdapter(recentItems) { vod ->
-            openVodDetail(vod)
+            startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
+                putExtra(ContentDetailActivity.EXTRA_VOD, vod)
+            })
         }
     }
 
@@ -400,39 +415,88 @@ class HomeFragment : Fragment() {
 }
 
 /**
- * بطاقات Recent الأفقية العريضة (Landscape 16:9) المطابقة للثانية 00:04 في فيديو PrimeTV OTT
+ * بطاقات Recent الأفقية (Landscape 16:9) مع شريط التقدم الأحمر في الأسفل والدقيقة التي توقف عندها المشاهد
  */
 class RecentLandscapeAdapter(
-    private val items: List<VodItem>,
-    private val onClick: (VodItem) -> Unit
+    private val items: List<WatchHistoryEntry>,
+    private val onClick: (WatchHistoryEntry) -> Unit
 ) : RecyclerView.Adapter<RecentLandscapeAdapter.VH>() {
 
     class VH(
         val root: LinearLayout,
         val ivThumb: ImageView,
+        val tvResumeBadge: TextView,
+        val progressFillView: View,
         val tvTitle: TextView
     ) : RecyclerView.ViewHolder(root)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val ctx = parent.context
         val d = ctx.resources.displayMetrics.density
+        val cardWidthPx = (168 * d).toInt()
+        val cardHeightPx = (96 * d).toInt()
+
         val wrap = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = ViewGroup.MarginLayoutParams((165 * d).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            layoutParams = ViewGroup.MarginLayoutParams(cardWidthPx, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = (10 * d).toInt()
             }
         }
+
         val card = CardView(ctx).apply {
             radius = 12f * d
             cardElevation = 0f
             setCardBackgroundColor(Color.parseColor("#14161E"))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (94 * d).toInt())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, cardHeightPx)
         }
+
+        val frame = FrameLayout(ctx).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+
         val iv = ImageView(ctx).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             scaleType = ImageView.ScaleType.CENTER_CROP
         }
-        card.addView(iv)
+
+        // شارة الدقيقة التي توقف عندها المستخدم (مثلاً ▶ 56m)
+        val tvBadge = TextView(ctx).apply {
+            setTextColor(Color.WHITE)
+            textSize = 10.5f
+            setTypeface(typeface, Typeface.BOLD)
+            setBackgroundColor(Color.parseColor("#CC08080C"))
+            setPadding((7 * d).toInt(), (3 * d).toInt(), (7 * d).toInt(), (3 * d).toInt())
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.START
+            ).apply {
+                setMargins((6 * d).toInt(), 0, 0, (8 * d).toInt())
+            }
+        }
+
+        // الخلفية الرمادية لشريط التقدم أسفل البطاقة
+        val progressTrack = FrameLayout(ctx).apply {
+            setBackgroundColor(Color.parseColor("#66FFFFFF"))
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                (4 * d).toInt(),
+                Gravity.BOTTOM
+            )
+        }
+
+        // الخط الأحمر الذي يوضح مقدار التقدم في الفيلم
+        val progressFill = View(ctx).apply {
+            setBackgroundColor(Color.parseColor("#E50914"))
+            layoutParams = FrameLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START)
+        }
+        progressTrack.addView(progressFill)
+
+        frame.addView(iv)
+        frame.addView(tvBadge)
+        frame.addView(progressTrack)
+        card.addView(frame)
+
         val tv = TextView(ctx).apply {
             setTextColor(Color.WHITE)
             textSize = 12.5f
@@ -441,19 +505,51 @@ class RecentLandscapeAdapter(
             ellipsize = TextUtils.TruncateAt.END
             setPadding((4 * d).toInt(), (6 * d).toInt(), (4 * d).toInt(), 0)
         }
+
         wrap.addView(card)
         wrap.addView(tv)
-        return VH(wrap, iv, tv)
+        return VH(wrap, iv, tvBadge, progressFill, tv)
     }
 
     override fun getItemCount(): Int = items.size
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = items[position]
+        val d = holder.itemView.context.resources.displayMetrics.density
+        val cardWidthPx = (168 * d).toInt()
+
         holder.tvTitle.text = item.title
-        if (item.posterUrl.isNotEmpty()) {
-            Glide.with(holder.itemView.context).load(item.posterUrl).centerCrop().into(holder.ivThumb)
+        val thumbUrl = item.backdropUrl.ifEmpty { item.posterUrl }
+        if (thumbUrl.isNotEmpty()) {
+            Glide.with(holder.itemView.context).load(thumbUrl).centerCrop().into(holder.ivThumb)
         }
+
+        val posMs = item.positionMs
+        val durMs = item.durationMs
+        if (posMs > 5000L && durMs > 10000L) {
+            val ratio = (posMs.toFloat() / durMs.toFloat()).coerceIn(0.06f, 1.0f)
+            holder.progressFillView.layoutParams = FrameLayout.LayoutParams(
+                (cardWidthPx * ratio).toInt(),
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.START
+            )
+            val minsWatched = (posMs / 60000L).toInt()
+            val secsWatched = ((posMs % 60000L) / 1000L).toInt()
+            holder.tvResumeBadge.visibility = View.VISIBLE
+            holder.tvResumeBadge.text = if (minsWatched > 0) {
+                "▶ ${minsWatched}m ${secsWatched}s"
+            } else {
+                "▶ ${secsWatched}s"
+            }
+        } else {
+            holder.progressFillView.layoutParams = FrameLayout.LayoutParams(
+                (cardWidthPx * 0.08f).toInt(),
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.START
+            )
+            holder.tvResumeBadge.visibility = View.GONE
+        }
+
         holder.root.setOnClickListener { onClick(item) }
     }
 }
@@ -594,9 +690,6 @@ class HeroBannerAdapter(
     }
 }
 
-/**
- * شاشة الأفلام والمسلسلات بتحميل لا نهائي (Infinite Scroll Pagination) لآلاف الأفلام من TMDB
- */
 class VodFragment : Fragment() {
     companion object {
         fun newInstance(isSeries: Boolean) = VodFragment().apply {
@@ -622,9 +715,10 @@ class VodFragment : Fragment() {
         binding.tvSectionHeader.text = if (isSeries) "TV Series" else "Movies"
 
         val gridAdapter = VodGridAdapter(catalogList) { vod ->
-            SessionManager.addRecentChannel(requireContext(), vod.id, vod.title, vod.backdropUrl.ifEmpty { vod.posterUrl })
+            val savedPos = SessionManager.getSavedPositionForVod(requireContext(), vod.id)
+            SessionManager.saveWatchProgress(requireContext(), vod, savedPos, 0L)
             startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
-                putExtra(ContentDetailActivity.EXTRA_VOD, vod)
+                putExtra(ContentDetailActivity.EXTRA_VOD, vod.copy(savedPositionMs = savedPos))
             })
         }
         binding.rvVodGrid.adapter = gridAdapter

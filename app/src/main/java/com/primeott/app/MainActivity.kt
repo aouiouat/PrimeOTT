@@ -26,9 +26,9 @@ class MainActivity : AppCompatActivity() {
 
         OttRepository.initFavorites(this)
 
-        // فتح شاشة Live TV أو Home
+        // الدخول مباشرة إلى صفحة HOME عند فتح التطبيق
         if (savedInstanceState == null) {
-            switchToTab("LIVE")
+            switchToTab("HOME")
         }
 
         binding.navTabHome.setOnClickListener { switchToTab("HOME") }
@@ -40,8 +40,8 @@ class MainActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (activeTag != "LIVE") {
-                    switchToTab("LIVE")
+                if (activeTag != "HOME") {
+                    switchToTab("HOME")
                 } else {
                     finish()
                 }
@@ -74,6 +74,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun switchToTab(tag: String) {
         if (activeTag == tag && supportFragmentManager.findFragmentByTag(tag) != null) return
+
         val tx = supportFragmentManager.beginTransaction()
         tx.setCustomAnimations(R.anim.fade_in, R.anim.fade_out)
 
@@ -90,12 +91,13 @@ class MainActivity : AppCompatActivity() {
                 "LIVE" -> LiveTvFragment()
                 "MATCHES" -> ScheduleFragment()
                 "WATCH" -> WatchTogetherFragment()
-                else -> LiveTvFragment()
+                else -> HomeFragment()
             }
             tx.add(R.id.fragmentContainer, target, tag)
         } else {
             tx.show(target)
         }
+
         tx.commitAllowingStateLoss()
         activeTag = tag
         updateBottomBarIcons(tag)
