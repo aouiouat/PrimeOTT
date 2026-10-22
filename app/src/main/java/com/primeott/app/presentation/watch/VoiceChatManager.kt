@@ -2,78 +2,60 @@ package com.primeott.app.presentation.watch
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.media.*
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioRecord
+import android.media.AudioTrack
+import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
 import android.media.audiofx.NoiseSuppressor
-import android.util.Base64
-import com.primeott.app.data.repository.VoiceSyncHelper
-import kotlinx.coroutines.*
-import java.io.ByteArrayOutputStream
-import kotlin.math.abs
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.sqrt
 
+/**
+ * VoiceChatManager - محرك الدردشة الصوتية اللحظية مع إلغاء الصدى والضجيج،
+ * كشف المتحدث، وكتم المشاركين الفردي أو الجماعي.
+ */
 class VoiceChatManager(
     private val context: Context,
-    private val roomIdProvider: () -> String,
-    private val deviceId: String,
-    private val userName: String,
-    private val onRemoteSpeakerActive: (String) -> Unit,
-    private val onStateChanged: (Boolean, Boolean, String) -> Unit
+    private val roomId: String,
+    private val userId: String,
+    private val userName: String = "مشاهد",
+    private val onSpeakingStateChanged: ((Boolean, Int) -> Unit)? = null
 ) {
-    private var isConnected = false
-    private var isMuted = false
-    private var voiceLoopJob: Job? = null
+
+    private val sampleRate = 16000
+    private val isRunning = AtomicBoolean(false)
+    private val isMicMuted = AtomicBoolean(true)
+    private val isHostForceMuted = AtomicBoolean(false)
+    private val isSpeakerMuted = AtomicBoolean(false)
+
+    private val locallyMutedParticipants = ConcurrentHashMap.newKeySet<String>()
+
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
-    private var lastVoicePacketId: Long = 0L
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var echoCanceler: AcousticEchoCanceler? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
+    private var gainControl: AutomaticGainControl? = null
 
-    private val sampleRate = 8000
+    private var recordThread: Thread? = null
+    private var playThread: Thread? = null
 
-    @SuppressLint("MissingPermission")
-    fun connectVoiceSession() {
-        if (isConnected) return
-        isConnected = true
-        isMuted = false // يبدأ الميكروفون مفعلاً بمجرد ضغط المستخدم على اتصال صوتي
-
-        try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            audioManager.isSpeakerphoneOn = true
-        } catch (e: Exception) {}
-
-        initAudioHardware()
-        startCloudVoiceSyncLoop()
-        onStateChanged(true, isMuted, "🟢 متصل بالصوت الجماعي (الميكروفون مفعل 🎙️)")
-    }
+    var onOutgoingVoiceFrame: ((ByteArray) -> Unit)? = null
 
     @SuppressLint("MissingPermission")
-    private fun initAudioHardware() {
+    fun startVoiceChat() {
+        if (isRunning.getAndSet(true)) return
+
         try {
-            val minOutBuf = AudioTrack.getMinBufferSize(
-                sampleRate,
-                AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            ).coerceAtLeast(3200)
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
+            audioManager?.isSpeakerphoneOn = true
 
-            audioTrack = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(sampleRate)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build()
-                )
-                .setBufferSizeInBytes(minOutBuf * 2)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .build().apply { play() }
-
-            val minInBuf = AudioRecord.getMinBufferSize(
+            val minRecBuf = AudioRecord.getMinBufferSize(
                 sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
@@ -84,126 +66,175 @@ class VoiceChatManager(
                 sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT,
-                minInBuf * 2
+                minRecBuf * 2
             )
 
-            // تفعيل مانع الصدى والضجيج في الهاتف إن توفر
-            audioRecord?.audioSessionId?.let { sessionId ->
+            val sessionId = audioRecord?.audioSessionId ?: 0
+            if (sessionId != 0) {
                 if (AcousticEchoCanceler.isAvailable()) {
-                    AcousticEchoCanceler.create(sessionId)?.enabled = true
+                    echoCanceler = AcousticEchoCanceler.create(sessionId)?.apply { enabled = true }
                 }
                 if (NoiseSuppressor.isAvailable()) {
-                    NoiseSuppressor.create(sessionId)?.enabled = true
+                    noiseSuppressor = NoiseSuppressor.create(sessionId)?.apply { enabled = true }
+                }
+                if (AutomaticGainControl.isAvailable()) {
+                    gainControl = AutomaticGainControl.create(sessionId)?.apply { enabled = true }
                 }
             }
+
+            val minPlayBuf = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            ).coerceAtLeast(3200)
+
+            audioTrack = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(minPlayBuf * 2)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build()
 
             audioRecord?.startRecording()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
+            audioTrack?.play()
 
-    private fun startCloudVoiceSyncLoop() {
-        voiceLoopJob?.cancel()
-        voiceLoopJob = scope.launch {
-            val readBuffer = ByteArray(4800) // حوالي 0.3 ثانية من الصوت
-            while (isActive && isConnected) {
-                val roomId = roomIdProvider()
-                if (roomId.isEmpty()) {
-                    delay(300)
-                    continue
-                }
-
-                var outgoingBase64 = ""
-                if (!isMuted && audioRecord != null) {
-                    val outStream = ByteArrayOutputStream()
-                    var totalRead = 0
-                    val startMs = System.currentTimeMillis()
-                    while (System.currentTimeMillis() - startMs < 320 && totalRead < 6400) {
-                        val r = audioRecord?.read(readBuffer, 0, readBuffer.size) ?: 0
-                        if (r > 0) {
-                            outStream.write(readBuffer, 0, r)
-                            totalRead += r
-                        } else {
-                            break
+            recordThread = Thread {
+                val buf = ByteArray(1600)
+                while (isRunning.get()) {
+                    try {
+                        if (isMicMuted.get() || isHostForceMuted.get()) {
+                            onSpeakingStateChanged?.invoke(false, 0)
+                            Thread.sleep(80)
+                            continue
                         }
-                    }
-                    val rawBytes = outStream.toByteArray()
-                    // إرسال الحزمة فقط إذا كان هناك صوت فعلي لتوفير الإنترنت
-                    if (rawBytes.isNotEmpty() && hasVoiceActivity(rawBytes)) {
-                        outgoingBase64 = Base64.encodeToString(rawBytes, Base64.NO_WRAP)
-                    }
-                } else {
-                    delay(320)
-                }
-
-                val incomingPackets = VoiceSyncHelper.syncVoice(
-                    roomId = roomId,
-                    deviceId = deviceId,
-                    userName = userName,
-                    lastVoiceId = lastVoiceId(),
-                    outgoingPcmBase64 = outgoingBase64
-                )
-
-                for (pkt in incomingPackets) {
-                    if (pkt.id > lastVoicePacketId) {
-                        lastVoicePacketId = pkt.id
-                    }
-                    if (pkt.senderId != deviceId && pkt.pcmBase64.isNotEmpty()) {
-                        onRemoteSpeakerActive(pkt.senderName)
-                        playPcmBase64(pkt.pcmBase64)
+                        val read = audioRecord?.read(buf, 0, buf.size) ?: 0
+                        if (read > 0) {
+                            val chunk = buf.copyOf(read)
+                            val level = calculateRmsLevel(chunk)
+                            val speaking = level > 350
+                            onSpeakingStateChanged?.invoke(speaking, level)
+                            if (speaking) {
+                                onOutgoingVoiceFrame?.invoke(chunk)
+                                VoiceSyncHelper.pushAudioChunk(roomId, userId, userName, chunk)
+                            }
+                        }
+                    } catch (_: Exception) {
                     }
                 }
-            }
+            }.apply { isDaemon = true; start() }
+
+            playThread = Thread {
+                var lastTs = System.currentTimeMillis() - 1000
+                while (isRunning.get()) {
+                    try {
+                        if (!isSpeakerMuted.get()) {
+                            val chunks = VoiceSyncHelper.pullAudioChunks(
+                                roomId = roomId,
+                                excludeUserId = userId,
+                                sinceTs = lastTs,
+                                mutedUserIds = locallyMutedParticipants
+                            )
+                            lastTs = System.currentTimeMillis()
+                            for ((senderId, pcm) in chunks) {
+                                if (!locallyMutedParticipants.contains(senderId)) {
+                                    audioTrack?.write(pcm, 0, pcm.size)
+                                }
+                            }
+                        }
+                        Thread.sleep(120)
+                    } catch (_: Exception) {
+                    }
+                }
+            }.apply { isDaemon = true; start() }
+
+        } catch (_: Exception) {
+            isRunning.set(false)
         }
     }
 
-    private fun lastVoiceId(): Long = lastVoicePacketId
-
-    private fun hasVoiceActivity(pcmBytes: ByteArray): Boolean {
-        var sum = 0L
-        var samples = 0
-        var i = 0
-        while (i + 1 < pcmBytes.size) {
-            val sample = (pcmBytes[i + 1].toInt() shl 8) or (pcmBytes[i].toInt() and 0xFF)
-            sum += abs(sample)
-            samples++
-            i += 4
-        }
-        val avg = if (samples > 0) sum / samples else 0
-        return avg > 180 // عتبة حساسية الصوت
-    }
-
-    fun playPcmBase64(base64Pcm: String) {
-        if (!isConnected) return
+    fun playIncomingWebSocketVoice(senderId: String, pcmBytes: ByteArray) {
+        if (!isRunning.get() || isSpeakerMuted.get() || senderId == userId) return
+        if (locallyMutedParticipants.contains(senderId)) return
         try {
-            val bytes = Base64.decode(base64Pcm, Base64.NO_WRAP)
-            audioTrack?.write(bytes, 0, bytes.size)
-        } catch (e: Exception) {}
+            audioTrack?.write(pcmBytes, 0, pcmBytes.size)
+        } catch (_: Exception) {
+        }
     }
 
-    fun toggleMute(): Boolean {
-        if (!isConnected) return true
-        isMuted = !isMuted
-        val msg = if (isMuted) "🔇 تم كتم الميكروفون" else "🎙️ الميكروفون مفعل — أصدقاؤك يسمعونك الآن"
-        onStateChanged(isConnected, isMuted, msg)
-        return isMuted
+    private fun calculateRmsLevel(pcm: ByteArray): Int {
+        var sum = 0.0
+        var count = 0
+        var i = 0
+        while (i + 1 < pcm.size) {
+            val sample = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xFF)).toShort()
+            sum += sample * sample
+            count++
+            i += 2
+        }
+        return if (count > 0) sqrt(sum / count).toInt() else 0
     }
 
-    fun disconnectVoice() {
-        isConnected = false
-        isMuted = true
-        voiceLoopJob?.cancel()
+    fun setMuted(muted: Boolean) {
+        if (isHostForceMuted.get() && !muted) return
+        isMicMuted.set(muted)
+        if (muted) onSpeakingStateChanged?.invoke(false, 0)
+    }
+
+    fun setHostForceMuted(forceMuted: Boolean) {
+        isHostForceMuted.set(forceMuted)
+        if (forceMuted) {
+            isMicMuted.set(true)
+            onSpeakingStateChanged?.invoke(false, 0)
+        }
+    }
+
+    fun isMuted(): Boolean = isMicMuted.get() || isHostForceMuted.get()
+
+    fun isForceMutedByHost(): Boolean = isHostForceMuted.get()
+
+    fun setSpeakerMuted(muted: Boolean) {
+        isSpeakerMuted.set(muted)
+    }
+
+    fun isSpeakerMuted(): Boolean = isSpeakerMuted.get()
+
+    fun setParticipantMutedLocally(targetUserId: String, muted: Boolean) {
+        if (muted) locallyMutedParticipants.add(targetUserId)
+        else locallyMutedParticipants.remove(targetUserId)
+    }
+
+    fun isParticipantMutedLocally(targetUserId: String): Boolean =
+        locallyMutedParticipants.contains(targetUserId)
+
+    fun stopVoiceChat() {
+        isRunning.set(false)
+        try { recordThread?.interrupt() } catch (_: Exception) {}
+        try { playThread?.interrupt() } catch (_: Exception) {}
+        try { echoCanceler?.release() } catch (_: Exception) {}
+        try { noiseSuppressor?.release() } catch (_: Exception) {}
+        try { gainControl?.release() } catch (_: Exception) {}
         try {
             audioRecord?.stop()
             audioRecord?.release()
-        } catch (e: Exception) {}
-        audioRecord = null
+        } catch (_: Exception) {}
         try {
             audioTrack?.stop()
             audioTrack?.release()
-        } catch (e: Exception) {}
+        } catch (_: Exception) {}
+        audioRecord = null
         audioTrack = null
-        onStateChanged(false, true, "⚪ تم قطع الاتصال الصوتي")
     }
+
+    fun release() = stopVoiceChat()
 }

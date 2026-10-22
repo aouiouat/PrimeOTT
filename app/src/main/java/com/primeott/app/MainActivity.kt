@@ -74,7 +74,7 @@ class MainActivity : AppCompatActivity() {
         val roomCode = (codeFromQuery ?: codeFromPath)?.uppercase() ?: return
         if (roomCode.isNotEmpty()) {
             startActivity(Intent(this, WatchRoomActivity::class.java).apply {
-                putExtra(WatchRoomActivity.EXTRA_ROOM_CODE, roomCode)
+                putExtra("room_code", roomCode)
             })
         }
     }
