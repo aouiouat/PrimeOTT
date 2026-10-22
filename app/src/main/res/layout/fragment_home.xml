@@ -27,7 +27,7 @@
                 android:layout_height="wrap_content"
                 android:fontFamily="sans-serif-black"
                 android:letterSpacing="0.02"
-                android:text="PRIME"
+                android:text="ROYAL"
                 android:textColor="#E50914"
                 android:textSize="22sp"
                 android:textStyle="bold" />
@@ -51,7 +51,7 @@
                 android:layout_weight="1"
                 android:fontFamily="sans-serif-black"
                 android:letterSpacing="0.02"
-                android:text="OTT"
+                android:text="TV"
                 android:textColor="#FFFFFF"
                 android:textSize="22sp"
                 android:textStyle="bold" />

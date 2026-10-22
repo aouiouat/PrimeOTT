@@ -1,13 +1,17 @@
 package com.primeott.app.presentation.detail
 
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.ColorStateList
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.TransitionDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -38,11 +42,13 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.toColorInt
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.isVisible
+import androidx.core.widget.ImageViewCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.util.UnstableApi
@@ -51,6 +57,9 @@ import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
+import com.bumptech.glide.request.target.CustomTarget
+import com.bumptech.glide.request.transition.Transition
+import com.primeott.app.R
 import com.primeott.app.data.remote.SessionManager
 import com.primeott.app.data.repository.OttRepository
 import com.primeott.app.data.repository.PrimeVodExtractor
@@ -61,6 +70,7 @@ import com.primeott.app.domain.model.StreamSource
 import com.primeott.app.domain.model.SubtitleCue
 import com.primeott.app.domain.model.SubtitleTrack
 import com.primeott.app.domain.model.VodItem
+import com.primeott.app.presentation.common.AnimUtils
 import com.primeott.app.presentation.player.PrimePlayerEngine
 import com.primeott.app.presentation.sections.VodGridAdapter
 import com.primeott.app.presentation.watch.WatchRoomActivity
@@ -76,7 +86,8 @@ class ContentDetailActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_VOD = "extra_vod_item"
-        private const val SNIFFER_UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+        private const val SNIFFER_UA =
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
     }
 
     private lateinit var playerEngine: PrimePlayerEngine
@@ -87,21 +98,27 @@ class ContentDetailActivity : AppCompatActivity() {
     private var providerTargets: List<StreamSource> = emptyList()
     private var currentProviderIndex: Int = 0
     private var hasLockedPrimaryStream: Boolean = false
+    private var isPlayerModeActive: Boolean = false
+
     private var selectedSeason: Int = 1
     private var selectedEpisode: Int = 1
 
     private var availableSubtitles: List<SubtitleTrack> = emptyList()
     private var activeSubtitleCues: List<SubtitleCue> = emptyList()
     private var selectedSubtitleId: String = ""
-    // معايرة تزامن الترجمة بالمللي ثانية (+ أو - لتطابق الصوت 100%)
     private var subtitleOffsetMs: Long = 0L
 
     private var currentPlaybackSpeed: Float = 1.0f
     private var isFullscreen: Boolean = false
     private var isControlsLocked: Boolean = false
     private var isUserSeeking: Boolean = false
+    private var isOverviewExpanded: Boolean = false
     private var progressJob: Job? = null
     private var snifferTimeoutJob: Job? = null
+
+    // اللون الديناميكي المستخرج من البوستر (يبدا بلون داكن فخم ويتبدل مع كل فيلم)
+    private var currentAmbientDarkColor: Int = "#1A0D12".toColorInt()
+
     private var resizeModeIndex: Int = 0
     private val resizeModes = listOf(
         AspectRatioFrameLayout.RESIZE_MODE_FIT,
@@ -118,6 +135,7 @@ class ContentDetailActivity : AppCompatActivity() {
     private lateinit var loadingSpinner: ProgressBar
     private lateinit var tvLoadingStatus: TextView
     private lateinit var controlsOverlay: FrameLayout
+    private lateinit var btnMinimizePlayer: ImageView
     private lateinit var tvTopPlayerTitle: TextView
     private lateinit var btnTopLock: TextView
     private lateinit var btnTopServerHd: TextView
@@ -133,18 +151,35 @@ class ContentDetailActivity : AppCompatActivity() {
     private lateinit var btnBottomAspect: TextView
     private lateinit var btnUnlockScreenOnly: TextView
 
+    // واجهة العرض السينمائية الجديدة (Hero Poster + Dynamic Palette Gradient)
     private lateinit var detailsScrollView: ScrollView
+    private lateinit var detailsMasterColumn: LinearLayout
+    private lateinit var heroPosterSection: FrameLayout
+    private lateinit var ivHeroBackdrop: ImageView
+    private lateinit var vPosterTopScrim: View
+    private lateinit var vPosterBottomGradient: View
+    private lateinit var btnTopBackHero: ImageView
+    private lateinit var btnFavBox: ImageView
     private lateinit var tvMovieTitle: TextView
-    private lateinit var tvMovieRating: TextView
+    private lateinit var tvMovieGenresLine: TextView
+
+    private lateinit var dynamicThemeBody: LinearLayout
     private lateinit var metaPillsRow: LinearLayout
-    private lateinit var btnFavBox: TextView
-    private lateinit var btnDownloadBox: TextView
-    private lateinit var btnTrailerBox: TextView
-    private lateinit var btnWatchPartyBox: TextView
+    private lateinit var btnPlayNowMain: LinearLayout
+    private lateinit var tvPlayNowBtnLabel: TextView
+    private lateinit var btnTrailerBox: LinearLayout
+    private lateinit var btnDownloadBox: LinearLayout
+    private lateinit var btnWatchPartyBox: LinearLayout
+
     private lateinit var seriesContainer: LinearLayout
     private lateinit var seasonTabsRow: LinearLayout
     private lateinit var rvEpisodes: RecyclerView
+
+    private lateinit var vOverviewDivider: View
     private lateinit var tvOverviewText: TextView
+    private lateinit var tvOverviewToggleMore: TextView
+    private lateinit var tvInfoCrewLine: TextView
+
     private lateinit var tvCastHeader: TextView
     private lateinit var rvCast: RecyclerView
     private lateinit var tvRecommendedHeader: TextView
@@ -152,10 +187,7 @@ class ContentDetailActivity : AppCompatActivity() {
     private lateinit var tvMoreLikeHeader: TextView
     private lateinit var rvMoreLike: RecyclerView
 
-    // متغير يحفظ الجودات المختارة حالياً (null = أعلى جودة تلقائية)
     private var selectedQualityHeight: Int? = null
-
-    // 1. متغيرات متابعة موضع الاستكمال والحفظ الدوري
     private var pendingResumePositionMs: Long = 0L
     private var lastSavedTick: Int = 0
 
@@ -182,10 +214,10 @@ class ContentDetailActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (isFullscreen) {
-                    applyFullscreenState(false)
-                } else {
-                    finish()
+                when {
+                    isFullscreen -> applyFullscreenState(false)
+                    isPlayerModeActive -> switchToPosterShowcaseMode()
+                    else -> finish()
                 }
             }
         })
@@ -233,11 +265,121 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * استخراج اللون الداكن (darkVibrant / darkMuted) من البوستر أوتوماتيكياً
+     * يضمن دائماً أن الخلفية داكنة وفخمة وأن النص الأبيض واضح 100% مهما كان غلاف الفيلم فاتحاً
+     */
+    private fun extractDarkAmbientColorFromPoster(bitmap: Bitmap): Int {
+        return try {
+            val scaled = Bitmap.createScaledBitmap(bitmap, 36, 36, false)
+            var rWeighted = 0f
+            var gWeighted = 0f
+            var bWeighted = 0f
+            var weightSum = 0f
+            val hsv = FloatArray(3)
+
+            for (y in 6 until 34) {
+                for (x in 2 until 34) {
+                    val pixel = scaled.getPixel(x, y)
+                    val r = Color.red(pixel)
+                    val g = Color.green(pixel)
+                    val b = Color.blue(pixel)
+                    Color.colorToHSV(pixel, hsv)
+                    val sat = hsv[1]
+                    val value = hsv[2]
+                    // نفضلو الألوان الغنية (S > 0.18) ونتجنبو الأبيض الخالص والأسود الخالص
+                    if (sat >= 0.16f && value in 0.12f..0.92f) {
+                        val weight = (sat * 2.2f) + (1f - kotlin.math.abs(value - 0.5f))
+                        rWeighted += r * weight
+                        gWeighted += g * weight
+                        bWeighted += b * weight
+                        weightSum += weight
+                    }
+                }
+            }
+
+            if (weightSum <= 0.01f) {
+                "#18121E".toColorInt()
+            } else {
+                val avgColor = Color.rgb(
+                    (rWeighted / weightSum).toInt().coerceIn(0, 255),
+                    (gWeighted / weightSum).toInt().coerceIn(0, 255),
+                    (bWeighted / weightSum).toInt().coerceIn(0, 255)
+                )
+                Color.colorToHSV(avgColor, hsv)
+                // فرض درجة إشباع متوازنة (0.45..0.82) ودرجة إضاءة داكنة دائماً (0.24..0.34)
+                hsv[1] = hsv[1].coerceIn(0.45f, 0.82f)
+                hsv[2] = hsv[2].coerceIn(0.24f, 0.34f)
+                Color.HSVToColor(hsv)
+            }
+        } catch (_: Exception) {
+            "#18121E".toColorInt()
+        }
+    }
+
+    /**
+     * تطبيق التدرج اللوني الديناميكي (LinearGradient) من أسفل البوستر حتى اللون الأسود (#050508) في أسفل الشاشة
+     */
+    private fun applyDynamicAmbientTheme(newDarkColor: Int, animate: Boolean = true) {
+        val startColor = currentAmbientDarkColor
+        val targetColor = newDarkColor
+
+        val updateGradients: (Int) -> Unit = { ambient ->
+            val midDark = ColorUtils.blendARGB(ambient, "#060609".toColorInt(), 0.55f)
+            val deepBlack = "#050508".toColorInt()
+
+            // 1. تدرج أسفل البوستر من شفاف إلى اللون المستخرج من البوستر
+            vPosterBottomGradient.background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(
+                    Color.TRANSPARENT,
+                    ColorUtils.setAlphaComponent(ambient, 120),
+                    ColorUtils.setAlphaComponent(ambient, 225),
+                    ambient
+                )
+            )
+
+            // 2. تدرج جسم الصفحة من اللون المستخرج إلى الأسود الخالص في الأسفل
+            dynamicThemeBody.background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(
+                    ambient,
+                    midDark,
+                    deepBlack,
+                    deepBlack
+                )
+            )
+
+            // 3. تلوين خفيف للخط الفاصل قبل Overview
+            val accentLineColor = ColorUtils.blendARGB(ambient, Color.WHITE, 0.25f)
+            vOverviewDivider.setBackgroundColor(ColorUtils.setAlphaComponent(accentLineColor, 75))
+        }
+
+        if (animate) {
+            ValueAnimator.ofArgb(startColor, targetColor).apply {
+                duration = 420L
+                addUpdateListener { va ->
+                    val c = va.animatedValue as Int
+                    currentAmbientDarkColor = c
+                    updateGradients(c)
+                }
+                start()
+            }
+        } else {
+            currentAmbientDarkColor = targetColor
+            updateGradients(targetColor)
+        }
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     private fun buildPrimeTvDetailLayout() {
+        val titleCondensedFont = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+        val mediumFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        val regularFont = Typeface.create("sans-serif", Typeface.NORMAL)
+
         rootVerticalLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor("#08080C".toColorInt())
+            setBackgroundColor("#050508".toColorInt())
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -245,11 +387,15 @@ class ContentDetailActivity : AppCompatActivity() {
             )
         }
 
+        // =========================================================================
+        // 1. INLINE VIDEO PLAYER CONTAINER (يظهر كي تضغط على PLAY)
+        // =========================================================================
         playerContainer = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
+            visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(235)
+                dp(240)
             )
         }
 
@@ -258,7 +404,7 @@ class ContentDetailActivity : AppCompatActivity() {
             alpha = 0f
             visibility = View.INVISIBLE
         }
-        playerContainer.addView(headlessSnifferWebView)
+        rootVerticalLayout.addView(headlessSnifferWebView)
 
         playerView = PlayerView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
@@ -297,12 +443,10 @@ class ContentDetailActivity : AppCompatActivity() {
                 Gravity.CENTER
             )
         }
-
         loadingSpinner = ProgressBar(this).apply {
             layoutParams = LinearLayout.LayoutParams(dp(42), dp(42))
-            indeterminateTintList = android.content.res.ColorStateList.valueOf("#E50914".toColorInt())
+            indeterminateTintList = ColorStateList.valueOf("#E50914".toColorInt())
         }
-
         tvLoadingStatus = TextView(this).apply {
             text = "Loading Fast 1080p Stream..."
             setTextColor("#CBD5E1".toColorInt())
@@ -310,7 +454,6 @@ class ContentDetailActivity : AppCompatActivity() {
             setTypeface(typeface, Typeface.BOLD)
             setPadding(0, dp(6), 0, 0)
         }
-
         loadingContainer.addView(loadingSpinner)
         loadingContainer.addView(tvLoadingStatus)
         playerContainer.addView(loadingContainer)
@@ -327,7 +470,7 @@ class ContentDetailActivity : AppCompatActivity() {
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(8))
+            setPadding(dp(12), dp(12), dp(14), dp(8))
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -335,10 +478,23 @@ class ContentDetailActivity : AppCompatActivity() {
             )
         }
 
+        btnMinimizePlayer = ImageView(this).apply {
+            setImageResource(R.drawable.ic_back_chevron)
+            setPadding(dp(6), dp(6), dp(10), dp(6))
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(34))
+            setOnClickListener {
+                if (isFullscreen) {
+                    applyFullscreenState(false)
+                } else {
+                    switchToPosterShowcaseMode()
+                }
+            }
+        }
+
         tvTopPlayerTitle = TextView(this).apply {
             setTextColor(Color.WHITE)
             textSize = 15f
-            setTypeface(typeface, Typeface.BOLD)
+            typeface = mediumFont
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -346,7 +502,7 @@ class ContentDetailActivity : AppCompatActivity() {
 
         btnTopLock = TextView(this).apply {
             text = "🔓"
-            textSize = 16f
+            textSize = 15f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             setPadding(dp(10), dp(4), dp(10), dp(4))
@@ -361,9 +517,9 @@ class ContentDetailActivity : AppCompatActivity() {
         btnTopServerHd = TextView(this).apply {
             text = "FHD"
             textSize = 11f
-            setTypeface(typeface, Typeface.BOLD)
+            typeface = mediumFont
             setTextColor(Color.WHITE)
-            background = makeRoundedBg("#22FFFFFF", 5, "#FFFFFF")
+            background = makeRoundedBg("#26FFFFFF", 6, "#80FFFFFF")
             setPadding(dp(8), dp(3), dp(8), dp(3))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -373,14 +529,20 @@ class ContentDetailActivity : AppCompatActivity() {
         }
 
         btnTopSubtitles = TextView(this).apply {
-            text = "文A"
-            textSize = 13f
-            setTypeface(typeface, Typeface.BOLD)
+            text = "CC"
+            textSize = 12f
+            typeface = mediumFont
             setTextColor(Color.WHITE)
-            setPadding(dp(10), dp(4), dp(6), dp(4))
+            background = makeRoundedBg("#26FFFFFF", 6, "#66FFFFFF")
+            setPadding(dp(8), dp(3), dp(8), dp(3))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = dp(8) }
             setOnClickListener { showSubtitlesDialog() }
         }
 
+        topBar.addView(btnMinimizePlayer)
         topBar.addView(tvTopPlayerTitle)
         topBar.addView(btnTopLock)
         topBar.addView(btnTopServerHd)
@@ -430,14 +592,14 @@ class ContentDetailActivity : AppCompatActivity() {
             text = "0:00"
             setTextColor(Color.WHITE)
             textSize = 12f
-            setTypeface(typeface, Typeface.BOLD)
+            typeface = mediumFont
         }
 
         seekBar = SeekBar(this).apply {
             max = 1000
             progress = 0
-            progressTintList = android.content.res.ColorStateList.valueOf("#E50914".toColorInt())
-            thumbTintList = android.content.res.ColorStateList.valueOf("#E50914".toColorInt())
+            progressTintList = ColorStateList.valueOf("#E50914".toColorInt())
+            thumbTintList = ColorStateList.valueOf("#E50914".toColorInt())
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
@@ -462,13 +624,13 @@ class ContentDetailActivity : AppCompatActivity() {
             text = "--:--"
             setTextColor(Color.WHITE)
             textSize = 12f
-            setTypeface(typeface, Typeface.BOLD)
+            typeface = mediumFont
         }
 
         btnInlineFullscreen = TextView(this).apply {
             text = "⛶"
             setTextColor(Color.WHITE)
-            textSize = 17f
+            textSize = 18f
             setPadding(dp(10), dp(2), dp(4), dp(2))
             setOnClickListener { applyFullscreenState(!isFullscreen) }
         }
@@ -491,28 +653,28 @@ class ContentDetailActivity : AppCompatActivity() {
         }
 
         btnBottomSubtitles = TextView(this).apply {
-            text = "💬 Subtitle & Sync"
+            text = "Subtitles & Sync"
             setTextColor(Color.WHITE)
             textSize = 12.5f
-            setTypeface(typeface, Typeface.BOLD)
+            typeface = mediumFont
             setPadding(dp(16), dp(6), dp(16), dp(6))
             setOnClickListener { showSubtitlesDialog() }
         }
 
         btnBottomSpeed = TextView(this).apply {
-            text = "⏱ Normal"
+            text = "Speed: Normal"
             setTextColor(Color.WHITE)
             textSize = 12.5f
-            setTypeface(typeface, Typeface.BOLD)
+            typeface = mediumFont
             setPadding(dp(16), dp(6), dp(16), dp(6))
             setOnClickListener { showPlaybackSpeedDialog() }
         }
 
         btnBottomAspect = TextView(this).apply {
-            text = "⛶ Aspect Ratio"
+            text = "Aspect Ratio"
             setTextColor(Color.WHITE)
             textSize = 12.5f
-            setTypeface(typeface, Typeface.BOLD)
+            typeface = mediumFont
             setPadding(dp(16), dp(6), dp(16), dp(6))
             setOnClickListener {
                 resizeModeIndex = (resizeModeIndex + 1) % resizeModes.size
@@ -563,9 +725,11 @@ class ContentDetailActivity : AppCompatActivity() {
             true
         }
         controlsOverlay.setOnClickListener { toggleControlsOverlay() }
-
         rootVerticalLayout.addView(playerContainer)
 
+        // =========================================================================
+        // 2. CINEMATIC SCROLL VIEW (FlixVision Poster + Dynamic Palette Gradient)
+        // =========================================================================
         detailsScrollView = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -573,83 +737,210 @@ class ContentDetailActivity : AppCompatActivity() {
                 1f
             )
             isVerticalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
         }
 
-        val detailsBody = LinearLayout(this).apply {
+        detailsMasterColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(14), dp(16), dp(40))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
 
-        tvMovieTitle = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 22f
-            setTypeface(typeface, Typeface.BOLD)
-        }
-        detailsBody.addView(tvMovieTitle)
-
-        tvMovieRating = TextView(this).apply {
-            setTextColor("#FFC107".toColorInt())
-            textSize = 14f
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(0, dp(6), 0, dp(10))
-        }
-        detailsBody.addView(tvMovieRating)
-
-        val pillsScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-        }
-        metaPillsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        pillsScroll.addView(metaPillsRow)
-        detailsBody.addView(pillsScroll)
-
-        val actionsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(14), 0, dp(16))
+        // --- A. HERO POSTER SECTION (390dp) ---
+        heroPosterSection = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(395)
+            )
         }
 
-        btnFavBox = TextView(this).apply {
-            text = "♡"
-            textSize = 20f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            background = makeRoundedBg("#14161E", 10, "#2A2E3D")
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(10) }
+        ivHeroBackdrop = ImageView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+        heroPosterSection.addView(ivHeroBackdrop)
+
+        // تضليل علوي خفيف باش تبان أيقونة الرجوع وأيقونة المفضلة واضحين
+        vPosterTopScrim = View(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(95),
+                Gravity.TOP
+            )
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf("#99000000".toColorInt(), Color.TRANSPARENT)
+            )
+        }
+        heroPosterSection.addView(vPosterTopScrim)
+
+        // التدرج السفلي للبوستر (يندمج مع اللون المستخرج من البوستر)
+        vPosterBottomGradient = View(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(210),
+                Gravity.BOTTOM
+            )
+        }
+        heroPosterSection.addView(vPosterBottomGradient)
+
+        // Top Bar فوق البوستر: زر الرجوع على اليسار + زر Favorite فقط على اليمين (بلا Search وبلا Settings)
+        val heroTopActionsRow = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP
+            )
+            setPadding(dp(16), dp(16), dp(16), dp(8))
+        }
+
+        btnTopBackHero = ImageView(this).apply {
+            setImageResource(R.drawable.ic_back_chevron)
+            background = makeRoundedBg("#450B0D14", 22, "#38FFFFFF")
+            setPadding(dp(10), dp(10), dp(11), dp(10))
+            layoutParams = FrameLayout.LayoutParams(dp(42), dp(42), Gravity.START or Gravity.CENTER_VERTICAL)
+            setOnClickListener { finish() }
+        }
+
+        btnFavBox = ImageView(this).apply {
+            setImageResource(R.drawable.ic_heart_outline)
+            background = makeRoundedBg("#450B0D14", 22, "#38FFFFFF")
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            layoutParams = FrameLayout.LayoutParams(dp(42), dp(42), Gravity.END or Gravity.CENTER_VERTICAL)
             setOnClickListener {
                 val id = currentVod?.id ?: return@setOnClickListener
                 OttRepository.toggleFavorite(id, this@ContentDetailActivity)
                 updateFavoriteIcon(id)
             }
         }
+        AnimUtils.attachPressBounce(btnTopBackHero)
+        AnimUtils.attachPressBounce(btnFavBox)
 
-        btnDownloadBox = TextView(this).apply {
-            text = "⬇"
-            textSize = 18f
+        heroTopActionsRow.addView(btnTopBackHero)
+        heroTopActionsRow.addView(btnFavBox)
+        heroPosterSection.addView(heroTopActionsRow)
+
+        // العنوان الفخم + سطر الأنواع (Action • Sci-Fi • Drama) فوق التدرج أسفل الصورة
+        val heroBottomTitleBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
+            )
+            setPadding(dp(18), 0, dp(18), dp(10))
+        }
+
+        tvMovieTitle = TextView(this).apply {
             setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            background = makeRoundedBg("#14161E", 10, "#2A2E3D")
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginEnd = dp(10) }
-            setOnClickListener {
-                Toast.makeText(this@ContentDetailActivity, "⬇ Preparing 1080p Direct Download...", Toast.LENGTH_SHORT).show()
+            textSize = 30f
+            typeface = titleCondensedFont
+            letterSpacing = 0.02f
+            maxLines = 2
+            ellipsize = TextUtils.TruncateAt.END
+            setShadowLayer(12f, 0f, 4f, Color.BLACK)
+        }
+
+        tvMovieGenresLine = TextView(this).apply {
+            setTextColor("#E2E8F0".toColorInt())
+            textSize = 13f
+            typeface = mediumFont
+            letterSpacing = 0.02f
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, dp(4), 0, 0)
+            setShadowLayer(8f, 0f, 2f, Color.BLACK)
+        }
+
+        heroBottomTitleBox.addView(tvMovieTitle)
+        heroBottomTitleBox.addView(tvMovieGenresLine)
+        heroPosterSection.addView(heroBottomTitleBox)
+
+        detailsMasterColumn.addView(heroPosterSection)
+
+        // --- B. DYNAMIC GRADIENT BODY (من لون البوستر الداكن إلى الأسود #050508) ---
+        dynamicThemeBody = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(6), dp(18), dp(42))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        // 1. الكبسولات الصغيرة (Small Info Cards: ★ Rating | Year | Runtime | FHD | PG-13)
+        val pillsScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(18)
+            }
+        }
+        metaPillsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        pillsScroll.addView(metaPillsRow)
+        dynamicThemeBody.addView(pillsScroll)
+
+        // 2. أزرار PLAY (أبيض فخم) + Trailer + Download + Party
+        val primaryActionsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            weightSum = 3f
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(22)
             }
         }
 
-        btnTrailerBox = TextView(this).apply {
-            text = "🎬 Trailer"
-            textSize = 12.5f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.WHITE)
+        // زر PLAY الأبيض الفخم عالي التباين
+        btnPlayNowMain = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            background = makeRoundedBg("#14161E", 10, "#2A2E3D")
-            setPadding(dp(14), 0, dp(14), 0)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(10) }
+            setBackgroundResource(R.drawable.bg_btn_play_white_luxury)
+            elevation = dp(4).toFloat()
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 1.15f).apply {
+                marginEnd = dp(8)
+            }
+            setOnClickListener {
+                activateInlinePlayerAndStart()
+            }
+        }
+        val ivPlayBlack = ImageView(this).apply {
+            setImageResource(R.drawable.ic_play_watch_now)
+            ImageViewCompat.setImageTintList(this, ColorStateList.valueOf("#090A0F".toColorInt()))
+            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18))
+        }
+        tvPlayNowBtnLabel = TextView(this).apply {
+            text = "PLAY"
+            setTextColor("#090A0F".toColorInt())
+            textSize = 15f
+            typeface = titleCondensedFont
+            letterSpacing = 0.05f
+            setPadding(dp(7), 0, 0, 0)
+        }
+        btnPlayNowMain.addView(ivPlayBlack)
+        btnPlayNowMain.addView(tvPlayNowBtnLabel)
+
+        // زر Trailer الزجاجي الفخم
+        btnTrailerBox = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setBackgroundResource(R.drawable.bg_btn_glass_secondary)
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 0.95f).apply {
+                marginEnd = dp(8)
+            }
             setOnClickListener {
                 val key = fullDetails?.trailerYoutubeKey.orEmpty()
                 if (key.isNotEmpty()) {
@@ -660,29 +951,76 @@ class ContentDetailActivity : AppCompatActivity() {
                 }
             }
         }
-
-        btnWatchPartyBox = TextView(this).apply {
-            text = "👥 Watch Together"
-            textSize = 12.5f
-            setTypeface(typeface, Typeface.BOLD)
+        val ivTrailerIcon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_trailer_film)
+            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18))
+        }
+        val tvTrailerLabel = TextView(this).apply {
+            text = "Trailer"
             setTextColor(Color.WHITE)
+            textSize = 13.5f
+            typeface = mediumFont
+            setPadding(dp(6), 0, 0, 0)
+        }
+        btnTrailerBox.addView(ivTrailerIcon)
+        btnTrailerBox.addView(tvTrailerLabel)
+
+        // زر Download الزجاجي الفخم
+        btnDownloadBox = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            background = makeRoundedBg("#1E293B", 10, "#38BDF8")
-            setPadding(dp(14), 0, dp(14), 0)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44))
+            setBackgroundResource(R.drawable.bg_btn_glass_secondary)
+            layoutParams = LinearLayout.LayoutParams(0, dp(48), 0.9f)
+            setOnClickListener {
+                handleDirectMovieDownload()
+            }
+        }
+        val ivDownloadIcon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_download_cloud)
+            layoutParams = LinearLayout.LayoutParams(dp(18), dp(18))
+        }
+        val tvDownloadLabel = TextView(this).apply {
+            text = "Download"
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            typeface = mediumFont
+            setPadding(dp(5), 0, 0, 0)
+        }
+        btnDownloadBox.addView(ivDownloadIcon)
+        btnDownloadBox.addView(tvDownloadLabel)
+
+        // زر Watch Together الإضافي
+        btnWatchPartyBox = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setBackgroundResource(R.drawable.bg_btn_glass_secondary)
+            layoutParams = LinearLayout.LayoutParams(dp(46), dp(48)).apply {
+                marginStart = dp(8)
+            }
             setOnClickListener { createWatchTogetherRoom() }
         }
+        val ivPartyIcon = ImageView(this).apply {
+            setImageResource(R.drawable.ic_nav_events)
+            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20))
+        }
+        btnWatchPartyBox.addView(ivPartyIcon)
 
-        actionsRow.addView(btnFavBox)
-        actionsRow.addView(btnDownloadBox)
-        actionsRow.addView(btnTrailerBox)
-        actionsRow.addView(btnWatchPartyBox)
-        detailsBody.addView(actionsRow)
+        AnimUtils.attachPressBounce(btnPlayNowMain)
+        AnimUtils.attachPressBounce(btnTrailerBox)
+        AnimUtils.attachPressBounce(btnDownloadBox)
+        AnimUtils.attachPressBounce(btnWatchPartyBox)
 
+        primaryActionsRow.addView(btnPlayNowMain)
+        primaryActionsRow.addView(btnTrailerBox)
+        primaryActionsRow.addView(btnDownloadBox)
+        primaryActionsRow.addView(btnWatchPartyBox)
+        dynamicThemeBody.addView(primaryActionsRow)
+
+        // 3. قسم المسلسلات (Seasons & Episodes - يظهر غير فـ المسلسلات)
         seriesContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            setPadding(0, 0, 0, dp(14))
+            setPadding(0, 0, 0, dp(16))
         }
         val seasonScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
@@ -696,76 +1034,177 @@ class ContentDetailActivity : AppCompatActivity() {
 
         rvEpisodes = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@ContentDetailActivity, LinearLayoutManager.HORIZONTAL, false)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(110))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(112))
         }
         seriesContainer.addView(rvEpisodes)
-        detailsBody.addView(seriesContainer)
+        dynamicThemeBody.addView(seriesContainer)
+
+        // 4. خط فاصل أنيق + قسم Overview مفصول على الفوق
+        vOverviewDivider = View(this).apply {
+            setBackgroundColor("#26FFFFFF".toColorInt())
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(1)
+            ).apply {
+                bottomMargin = dp(16)
+            }
+        }
+        dynamicThemeBody.addView(vOverviewDivider)
 
         val overviewHeader = TextView(this).apply {
             text = "Overview"
             setTextColor(Color.WHITE)
-            textSize = 17f
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(0, dp(4), 0, dp(6))
+            textSize = 18.5f
+            typeface = titleCondensedFont
+            letterSpacing = 0.03f
+            setPadding(0, 0, 0, dp(6))
         }
-        detailsBody.addView(overviewHeader)
+        dynamicThemeBody.addView(overviewHeader)
 
         tvOverviewText = TextView(this).apply {
-            setTextColor("#B0B8C4".toColorInt())
+            setTextColor("#D8E0EC".toColorInt())
             textSize = 14f
-            setLineSpacing(dp(3).toFloat(), 1.0f)
+            typeface = regularFont
+            maxLines = 4
+            ellipsize = TextUtils.TruncateAt.END
+            setLineSpacing(dp(4).toFloat(), 1.0f)
+            setOnClickListener { toggleOverviewExpansion() }
         }
-        detailsBody.addView(tvOverviewText)
+        dynamicThemeBody.addView(tvOverviewText)
 
+        tvOverviewToggleMore = TextView(this).apply {
+            text = "More"
+            setTextColor("#38BDF8".toColorInt())
+            textSize = 13f
+            typeface = mediumFont
+            setPadding(0, dp(4), 0, dp(8))
+            setOnClickListener { toggleOverviewExpansion() }
+        }
+        dynamicThemeBody.addView(tvOverviewToggleMore)
+
+        tvInfoCrewLine = TextView(this).apply {
+            setTextColor("#94A3B8".toColorInt())
+            textSize = 12f
+            typeface = regularFont
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        dynamicThemeBody.addView(tvInfoCrewLine)
+
+        // 5. قسم Cast (ما كبار ما صغار بتصميم شباب ومتوازن)
         tvCastHeader = TextView(this).apply {
             text = "Cast"
             setTextColor(Color.WHITE)
-            textSize = 17f
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(0, dp(20), 0, dp(10))
+            textSize = 18.5f
+            typeface = titleCondensedFont
+            letterSpacing = 0.03f
+            setPadding(0, dp(14), 0, dp(10))
         }
-        detailsBody.addView(tvCastHeader)
+        dynamicThemeBody.addView(tvCastHeader)
 
         rvCast = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@ContentDetailActivity, LinearLayoutManager.HORIZONTAL, false)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(125))
+            clipToPadding = false
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(122))
         }
-        detailsBody.addView(rvCast)
+        dynamicThemeBody.addView(rvCast)
 
+        // 6. قسم Recommended
         tvRecommendedHeader = TextView(this).apply {
             text = "Recommended"
             setTextColor(Color.WHITE)
-            textSize = 17f
-            setTypeface(typeface, Typeface.BOLD)
+            textSize = 18.5f
+            typeface = titleCondensedFont
+            letterSpacing = 0.03f
             setPadding(0, dp(18), 0, dp(10))
         }
-        detailsBody.addView(tvRecommendedHeader)
+        dynamicThemeBody.addView(tvRecommendedHeader)
 
         rvRecommended = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@ContentDetailActivity, LinearLayoutManager.HORIZONTAL, false)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(195))
+            clipToPadding = false
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(198))
         }
-        detailsBody.addView(rvRecommended)
+        dynamicThemeBody.addView(rvRecommended)
 
+        // 7. قسم More Like This
         tvMoreLikeHeader = TextView(this).apply {
             text = "More Like This"
             setTextColor(Color.WHITE)
-            textSize = 17f
-            setTypeface(typeface, Typeface.BOLD)
+            textSize = 18.5f
+            typeface = titleCondensedFont
+            letterSpacing = 0.03f
             setPadding(0, dp(18), 0, dp(10))
         }
-        detailsBody.addView(tvMoreLikeHeader)
+        dynamicThemeBody.addView(tvMoreLikeHeader)
 
         rvMoreLike = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@ContentDetailActivity, LinearLayoutManager.HORIZONTAL, false)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(195))
+            clipToPadding = false
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(198))
         }
-        detailsBody.addView(rvMoreLike)
+        dynamicThemeBody.addView(rvMoreLike)
 
-        detailsScrollView.addView(detailsBody)
+        detailsMasterColumn.addView(dynamicThemeBody)
+        detailsScrollView.addView(detailsMasterColumn)
         rootVerticalLayout.addView(detailsScrollView)
 
         setContentView(rootVerticalLayout)
+        applyDynamicAmbientTheme("#1A0D12".toColorInt(), animate = false)
+    }
+
+    private fun toggleOverviewExpansion() {
+        isOverviewExpanded = !isOverviewExpanded
+        if (isOverviewExpanded) {
+            tvOverviewText.maxLines = 30
+            tvOverviewToggleMore.text = "Less"
+        } else {
+            tvOverviewText.maxLines = 4
+            tvOverviewToggleMore.text = "More"
+        }
+    }
+
+    /**
+     * كي يضغط المستخدم على PLAY: نخبي الكوفر الكبير ونبين المشغل الفوق ونبدا التشغيل فوراً
+     */
+    private fun activateInlinePlayerAndStart() {
+        isPlayerModeActive = true
+        heroPosterSection.visibility = View.GONE
+        playerContainer.visibility = View.VISIBLE
+        detailsScrollView.smoothScrollTo(0, 0)
+
+        if (resolvedDirectStreams.isNotEmpty()) {
+            loadingContainer.visibility = View.GONE
+            playerEngine.playSources(playerView, resolvedDirectStreams.toList(), 0, pendingResumePositionMs)
+        } else {
+            loadingContainer.visibility = View.VISIBLE
+            val vod = currentVod ?: return
+            if (providerTargets.isEmpty()) {
+                startStreamExtractionForEpisodeOrMovie(vod, selectedSeason, selectedEpisode)
+            } else {
+                loadProviderInHeadlessSniffer(currentProviderIndex)
+            }
+        }
+    }
+
+    private fun switchToPosterShowcaseMode() {
+        isPlayerModeActive = false
+        playerEngine.pause()
+        playerContainer.visibility = View.GONE
+        heroPosterSection.visibility = View.VISIBLE
+    }
+
+    private fun handleDirectMovieDownload() {
+        val directUrl = resolvedDirectStreams.firstOrNull()?.url
+        if (!directUrl.isNullOrEmpty() && !directUrl.contains(".m3u8", ignoreCase = true)) {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(directUrl)))
+        } else if (!directUrl.isNullOrEmpty()) {
+            Toast.makeText(this, "Stream Ready (${btnTopServerHd.text}) — Opening External Downloader...", Toast.LENGTH_SHORT).show()
+            runCatching {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(directUrl)))
+            }
+        } else {
+            Toast.makeText(this, "Preparing 1080p Direct Link... Tap again in 2 seconds", Toast.LENGTH_SHORT).show()
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
@@ -846,7 +1285,7 @@ class ContentDetailActivity : AppCompatActivity() {
                     val subTrack = SubtitleTrack(
                         id = "stream_sync_${reqUrl.hashCode()}",
                         languageCode = if (isAr) "ar" else "en",
-                        languageLabel = if (isAr) "⭐ Arabic (100% Stream Synced)" else "⭐ English (100% Stream Synced)",
+                        languageLabel = if (isAr) "Arabic (100% Stream Synced)" else "English (100% Stream Synced)",
                         releaseName = "Direct.Stream.Embedded.VTT",
                         url = reqUrl
                     )
@@ -893,9 +1332,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * قفل التشغيل على أول رابط شغال وإيقاف WebView الخفي تماماً لمنع أي لاغ أو إعادة تشغيل
-     */
     private fun onRawStreamIntercepted(url: String, referer: String, origin: String, userAgent: String) {
         runOnUiThread {
             val providerLabel = providerTargets.getOrNull(currentProviderIndex)?.label ?: "Prime Server 1080p"
@@ -911,7 +1347,6 @@ class ContentDetailActivity : AppCompatActivity() {
             if (!hasLockedPrimaryStream) {
                 hasLockedPrimaryStream = true
                 snifferTimeoutJob?.cancel()
-
                 headlessSnifferWebView.stopLoading()
                 headlessSnifferWebView.loadUrl("about:blank")
                 headlessSnifferWebView.onPause()
@@ -919,8 +1354,10 @@ class ContentDetailActivity : AppCompatActivity() {
 
                 resolvedDirectStreams.add(0, newDirectSource)
                 tvLoadingStatus.text = "Starting 1080p Playback..."
-                // 3. تمرير pendingResumePositionMs للاستكمال من آخر دقيقة
-                playerEngine.playSources(playerView, resolvedDirectStreams.toList(), 0, pendingResumePositionMs)
+                // نشغلو الفيديو مباشرة غير إذا كان المستخدم ضغط على PLAY
+                if (isPlayerModeActive) {
+                    playerEngine.playSources(playerView, resolvedDirectStreams.toList(), 0, pendingResumePositionMs)
+                }
             } else {
                 resolvedDirectStreams.add(newDirectSource)
                 playerEngine.appendBackupSourcesSilently(listOf(newDirectSource))
@@ -941,7 +1378,7 @@ class ContentDetailActivity : AppCompatActivity() {
         seekBar.progress = 0
         tvSubtitleOverlay.text = ""
         tvSubtitleOverlay.visibility = View.GONE
-        loadingContainer.visibility = View.GONE
+        loadingContainer.visibility = if (isPlayerModeActive) View.VISIBLE else View.GONE
         tvLoadingStatus.text = "Connecting to fastest server..."
 
         lifecycleScope.launch {
@@ -965,7 +1402,6 @@ class ContentDetailActivity : AppCompatActivity() {
                     }
                 }
             )
-
             providerTargets = panelServers
 
             if (panelServers.isEmpty()) {
@@ -1014,27 +1450,69 @@ class ContentDetailActivity : AppCompatActivity() {
         loadProviderInHeadlessSniffer(nextIdx)
     }
 
+    /**
+     * تحميل صورة البوستر واستخراج اللون الداكن منها أوتوماتيكياً لتلوين الخلفية المتدرجة
+     */
+    private fun loadPosterAndExtractPalette(vod: VodItem) {
+        val imageUrl = vod.posterUrl.ifEmpty { vod.backdropUrl }
+        if (imageUrl.isEmpty()) return
+
+        Glide.with(this)
+            .asBitmap()
+            .load(imageUrl)
+            .into(object : CustomTarget<Bitmap>() {
+                override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
+                    ivHeroBackdrop.setImageBitmap(resource)
+                    val darkColor = extractDarkAmbientColorFromPoster(resource)
+                    applyDynamicAmbientTheme(darkColor, animate = true)
+                }
+
+                override fun onLoadCleared(placeholder: android.graphics.drawable.Drawable?) {}
+            })
+    }
+
     private fun loadVodItemIntoScreen(vod: VodItem) {
         currentVod = vod
         selectedSeason = 1
         selectedEpisode = 1
         selectedSubtitleId = ""
         subtitleOffsetMs = 0L
+        isOverviewExpanded = false
         activeSubtitleCues = emptyList()
         availableSubtitles = emptyList()
 
-        // 2. قراءة موضع التوقف المحفوظ وتسجيل الفيلم في سجل المشاهدة
+        // نرجعو للواجهة السينمائية الفخمة عند فتح فيلم جديد
+        switchToPosterShowcaseMode()
+
         pendingResumePositionMs = SessionManager.getSavedPositionForVod(this, vod.id)
             .coerceAtLeast(vod.savedPositionMs)
         SessionManager.saveWatchProgress(this, vod, pendingResumePositionMs, vod.totalDurationMs)
 
+        tvPlayNowBtnLabel.text = if (pendingResumePositionMs > 15_000L) "RESUME" else "PLAY"
+
         tvTopPlayerTitle.text = vod.title
         tvMovieTitle.text = vod.title
-        tvMovieRating.text = "★ ${vod.rating}"
-        tvOverviewText.text = vod.description
-        updateFavoriteIcon(vod.id)
-        renderMetadataPills(vod.year, "1h 45m", listOf(vod.category.ifEmpty { "Movie" }))
+        val initialGenres = vod.category.ifEmpty { if (vod.isSeries) "TV Series • Drama" else "Movie • Action" }
+        tvMovieGenresLine.text = initialGenres
 
+        val initialPlot = vod.description.ifEmpty { "Loading synopsis and full movie details..." }
+        tvOverviewText.text = initialPlot
+        tvOverviewText.maxLines = 4
+        tvOverviewToggleMore.visibility = if (initialPlot.length > 140) View.VISIBLE else View.GONE
+        tvInfoCrewLine.text = "QUALITY: FHD 1080p  •  AUDIO: Multi-Track  •  SUBTITLES: Arabic / English"
+
+        updateFavoriteIcon(vod.id)
+        loadPosterAndExtractPalette(vod)
+
+        renderSmallLuxuryInfoCards(
+            rating = vod.rating,
+            year = vod.year,
+            runtime = if (vod.isSeries) "1 Season" else "1h 54m",
+            ageBadge = if (vod.isSeries) "TV-14" else "PG-13",
+            qualityBadge = "FHD"
+        )
+
+        // استخراج السيرفر في الخلفية باش كي يضغط PLAY يبدا طوول
         startStreamExtractionForEpisodeOrMovie(vod, 1, 1)
 
         lifecycleScope.launch {
@@ -1049,7 +1527,28 @@ class ContentDetailActivity : AppCompatActivity() {
             val details = OttRepository.fetchMovieOrSeriesFullDetails(vod)
             fullDetails = details
             tvOverviewText.text = details.overview
-            renderMetadataPills(details.year, details.runtimeText, details.genres)
+            tvOverviewToggleMore.visibility = if (details.overview.length > 140) View.VISIBLE else View.GONE
+
+            // عرض الأنواع تحت اسم الفيلم بطريقة شابة كيما فـ الصور
+            val genresFormatted = if (details.genres.isNotEmpty()) {
+                details.genres.joinToString("  •  ")
+            } else {
+                initialGenres
+            }
+            tvMovieGenresLine.text = genresFormatted
+
+            val castNames = details.cast.take(3).joinToString(", ") { it.name }
+            if (castNames.isNotEmpty()) {
+                tvInfoCrewLine.text = "STARRING:  $castNames\nSTREAM:  1080p FHD  •  Dolby Audio  •  Auto-Sync Subtitles"
+            }
+
+            renderSmallLuxuryInfoCards(
+                rating = details.rating.ifEmpty { vod.rating },
+                year = details.year.ifEmpty { vod.year },
+                runtime = if (vod.isSeries) "${details.numberOfSeasons} Seasons" else details.runtimeText,
+                ageBadge = if (vod.isSeries) "TV-14" else "PG-13",
+                qualityBadge = "FHD 1080p"
+            )
 
             if (details.imdbId.isNotEmpty()) {
                 val fullSubs = OttRepository.fetchRealSubtitlesForMovie(vod.id, details.imdbId, vod.isSeries, selectedSeason, selectedEpisode)
@@ -1077,14 +1576,93 @@ class ContentDetailActivity : AppCompatActivity() {
                 rvCast.visibility = View.GONE
             }
 
-            rvRecommended.adapter = VodGridAdapter(details.recommended) { clickedVod ->
+            rvRecommended.adapter = VodGridAdapter(details.recommended, isGrid = false) { clickedVod ->
                 detailsScrollView.smoothScrollTo(0, 0)
                 loadVodItemIntoScreen(clickedVod)
             }
-
-            rvMoreLike.adapter = VodGridAdapter(details.similar) { clickedVod ->
+            rvMoreLike.adapter = VodGridAdapter(details.similar, isGrid = false) { clickedVod ->
                 detailsScrollView.smoothScrollTo(0, 0)
                 loadVodItemIntoScreen(clickedVod)
+            }
+        }
+    }
+
+    /**
+     * الكبسولات الصغار الفخمين (Rating ⭐ + Year + Time + Age Rating + FHD) كل وحدة فـ Card بتصميم شباب
+     */
+    private fun renderSmallLuxuryInfoCards(
+        rating: String,
+        year: String,
+        runtime: String,
+        ageBadge: String,
+        qualityBadge: String
+    ) {
+        metaPillsRow.removeAllViews()
+        val pillFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
+
+        // 1. Card التقييم الذهبي (★ 8.5)
+        val ratingCard = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(10).toFloat()
+                setColor("#33FFC107".toColorInt())
+                setStroke(dp(1), "#80FFC107".toColorInt())
+            }
+            setPadding(dp(10), dp(6), dp(11), dp(6))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(8) }
+        }
+        val ivStar = ImageView(this).apply {
+            setImageResource(R.drawable.ic_star_gold)
+            layoutParams = LinearLayout.LayoutParams(dp(13), dp(13)).apply {
+                marginEnd = dp(4)
+            }
+        }
+        val tvRatingVal = TextView(this).apply {
+            text = rating
+            setTextColor("#FFD700".toColorInt())
+            textSize = 12f
+            typeface = pillFont
+        }
+        ratingCard.addView(ivStar)
+        ratingCard.addView(tvRatingVal)
+        metaPillsRow.addView(ratingCard)
+
+        // 2. Cards لباقي المعلومات (السنة، الوقت، التصنيف العمري، الجودة)
+        val extraCards = listOf(
+            year to false,
+            runtime to false,
+            ageBadge to true,
+            qualityBadge to false
+        )
+
+        extraCards.forEach { (label, isAccent) ->
+            if (label.isNotBlank()) {
+                val pill = TextView(this).apply {
+                    text = label
+                    setTextColor(if (isAccent) "#38BDF8".toColorInt() else "#F1F5F9".toColorInt())
+                    textSize = 12f
+                    typeface = pillFont
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(10).toFloat()
+                        setColor(if (isAccent) "#1F0284C7".toColorInt() else "#22FFFFFF".toColorInt())
+                        setStroke(
+                            dp(1),
+                            if (isAccent) "#7538BDF8".toColorInt() else "#38FFFFFF".toColorInt()
+                        )
+                    }
+                    setPadding(dp(12), dp(6), dp(12), dp(6))
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { marginEnd = dp(8) }
+                }
+                metaPillsRow.addView(pill)
             }
         }
     }
@@ -1097,7 +1675,11 @@ class ContentDetailActivity : AppCompatActivity() {
             selectedSeason = seasonNum
             for (i in 0 until seasonTabsRow.childCount) {
                 val child = seasonTabsRow.getChildAt(i) as? TextView ?: continue
-                child.background = makeRoundedBg(if (i + 1 == seasonNum) "#E50914" else "#161822", 8)
+                child.background = makeRoundedBg(
+                    if (i + 1 == seasonNum) "#E50914" else "#22FFFFFF",
+                    10,
+                    if (i + 1 == seasonNum) "#FF6B72" else "#38FFFFFF"
+                )
             }
             lifecycleScope.launch {
                 val episodes = PrimeVodExtractor.fetchSeasonEpisodes(seriesId, seasonNum)
@@ -1105,6 +1687,7 @@ class ContentDetailActivity : AppCompatActivity() {
                     selectedEpisode = ep.episodeNumber
                     val vod = currentVod ?: return@EpisodesHorizontalAdapter
                     tvTopPlayerTitle.text = "${vod.title} S${seasonNum}:E${ep.episodeNumber}"
+                    activateInlinePlayerAndStart()
                     startStreamExtractionForEpisodeOrMovie(vod, seasonNum, ep.episodeNumber)
                     lifecycleScope.launch {
                         availableSubtitles = OttRepository.fetchRealSubtitlesForMovie(
@@ -1128,7 +1711,11 @@ class ContentDetailActivity : AppCompatActivity() {
                 textSize = 12.5f
                 setTypeface(typeface, Typeface.BOLD)
                 setTextColor(Color.WHITE)
-                background = makeRoundedBg(if (s == selectedSeason) "#E50914" else "#161822", 8)
+                background = makeRoundedBg(
+                    if (s == selectedSeason) "#E50914" else "#22FFFFFF",
+                    10,
+                    if (s == selectedSeason) "#FF6B72" else "#38FFFFFF"
+                )
                 setPadding(dp(14), dp(7), dp(14), dp(7))
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -1138,7 +1725,6 @@ class ContentDetailActivity : AppCompatActivity() {
             }
             seasonTabsRow.addView(tab)
         }
-
         loadSeason(1)
     }
 
@@ -1146,7 +1732,6 @@ class ContentDetailActivity : AppCompatActivity() {
         if (availableSubtitles.isEmpty()) return
         val arabicTracks = availableSubtitles.filter { it.languageCode == "ar" }
         val candidates = if (arabicTracks.isNotEmpty()) arabicTracks else availableSubtitles
-
         if (selectedSubtitleId.isEmpty() || activeSubtitleCues.isEmpty()) {
             for (track in candidates.take(4)) {
                 val parsed = OttRepository.downloadAndParseSubtitles(track)
@@ -1160,7 +1745,7 @@ class ContentDetailActivity : AppCompatActivity() {
     }
 
     private fun showActorMoviesDialog(actor: CastMember) {
-        Toast.makeText(this, "⏳ Loading ${actor.name} movies...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Loading ${actor.name} movies...", Toast.LENGTH_SHORT).show()
         lifecycleScope.launch {
             val credits = PrimeVodExtractor.fetchActorCredits(actor.id)
             if (credits.isEmpty()) {
@@ -1169,34 +1754,13 @@ class ContentDetailActivity : AppCompatActivity() {
             }
             val titles = credits.map { "${it.title} (${it.year})  ★ ${it.rating}" }.toTypedArray()
             android.app.AlertDialog.Builder(this@ContentDetailActivity)
-                .setTitle("🎭 ${actor.name}")
+                .setTitle(actor.name)
                 .setItems(titles) { _, which ->
                     detailsScrollView.smoothScrollTo(0, 0)
                     loadVodItemIntoScreen(credits[which])
                 }
                 .setNegativeButton("Close", null)
                 .show()
-        }
-    }
-
-    private fun renderMetadataPills(year: String, runtime: String, genres: List<String>) {
-        metaPillsRow.removeAllViews()
-        val items = mutableListOf("📅 $year", "🕒 $runtime")
-        items.addAll(genres)
-        items.forEach { label ->
-            val pill = TextView(this).apply {
-                text = label
-                setTextColor("#E2E8F0".toColorInt())
-                textSize = 12f
-                setTypeface(typeface, Typeface.BOLD)
-                background = makeRoundedBg("#14161E", 8, "#262B38")
-                setPadding(dp(12), dp(6), dp(12), dp(6))
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { marginEnd = dp(8) }
-            }
-            metaPillsRow.addView(pill)
         }
     }
 
@@ -1213,7 +1777,6 @@ class ContentDetailActivity : AppCompatActivity() {
                 val pos = p.currentPosition.coerceAtLeast(0L)
                 val dur = p.duration
 
-                // 4. حفظ الموضع تلقائياً كل 3 ثوانٍ وتحديث الشريط
                 if (!isUserSeeking && dur > 0) {
                     seekBar.progress = ((pos * 1000L) / dur).toInt().coerceIn(0, 1000)
                     tvElapsed.text = formatTimeMs(pos)
@@ -1374,7 +1937,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 setOnClickListener {
                     currentPlaybackSpeed = spd
                     playerEngine.player?.playbackParameters = PlaybackParameters(spd)
-                    btnBottomSpeed.text = "⏱ $label"
+                    btnBottomSpeed.text = "Speed: $label"
                     dialog.dismiss()
                 }
             }
@@ -1404,14 +1967,14 @@ class ContentDetailActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(10))
         }
         val titleTv = TextView(this).apply {
-            text = "💬 Subtitles (${availableSubtitles.size})"
+            text = "Subtitles (${availableSubtitles.size})"
             setTextColor(Color.WHITE)
             textSize = 16.5f
             setTypeface(typeface, Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val refreshBtn = TextView(this).apply {
-            text = "🔄 Refresh"
+            text = "Refresh"
             setTextColor("#E50914".toColorInt())
             textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
@@ -1432,15 +1995,13 @@ class ContentDetailActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(12) }
         }
-
         val tvSyncStatus = TextView(this).apply {
-            text = String.format(Locale.US, "⏱ Sync: %+.1fs", subtitleOffsetMs / 1000.0)
+            text = String.format(Locale.US, "Sync: %+.1fs", subtitleOffsetMs / 1000.0)
             setTextColor("#38BDF8".toColorInt())
             textSize = 12.5f
             setTypeface(typeface, Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-
         val btnMinusHalf = TextView(this).apply {
             text = "-0.5s"
             setTextColor(Color.WHITE)
@@ -1453,10 +2014,9 @@ class ContentDetailActivity : AppCompatActivity() {
             }
             setOnClickListener {
                 subtitleOffsetMs -= 500L
-                tvSyncStatus.text = String.format(Locale.US, "⏱ Sync: %+.1fs", subtitleOffsetMs / 1000.0)
+                tvSyncStatus.text = String.format(Locale.US, "Sync: %+.1fs", subtitleOffsetMs / 1000.0)
             }
         }
-
         val btnResetSync = TextView(this).apply {
             text = "0.0s"
             setTextColor(Color.WHITE)
@@ -1469,10 +2029,9 @@ class ContentDetailActivity : AppCompatActivity() {
             }
             setOnClickListener {
                 subtitleOffsetMs = 0L
-                tvSyncStatus.text = "⏱ Sync: +0.0s"
+                tvSyncStatus.text = "Sync: +0.0s"
             }
         }
-
         val btnPlusHalf = TextView(this).apply {
             text = "+0.5s"
             setTextColor(Color.WHITE)
@@ -1482,10 +2041,9 @@ class ContentDetailActivity : AppCompatActivity() {
             setPadding(dp(10), dp(5), dp(10), dp(5))
             setOnClickListener {
                 subtitleOffsetMs += 500L
-                tvSyncStatus.text = String.format(Locale.US, "⏱ Sync: %+.1fs", subtitleOffsetMs / 1000.0)
+                tvSyncStatus.text = String.format(Locale.US, "Sync: %+.1fs", subtitleOffsetMs / 1000.0)
             }
         }
-
         syncBar.addView(tvSyncStatus)
         syncBar.addView(btnMinusHalf)
         syncBar.addView(btnResetSync)
@@ -1513,10 +2071,10 @@ class ContentDetailActivity : AppCompatActivity() {
 
         fun renderSubtitleRows() {
             tracksContainer.removeAllViews()
-            titleTv.text = "💬 Subtitles (${availableSubtitles.size})"
+            titleTv.text = "Subtitles (${availableSubtitles.size})"
 
             val noSubRow = TextView(this).apply {
-                text = if (selectedSubtitleId == "NONE") "✓  Disable Subtitles" else "    Disable Subtitles"
+                text = if (selectedSubtitleId == "NONE") "✓  Disable Subtitles" else "   Disable Subtitles"
                 setTextColor(if (selectedSubtitleId == "NONE") "#E50914".toColorInt() else "#94A3B8".toColorInt())
                 textSize = 13.5f
                 setTypeface(typeface, Typeface.BOLD)
@@ -1548,9 +2106,9 @@ class ContentDetailActivity : AppCompatActivity() {
                             if (parsed.isNotEmpty()) {
                                 activeSubtitleCues = parsed
                                 tvSubtitleOverlay.visibility = View.VISIBLE
-                                Toast.makeText(this@ContentDetailActivity, "✅ Synced: ${track.languageLabel}", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(this@ContentDetailActivity, "Synced: ${track.languageLabel}", Toast.LENGTH_SHORT).show()
                             } else {
-                                Toast.makeText(this@ContentDetailActivity, "⚠️ Choose another track below", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(this@ContentDetailActivity, "Choose another track below", Toast.LENGTH_SHORT).show()
                             }
                         }
                         dialog.dismiss()
@@ -1562,9 +2120,9 @@ class ContentDetailActivity : AppCompatActivity() {
                     textSize = 14f
                     setTypeface(typeface, Typeface.BOLD)
                 }
-                val badgeText = if (isWebDl) "⚡ 100% WEB-DL Synced" else "✓ OpenSubtitles"
+                val badgeText = if (isWebDl) "100% WEB-DL Synced" else "OpenSubtitles"
                 val relTv = TextView(this).apply {
-                    text = "${track.releaseName}  $badgeText"
+                    text = "${track.releaseName} • $badgeText"
                     setTextColor(if (isWebDl) "#34D399".toColorInt() else "#94A3B8".toColorInt())
                     textSize = 11f
                 }
@@ -1576,7 +2134,7 @@ class ContentDetailActivity : AppCompatActivity() {
 
         refreshBtn.setOnClickListener {
             val vod = currentVod ?: return@setOnClickListener
-            refreshBtn.text = "⏳..."
+            refreshBtn.text = "..."
             lifecycleScope.launch {
                 availableSubtitles = OttRepository.fetchRealSubtitlesForMovie(
                     vod.id,
@@ -1585,7 +2143,7 @@ class ContentDetailActivity : AppCompatActivity() {
                     selectedSeason,
                     selectedEpisode
                 )
-                refreshBtn.text = "🔄 Refresh"
+                refreshBtn.text = "Refresh"
                 renderSubtitleRows()
             }
         }
@@ -1636,13 +2194,18 @@ class ContentDetailActivity : AppCompatActivity() {
     private fun applyFullscreenState(enterFullscreen: Boolean) {
         isFullscreen = enterFullscreen
         if (enterFullscreen) {
+            isPlayerModeActive = true
+            heroPosterSection.visibility = View.GONE
+            playerContainer.visibility = View.VISIBLE
             detailsScrollView.visibility = View.GONE
             btnTopLock.visibility = View.VISIBLE
             fullscreenBottomActionsRow.visibility = View.VISIBLE
+
             playerContainer.layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+
             WindowCompat.setDecorFitsSystemWindows(window, false)
             WindowInsetsControllerCompat(window, rootVerticalLayout).let { controller ->
                 controller.hide(WindowInsetsCompat.Type.systemBars())
@@ -1654,9 +2217,10 @@ class ContentDetailActivity : AppCompatActivity() {
             requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             WindowCompat.setDecorFitsSystemWindows(window, true)
             WindowInsetsControllerCompat(window, rootVerticalLayout).show(WindowInsetsCompat.Type.systemBars())
+
             playerContainer.layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(235)
+                dp(240)
             )
             btnTopLock.visibility = View.GONE
             fullscreenBottomActionsRow.visibility = View.GONE
@@ -1684,8 +2248,9 @@ class ContentDetailActivity : AppCompatActivity() {
 
     private fun updateFavoriteIcon(id: String) {
         val isFav = OttRepository.isChannelFavorite(id)
-        btnFavBox.text = if (isFav) "♥" else "♡"
-        btnFavBox.setTextColor(if (isFav) "#E50914".toColorInt() else Color.WHITE)
+        btnFavBox.setImageResource(
+            if (isFav) R.drawable.ic_heart_filled else R.drawable.ic_heart_outline
+        )
     }
 
     private fun createWatchTogetherRoom() {
@@ -1731,7 +2296,6 @@ class ContentDetailActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        // 4. حفظ الموضع عند الخروج من الشاشة أو الانتقال لتطبيق آخر
         val p = playerEngine.player
         val vod = currentVod
         if (p != null && vod != null && p.currentPosition > 5000L && p.duration > 10000L) {
@@ -1760,6 +2324,7 @@ class EpisodesHorizontalAdapter(
 
     class VH(
         val root: LinearLayout,
+        val cardWrap: FrameLayout,
         val ivStill: ImageView,
         val tvEpTitle: TextView
     ) : RecyclerView.ViewHolder(root)
@@ -1769,26 +2334,35 @@ class EpisodesHorizontalAdapter(
         val d = ctx.resources.displayMetrics.density
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = ViewGroup.MarginLayoutParams((145 * d).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            layoutParams = ViewGroup.MarginLayoutParams((148 * d).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = (10 * d).toInt()
             }
         }
-        val iv = ImageView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (80 * d).toInt())
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            setBackgroundColor("#161822".toColorInt())
+        val cardWrap = FrameLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (82 * d).toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 12f * d
+                setColor("#161822".toColorInt())
+            }
+            clipToOutline = true
         }
+        val iv = ImageView(ctx).apply {
+            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+        cardWrap.addView(iv)
         val tv = TextView(ctx).apply {
             setTextColor(Color.WHITE)
             textSize = 11.5f
             setTypeface(typeface, Typeface.BOLD)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            setPadding((4 * d).toInt(), (4 * d).toInt(), (4 * d).toInt(), 0)
+            setPadding((4 * d).toInt(), (5 * d).toInt(), (4 * d).toInt(), 0)
         }
-        root.addView(iv)
+        root.addView(cardWrap)
         root.addView(tv)
-        return VH(root, iv, tv)
+        return VH(root, cardWrap, iv, tv)
     }
 
     override fun getItemCount(): Int = items.size
@@ -1796,8 +2370,15 @@ class EpisodesHorizontalAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val ep = items[position]
         val isSel = ep.episodeNumber == selectedEpNum
+        val d = holder.itemView.context.resources.displayMetrics.density
         holder.tvEpTitle.text = "E${ep.episodeNumber}: ${ep.name}"
-        holder.tvEpTitle.setTextColor(if (isSel) "#E50914".toColorInt() else Color.WHITE)
+        holder.tvEpTitle.setTextColor(if (isSel) "#FF1E27".toColorInt() else Color.WHITE)
+        holder.cardWrap.background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 12f * d
+            setColor("#161822".toColorInt())
+            if (isSel) setStroke((1.5f * d).toInt(), "#E50914".toColorInt())
+        }
         if (ep.stillUrl.isNotEmpty()) {
             Glide.with(holder.itemView.context).load(ep.stillUrl).centerCrop().into(holder.ivStill)
         }
@@ -1809,6 +2390,9 @@ class EpisodesHorizontalAdapter(
     }
 }
 
+/**
+ * Cast Adapter (حجم متوسط ومتوازن 76dp مع حلقة زجاجية أنيقة كيما طلبت)
+ */
 class CastHorizontalAdapter(
     private val items: List<CastMember>,
     private val onActorClick: (CastMember) -> Unit = {}
@@ -1816,6 +2400,7 @@ class CastHorizontalAdapter(
 
     class VH(
         val root: LinearLayout,
+        val avatarContainer: FrameLayout,
         val ivPhoto: ImageView,
         val tvName: TextView,
         val tvRole: TextView
@@ -1824,37 +2409,60 @@ class CastHorizontalAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val ctx = parent.context
         val d = ctx.resources.displayMetrics.density
+        val nameFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        val roleFont = Typeface.create("sans-serif", Typeface.NORMAL)
+
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            layoutParams = ViewGroup.MarginLayoutParams((86 * d).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = (10 * d).toInt()
+            layoutParams = ViewGroup.MarginLayoutParams((94 * d).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = (12 * d).toInt()
             }
         }
+
+        val avatarFrame = FrameLayout(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams((76 * d).toInt(), (76 * d).toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor("#18FFFFFF".toColorInt())
+                setStroke((1.2f * d).toInt(), "#38FFFFFF".toColorInt())
+            }
+            setPadding((2 * d).toInt(), (2 * d).toInt(), (2 * d).toInt(), (2 * d).toInt())
+        }
+
         val iv = ImageView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams((68 * d).toInt(), (68 * d).toInt())
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
             scaleType = ImageView.ScaleType.CENTER_CROP
         }
+        avatarFrame.addView(iv)
+
         val tvName = TextView(ctx).apply {
             setTextColor(Color.WHITE)
-            textSize = 11.5f
-            setTypeface(typeface, Typeface.BOLD)
+            textSize = 12f
+            typeface = nameFont
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             gravity = Gravity.CENTER
-            setPadding(0, (6 * d).toInt(), 0, 0)
+            setPadding(0, (7 * d).toInt(), 0, 0)
         }
+
         val tvRole = TextView(ctx).apply {
             setTextColor("#94A3B8".toColorInt())
             textSize = 10.5f
+            typeface = roleFont
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
             gravity = Gravity.CENTER
+            setPadding(0, (1 * d).toInt(), 0, 0)
         }
-        root.addView(iv)
+
+        root.addView(avatarFrame)
         root.addView(tvName)
         root.addView(tvRole)
-        return VH(root, iv, tvName, tvRole)
+        return VH(root, avatarFrame, iv, tvName, tvRole)
     }
 
     override fun getItemCount(): Int = items.size
