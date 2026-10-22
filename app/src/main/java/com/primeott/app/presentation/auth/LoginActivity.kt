@@ -1,5 +1,7 @@
 package com.primeott.app.presentation.auth
 
+import android.accounts.AccountManager
+import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
@@ -14,6 +16,7 @@ import android.text.InputType
 import android.util.Patterns
 import android.view.View
 import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.primeott.app.R
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -37,10 +40,23 @@ class LoginActivity : AppCompatActivity() {
         .writeTimeout(7, TimeUnit.SECONDS)
         .build()
 
+    // مشغل اختيار حسابات Google الأصلية في أندرويد (مثل التطبيقات الكبرى)
+    private val googleAccountPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            val email = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
+            if (!email.isNullOrEmpty()) {
+                completeOfficialGoogleSignIn(email)
+            } else {
+                showGoogleFallbackDialog()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // إذا كانت الجلسة نشطة مسبقاً ولم يطلب المستخدم تسجيل الخروج، انتقل للرئيسية
         val prefs = getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
         if (prefs.getBoolean("session_active", false) && !intent.getBooleanExtra("force_login", false)) {
             val currentUser = prefs.getString("current_user", "") ?: ""
@@ -68,14 +84,12 @@ class LoginActivity : AppCompatActivity() {
         val tvContactSupport = findViewById<TextView>(R.id.tvContactSupport)
         val tvPrivacyPolicy = findViewById<TextView>(R.id.tvPrivacyPolicy)
 
-        // استرجاع بيانات Remember Me
         if (prefs.getBoolean("remember_me", true)) {
             etUsername.setText(prefs.getString("saved_username", ""))
             etPassword.setText(prefs.getString("saved_password", ""))
             cbRememberMe.isChecked = true
         }
 
-        // Show / Hide Password
         btnTogglePass.setOnClickListener {
             isPasswordVisible = !isPasswordVisible
             if (isPasswordVisible) {
@@ -88,9 +102,7 @@ class LoginActivity : AppCompatActivity() {
             etPassword.setSelection(etPassword.text.length)
         }
 
-        // =========================================================================
-        // STRICT LOGIN VERIFICATION (لا يسمح أبداً بدخول حساب غير مسجل!)
-        // =========================================================================
+        // التحقق الصارم عند تسجيل الدخول
         btnLoginSubmit.setOnClickListener {
             if (!isInternetAvailable()) {
                 showSystemMessage("No Internet Connection • لا يوجد اتصال بالإنترنت", isError = true)
@@ -114,7 +126,6 @@ class LoginActivity : AppCompatActivity() {
             btnLoginSubmit.text = "⏳ جاري التحقق من الحساب..."
 
             Thread {
-                // 1. فحص قاعدة البيانات المحلية المسجلة فعلياً
                 val usersArr = JSONArray(prefs.getString("registered_users", "[]"))
                 var localMatchedUser: JSONObject? = null
                 var userExistsLocally = false
@@ -133,7 +144,6 @@ class LoginActivity : AppCompatActivity() {
                     }
                 }
 
-                // 2. فحص سيرفر Cloudflare (/auth/login)
                 var cloudVerified = false
                 var cloudRejected = false
                 var cloudUsername = usernameInput
@@ -165,21 +175,21 @@ class LoginActivity : AppCompatActivity() {
                     btnLoginSubmit.isEnabled = true
                     btnLoginSubmit.text = "تسجيل الدخول • Login"
 
-                    // القرار الصارم: يجب أن يكون الحساب موجوداً ومطابقاً لكلمة المرور!
                     val isAuthenticated = (localMatchedUser != null) || (cloudVerified && !userExistsLocally)
 
                     if (!isAuthenticated) {
                         if (userExistsLocally || cloudRejected) {
                             showSystemMessage("❌ Invalid Username or Password • كلمة المرور غير صحيحة!", isError = true)
                         } else {
-                            showSystemMessage("❌ Invalid Username or Password • هذا الحساب غير مسجل! اضغط على «إنشاء حساب جديد» أولاً.", isError = true)
+                            showSystemMessage("❌ هذا الحساب غير مسجل! اضغط على «إنشاء حساب جديد» أولاً.", isError = true)
                         }
                         return@post
                     }
 
                     val finalUsername = localMatchedUser?.optString("username") ?: cloudUsername
+                    val finalEmail = localMatchedUser?.optString("email") ?: ""
+                    val finalAvatar = localMatchedUser?.optString("avatar") ?: "👑"
 
-                    // حفظ الجلسة المعتمدة
                     prefs.edit().apply {
                         putBoolean("remember_me", cbRememberMe.isChecked)
                         if (cbRememberMe.isChecked) {
@@ -190,6 +200,9 @@ class LoginActivity : AppCompatActivity() {
                             remove("saved_password")
                         }
                         putString("current_user", finalUsername)
+                        putString("current_email", finalEmail)
+                        putString("current_avatar", finalAvatar)
+                        putString("auth_provider", "Royal TV")
                         putBoolean("is_guest", false)
                         putBoolean("session_active", true)
                         apply()
@@ -202,25 +215,27 @@ class LoginActivity : AppCompatActivity() {
                     showSystemMessage("✅ Login Successful • تم تسجيل الدخول بنجاح!", isError = false)
                     mainHandler.postDelayed({
                         navigateToMainHome(finalUsername, isGuest = false)
-                    }, 500L)
+                    }, 450L)
                 }
             }.start()
         }
 
-        // Google Sign-In
+        // تسجيل الدخول بحساب Google مثل التطبيقات الكبرى
         btnGoogleSignIn.setOnClickListener {
             if (!isInternetAvailable()) {
                 showSystemMessage("No Internet Connection • لا يوجد اتصال بالإنترنت", isError = true)
                 return@setOnClickListener
             }
-            showGoogleSignInDialog()
+            launchNativeGoogleSignIn()
         }
 
-        // Guest Mode (Continue as Guest / Sauter)
+        // وضع الزائر
         val guestClickListener = View.OnClickListener {
             prefs.edit()
                 .putBoolean("is_guest", true)
                 .putString("current_user", "زائر (Guest)")
+                .putString("current_email", "وضع التصفح بدون حساب")
+                .putString("auth_provider", "Guest Mode")
                 .putBoolean("session_active", true)
                 .apply()
             Toast.makeText(this, "Continue as Guest • تصفح كزائر", Toast.LENGTH_SHORT).show()
@@ -229,26 +244,24 @@ class LoginActivity : AppCompatActivity() {
         btnContinueAsGuest.setOnClickListener(guestClickListener)
         btnTopSkipGuest.setOnClickListener(guestClickListener)
 
-        // Create New Account
         btnOpenCreateAccount.setOnClickListener {
             startActivity(Intent(this, RegisterActivity::class.java))
         }
 
-        // Forgot Password
         tvForgotPassword.setOnClickListener {
             val input = EditText(this).apply {
-                hint = "أدخل بريدك الإلكتروني أو اسم المستخدم المسجل..."
+                hint = "أدخل بريدك الإلكتروني أو اسم المستخدم..."
                 setTextColor(Color.WHITE)
                 setHintTextColor(Color.GRAY)
             }
             AlertDialog.Builder(this)
                 .setTitle("🔑 استعادة كلمة المرور (Forgot Password)")
-                .setMessage("أدخل بريدك الإلكتروني أو اسم المستخدم للتحقق من حسابك:")
+                .setMessage("أدخل بريدك الإلكتروني أو اسم المستخدم المسجل:")
                 .setView(input)
-                .setPositiveButton("تحقق وإرسال") { _, _ ->
+                .setPositiveButton("تحقق") { _, _ ->
                     val target = input.text.toString().trim()
                     if (target.isEmpty()) {
-                        showSystemMessage("Something Went Wrong • يرجى إدخال البريد أو اسم المستخدم", isError = true)
+                        showSystemMessage("يرجى إدخال البريد أو اسم المستخدم", isError = true)
                         return@setPositiveButton
                     }
                     val usersArr = JSONArray(prefs.getString("registered_users", "[]"))
@@ -271,11 +284,10 @@ class LoginActivity : AppCompatActivity() {
                 .show()
         }
 
-        // Contact Support
         tvContactSupport.setOnClickListener {
             AlertDialog.Builder(this)
                 .setTitle("📞 الدعم الفني • Contact Support")
-                .setMessage("تواصل مع فريق دعم Royal TV على مدار الساعة:\n\n• Telegram: @RoyalTV_Support\n• Email: support@royaltv.app")
+                .setMessage("تواصل مع فريق دعم Royal TV على مدار الساعة:\n• Telegram: @RoyalTV_Support\n• Email: support@royaltv.app")
                 .setPositiveButton("مراسلة عبر تيليجرام") { _, _ ->
                     try {
                         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/RoyalTV_Support")))
@@ -285,7 +297,6 @@ class LoginActivity : AppCompatActivity() {
                 .show()
         }
 
-        // Privacy Policy
         tvPrivacyPolicy.setOnClickListener {
             AlertDialog.Builder(this)
                 .setTitle("🛡️ سياسة الخصوصية • Privacy Policy")
@@ -295,71 +306,142 @@ class LoginActivity : AppCompatActivity() {
         }
     }
 
-    private fun showGoogleSignInDialog() {
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(40, 24, 40, 10)
+    private fun launchNativeGoogleSignIn() {
+        try {
+            @Suppress("DEPRECATION")
+            val intent = AccountManager.newChooseAccountIntent(
+                null,
+                null,
+                arrayOf("com.google"),
+                false,
+                null,
+                null,
+                null,
+                null
+            )
+            googleAccountPickerLauncher.launch(intent)
+        } catch (_: Exception) {
+            showGoogleFallbackDialog()
         }
-        val emailInput = EditText(this).apply {
+    }
+
+    private fun showGoogleFallbackDialog() {
+        val prefs = getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
+        val savedGoogleEmails = mutableListOf<String>()
+        val usersArr = JSONArray(prefs.getString("registered_users", "[]"))
+        for (i in 0 until usersArr.length()) {
+            val em = usersArr.getJSONObject(i).optString("email", "")
+            if (em.endsWith("@gmail.com", ignoreCase = true) && !savedGoogleEmails.contains(em)) {
+                savedGoogleEmails.add(em)
+            }
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(44, 32, 44, 20)
+            setBackgroundColor(Color.parseColor("#101622"))
+        }
+
+        val tvHeader = TextView(this).apply {
+            text = "🌐 اختيار حساب Google للمتابعة إلى Royal TV"
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            setPadding(0, 0, 0, 16)
+        }
+        container.addView(tvHeader)
+
+        val etGmail = EditText(this).apply {
             hint = "أدخل بريد جوجل (example@gmail.com)"
             inputType = InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
+            if (savedGoogleEmails.isNotEmpty()) {
+                setText(savedGoogleEmails.first())
+            }
         }
-        val passInput = EditText(this).apply {
-            hint = "كلمة مرور حسابك"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        container.addView(etGmail)
+
+        val etDisplayName = EditText(this).apply {
+            hint = "الاسم الظاهر للحساب (اختياري)"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PERSON_NAME
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
         }
-        layout.addView(emailInput)
-        layout.addView(passInput)
+        container.addView(etDisplayName)
 
         AlertDialog.Builder(this)
-            .setTitle("🌐 تسجيل الدخول بحساب Google")
-            .setMessage("أدخل بريدك على Gmail لتوثيق الدخول:")
-            .setView(layout)
-            .setPositiveButton("متابعة") { _, _ ->
-                val mail = emailInput.text.toString().trim()
-                val pass = passInput.text.toString()
-                if (!Patterns.EMAIL_ADDRESS.matcher(mail).matches() || !mail.contains("@")) {
-                    showSystemMessage("❌ يرجى إدخال بريد Google صحيح (example@gmail.com)", isError = true)
+            .setView(container)
+            .setPositiveButton("متابعة بحساب Google ✓") { _, _ ->
+                val email = etGmail.text.toString().trim()
+                val customName = etDisplayName.text.toString().trim()
+                if (!Patterns.EMAIL_ADDRESS.matcher(email).matches() || !email.contains("@")) {
+                    showSystemMessage("❌ يرجى إدخال حساب بريد Google صحيح", isError = true)
                     return@setPositiveButton
                 }
-                if (pass.length < 4) {
-                    showSystemMessage("Password Is Required • يرجى إدخال كلمة مرور صحيحة", isError = true)
-                    return@setPositiveButton
-                }
-                val gUser = mail.substringBefore("@")
-                val prefs = getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
-                val usersArr = JSONArray(prefs.getString("registered_users", "[]"))
-                usersArr.put(JSONObject().apply {
-                    put("fullName", gUser)
-                    put("username", gUser)
-                    put("email", mail)
-                    put("password", pass)
-                })
-                prefs.edit()
-                    .putString("registered_users", usersArr.toString())
-                    .putString("current_user", gUser)
-                    .putBoolean("is_guest", false)
-                    .putBoolean("session_active", true)
-                    .apply()
-
-                getSharedPreferences("prime_ott_prefs", Context.MODE_PRIVATE).edit()
-                    .putString("username", gUser)
-                    .apply()
-
-                showSystemMessage("✅ Login Successful • تم الدخول بحساب Google ($mail)", isError = false)
-                mainHandler.postDelayed({
-                    navigateToMainHome(gUser, isGuest = false)
-                }, 500L)
+                completeOfficialGoogleSignIn(email, customName)
             }
             .setNegativeButton("إلغاء", null)
             .show()
+    }
+
+    private fun completeOfficialGoogleSignIn(email: String, customDisplayName: String = "") {
+        val displayUser = if (customDisplayName.isNotEmpty()) customDisplayName else email.substringBefore("@")
+        val prefs = getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
+        val usersArr = JSONArray(prefs.getString("registered_users", "[]"))
+
+        var exists = false
+        for (i in 0 until usersArr.length()) {
+            if (usersArr.getJSONObject(i).optString("email").equals(email, ignoreCase = true)) {
+                exists = true
+                break
+            }
+        }
+        if (!exists) {
+            val googleUserObj = JSONObject().apply {
+                put("fullName", displayUser)
+                put("username", displayUser)
+                put("email", email)
+                put("password", "GOOGLE_OAUTH_TOKEN")
+                put("avatar", "🌐")
+            }
+            usersArr.put(googleUserObj)
+            Thread {
+                try {
+                    val req = Request.Builder()
+                        .url("$workerUrl/auth/register")
+                        .post(googleUserObj.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                        .build()
+                    httpClient.newCall(req).execute().close()
+                } catch (_: Exception) {}
+            }.start()
+        }
+
+        prefs.edit().apply {
+            putString("registered_users", usersArr.toString())
+            putString("current_user", displayUser)
+            putString("current_email", email)
+            putString("current_avatar", "🌐")
+            putString("auth_provider", "Google Account")
+            putBoolean("is_guest", false)
+            putBoolean("session_active", true)
+            apply()
+        }
+
+        getSharedPreferences("prime_ott_prefs", Context.MODE_PRIVATE).edit()
+            .putString("username", displayUser)
+            .apply()
+
+        showSystemMessage("✅ Login Successful • مرحباً بك $displayUser ($email)", isError = false)
+        mainHandler.postDelayed({
+            navigateToMainHome(displayUser, isGuest = false)
+        }, 450L)
     }
 
     private fun showSystemMessage(msg: String, isError: Boolean) {
         tvAuthMessageBanner.visibility = View.VISIBLE
         tvAuthMessageBanner.text = msg
         tvAuthMessageBanner.setTextColor(if (isError) Color.parseColor("#FF8A80") else Color.parseColor("#00E676"))
-        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
 
     private fun isInternetAvailable(): Boolean {
@@ -383,7 +465,7 @@ class LoginActivity : AppCompatActivity() {
             }
             startActivity(intent)
             finish()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             showSystemMessage("Something Went Wrong • تعذر فتح الشاشة الرئيسية", isError = true)
         }
     }

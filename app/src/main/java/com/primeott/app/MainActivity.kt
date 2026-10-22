@@ -1,4 +1,6 @@
 package com.primeott.app
+import com.primeott.app.presentation.watch.WatchTogetherTabFragment
+import com.primeott.app.presentation.auth.ProfileSettingsActivity
 import com.primeott.app.presentation.auth.LoginActivity
 
 import android.animation.ValueAnimator
@@ -44,51 +46,6 @@ class MainActivity : AppCompatActivity() {
             startActivity(android.content.Intent(this, LoginActivity::class.java))
             finish()
             return
-        }
-        window.decorView.post {
-            try {
-                val contentRoot = findViewById<android.view.ViewGroup>(android.R.id.content)
-                if (contentRoot != null && contentRoot.findViewWithTag<android.view.View>("royal_logout_pill") == null) {
-                    val isGuest = royalAuthPrefs.getBoolean("is_guest", false)
-                    val pill = android.widget.TextView(this).apply {
-                        tag = "royal_logout_pill"
-                        text = if (isGuest) "👤 زائر | 🚪 تسجيل الدخول" else "👤 $loggedUser | 🚪 خروج"
-                        setTextColor(android.graphics.Color.WHITE)
-                        textSize = 11f
-                        setPadding(24, 10, 24, 10)
-                        setBackgroundResource(com.primeott.app.R.drawable.wt_bg_badge_dark)
-                        alpha = 0.92f
-                        setOnClickListener {
-                            android.app.AlertDialog.Builder(this@MainActivity)
-                                .setTitle("🚪 تسجيل الخروج • Logout")
-                                .setMessage("الحساب الحالي: " + loggedUser + " — هل تريد تسجيل الخروج والعودة لشاشة الدخول؟")
-                                .setPositiveButton("تسجيل الخروج") { _, _ ->
-                                    royalAuthPrefs.edit()
-                                        .putBoolean("session_active", false)
-                                        .putBoolean("is_guest", false)
-                                        .remove("current_user")
-                                        .apply()
-                                    val i = android.content.Intent(this@MainActivity, LoginActivity::class.java)
-                                    i.putExtra("force_login", true)
-                                    i.flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
-                                    startActivity(i)
-                                    finish()
-                                }
-                                .setNegativeButton("إلغاء", null)
-                                .show()
-                        }
-                    }
-                    val lp = android.widget.FrameLayout.LayoutParams(
-                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        gravity = android.view.Gravity.TOP or android.view.Gravity.START
-                        topMargin = 28
-                        marginStart = 24
-                    }
-                    contentRoot.addView(pill, lp)
-                }
-            } catch (_: Exception) {}
         }
         // END_ROYAL_AUTH_HOOK
 
@@ -162,7 +119,7 @@ class MainActivity : AppCompatActivity() {
                 "MOVIES" -> VodFragment.newInstance(false)
                 "SERIES" -> VodFragment.newInstance(true)
                 "LIVE" -> LiveTvFragment()
-                "MATCHES" -> ScheduleFragment()
+                "MATCHES" -> WatchTogetherTabFragment()
                 "WATCH" -> WatchTogetherFragment()
                 else -> HomeFragment()
             }

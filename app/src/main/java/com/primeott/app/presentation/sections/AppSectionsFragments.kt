@@ -1,4 +1,5 @@
 package com.primeott.app.presentation.sections
+import com.primeott.app.presentation.watch.WatchTogetherController
 
 import android.Manifest
 import android.app.AlertDialog
@@ -1719,125 +1720,34 @@ class VodGridAdapter(
 }
 
 class ScheduleFragment : Fragment() {
-    private var allMatches: List<MatchFixture> = emptyList()
-    private var selectedDayTab: String = "TODAY"
-    private var selectedLeague: String = "ALL"
-    private var searchQuery: String = ""
+    private var controller: WatchTogetherController? = null
 
-    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
-        return inflater.inflate(R.layout.fragment_match_center, container, false)
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        return inflater.inflate(R.layout.activity_watch_room, container, false)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        val binding = FragmentMatchCenterBinding.bind(view)
-        binding.rvMatchesList.layoutManager = LinearLayoutManager(requireContext())
-        binding.rvLeagueFilters.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, true)
-
-        val dayTabs = listOf(
-            binding.tabYesterday to "YESTERDAY",
-            binding.tabToday to "TODAY",
-            binding.tabTomorrow to "TOMORROW",
-            binding.tabLiveNow to "LIVE",
-            binding.tabFavMatches to "FAV"
-        )
-        dayTabs.forEach { (tv, code) ->
-            tv.setOnClickListener {
-                selectedDayTab = code
-                dayTabs.forEach { (t, c) ->
-                    t.setBackgroundColor(if (c == selectedDayTab) Color.parseColor("#E50914") else Color.TRANSPARENT)
-                }
-                applyFilters(binding)
-            }
-        }
-
-        binding.etSearchMatch.doAfterTextChanged { text ->
-            searchQuery = text?.toString()?.trim().orEmpty()
-            applyFilters(binding)
-        }
-
-        binding.btnRefreshMatches.setOnClickListener { loadMatchesData(binding) }
-        loadMatchesData(binding)
+        controller = WatchTogetherController(
+            hostContext = requireContext(),
+            rootView = view,
+            hostActivity = activity,
+            isStandaloneActivity = false
+        ).also { it.init() }
     }
 
-    private fun loadMatchesData(binding: FragmentMatchCenterBinding) {
-        viewLifecycleOwner.lifecycleScope.launch {
-            allMatches = OttRepository.fetchMatchesFromCloudflare()
-            val timeNow = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-            binding.tvLastSync.text = "Updated: $timeNow"
-            val distinctLeagues = allMatches.map { it.league }.distinct()
-            val leagueCategories = mutableListOf(Category("ALL", "All (${allMatches.size})"))
-            distinctLeagues.forEach { l -> leagueCategories.add(Category(l, l)) }
-            binding.rvLeagueFilters.adapter = CategoriesAdapter(leagueCategories, selectedLeague) { cat ->
-                selectedLeague = cat.id
-                applyFilters(binding)
-            }
-            applyFilters(binding)
-        }
+    override fun onDestroyView() {
+        controller?.release()
+        controller = null
+        super.onDestroyView()
     }
 
-    private fun applyFilters(binding: FragmentMatchCenterBinding) {
-        val filtered = allMatches.filter { m ->
-            val matchDay = when (selectedDayTab) {
-                "LIVE" -> m.status == "LIVE"
-                "FAV" -> m.isFavoriteMatch
-                else -> m.dayTab == selectedDayTab
-            }
-            val matchLeague = (selectedLeague == "ALL" || m.league == selectedLeague)
-            val matchSearch = searchQuery.isEmpty() || m.homeTeam.contains(searchQuery, true) || m.awayTeam.contains(searchQuery, true)
-            matchDay && matchLeague && matchSearch
-        }
-
-        binding.rvMatchesList.adapter = MatchesAdapter(
-            matches = filtered,
-            onWatchClick = { match ->
-                startActivity(Intent(requireContext(), PlayerActivity::class.java).apply {
-                    putExtra(PlayerActivity.EXTRA_CHANNEL, match.channel)
-                })
-            },
-            onCardDetailsClick = { match ->
-                val options = arrayOf("Watch Match", "Watch Together")
-                AlertDialog.Builder(requireContext())
-                    .setTitle("${match.homeTeam} VS ${match.awayTeam}")
-                    .setItems(options) { _, which ->
-                        if (which == 0) {
-                            startActivity(Intent(requireContext(), PlayerActivity::class.java).apply {
-                                putExtra(PlayerActivity.EXTRA_CHANNEL, match.channel)
-                            })
-                        } else {
-                            viewLifecycleOwner.lifecycleScope.launch {
-                                val (ok, code) = OttRepository.createWatchRoom(
-                                    deviceId = SessionManager.getDeviceId(requireContext()),
-                                    userName = SessionManager.getUserName(requireContext()),
-                                    roomName = "${match.homeTeam} VS ${match.awayTeam}",
-                                    roomIcon = "⚽",
-                                    isPrivate = false,
-                                    password = "",
-                                    allowGuestsControl = false,
-                                    contentType = "LIVE",
-                                    streamId = match.channel.id,
-                                    contentTitle = "${match.homeTeam} VS ${match.awayTeam}",
-                                    contentPoster = "",
-                                    streamUrl = match.channel.streamUrls.firstOrNull() ?: ""
-                                )
-                                if (ok) {
-                                    startActivity(Intent(requireContext(), WatchRoomActivity::class.java).apply {
-                                        putExtra(WatchRoomActivity.EXTRA_ROOM_CODE, code)
-                                    })
-                                }
-                            }
-                        }
-                    }
-                    .show()
-            },
-            onFavClick = { match ->
-                OttRepository.toggleFavoriteMatch(match.id)
-                applyFilters(binding)
-            },
-            onNotifyClick = {
-                Toast.makeText(requireContext(), "Reminder set!", Toast.LENGTH_SHORT).show()
-            }
-        )
+    companion object {
+        fun newInstance(): ScheduleFragment = ScheduleFragment()
     }
 }
 

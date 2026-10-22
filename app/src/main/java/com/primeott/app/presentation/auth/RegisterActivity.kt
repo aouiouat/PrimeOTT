@@ -31,7 +31,7 @@ class RegisterActivity : AppCompatActivity() {
 
     private var isPasswordVisible = false
     private var selectedImageUri: Uri? = null
-    private var selectedDefaultAvatar: String? = null
+    private var selectedDefaultAvatar: String? = "👑"
 
     private lateinit var ivProfileAvatar: ImageView
     private lateinit var tvEmojiAvatarOverlay: TextView
@@ -87,9 +87,9 @@ class RegisterActivity : AppCompatActivity() {
 
         val openAvatarMenu = View.OnClickListener {
             val options = arrayOf(
-                "🖼️ اختيار من المعرض (Choose from Gallery)",
+                "🖼️ اختيار صورة من المعرض (Choose from Gallery)",
                 "👑 اختيار أفاتار افتراضي (Choose Default Avatar)",
-                "🗑️ حذف الصورة (Remove Picture)"
+                "🗑️ إزالة الصورة (Remove Picture)"
             )
             AlertDialog.Builder(this)
                 .setTitle("الصورة الشخصية • Profile Picture")
@@ -136,7 +136,7 @@ class RegisterActivity : AppCompatActivity() {
             val confirmPassword = etConfirmPassword.text.toString()
 
             if (fullName.isEmpty() || username.isEmpty() || email.isEmpty()) {
-                showSystemMessage("Something Went Wrong • يرجى ملء جميع الحقول المطلوبة", isError = true)
+                showSystemMessage("Something Went Wrong • يرجى ملء الاسم، اسم المستخدم، والبريد الإلكتروني", isError = true)
                 return@setOnClickListener
             }
 
@@ -183,7 +183,7 @@ class RegisterActivity : AppCompatActivity() {
             btnCreateAccountSubmit.isEnabled = false
             btnCreateAccountSubmit.text = "⏳ جاري إنشاء الحساب..."
 
-            val avatarVal = selectedDefaultAvatar ?: (selectedImageUri?.toString() ?: "")
+            val avatarVal = selectedDefaultAvatar ?: (selectedImageUri?.toString() ?: "👑")
             val newUser = JSONObject().apply {
                 put("fullName", fullName)
                 put("username", username)
@@ -193,7 +193,6 @@ class RegisterActivity : AppCompatActivity() {
             }
 
             Thread {
-                // إرسال الحساب الجديد إلى سيرفر Cloudflare Worker
                 try {
                     val req = Request.Builder()
                         .url("$workerUrl/auth/register")
@@ -214,18 +213,13 @@ class RegisterActivity : AppCompatActivity() {
                         apply()
                     }
 
-                    showSystemMessage("✅ Account Created Successfully • تم إنشاء الحساب بنجاح! يمكنك الدخول الآن.", isError = false)
-                    mainHandler.postDelayed({
-                        finish()
-                    }, 900L)
+                    showSystemMessage("✅ Account Created Successfully • تم إنشاء الحساب بنجاح!", isError = false)
+                    mainHandler.postDelayed({ finish() }, 800L)
                 }
             }.start()
         }
 
-        btnRegGoogleSignIn.setOnClickListener {
-            finish()
-        }
-
+        btnRegGoogleSignIn.setOnClickListener { finish() }
         tvAlreadyHaveAccountLogin.setOnClickListener { finish() }
         btnTopBackToLogin.setOnClickListener { finish() }
     }
@@ -260,7 +254,7 @@ class RegisterActivity : AppCompatActivity() {
         tvRegMessageBanner.visibility = View.VISIBLE
         tvRegMessageBanner.text = msg
         tvRegMessageBanner.setTextColor(if (isError) Color.parseColor("#FF8A80") else Color.parseColor("#00E676"))
-        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
 
     private fun isInternetAvailable(): Boolean {
