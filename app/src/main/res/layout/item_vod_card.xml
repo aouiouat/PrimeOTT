@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="118dp"
-    android:layout_height="192dp"
-    android:layout_margin="5dp"
+    android:layout_width="116dp"
+    android:layout_height="188dp"
+    android:layout_margin="6dp"
     app:cardBackgroundColor="#101218"
     app:cardCornerRadius="14dp"
     app:cardElevation="0dp">
@@ -22,7 +22,7 @@
         <TextView
             android:id="@+id/tvVodMeta"
             android:layout_width="wrap_content"
-            android:layout_height="22dp"
+            android:layout_height="21dp"
             android:layout_gravity="top|end"
             android:layout_margin="6dp"
             android:background="@drawable/bg_rating_pill_dark"
@@ -30,38 +30,39 @@
             android:drawablePadding="3dp"
             android:fontFamily="sans-serif-medium"
             android:gravity="center_vertical"
-            android:paddingHorizontal="7dp"
+            android:paddingHorizontal="6.5dp"
             android:text="8.5"
             android:textColor="#FFFFFF"
-            android:textSize="10.5sp"
+            android:textSize="10sp"
             android:textStyle="bold" />
 
-        <!-- طبقة التدرج الأسود الفايد (Faded Black Layer) باش ما تبانش مربع -->
+        <!-- طبقة التدرج الأسود الفايد -->
         <View
             android:layout_width="match_parent"
-            android:layout_height="82dp"
+            android:layout_height="78dp"
             android:layout_gravity="bottom"
             android:background="@drawable/bg_card_bottom_fade" />
 
-        <!-- اسم الفيلم أو المسلسل تحت قاع فالكارت بخط شباب -->
+        <!-- اسم الفيلم أو المسلسل تحت قاع فالكارت بخط مختلف وأصغر شوية -->
         <TextView
             android:id="@+id/tvVodTitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
             android:ellipsize="end"
-            android:fontFamily="sans-serif-medium"
+            android:fontFamily="sans-serif"
+            android:letterSpacing="0.01"
             android:lineSpacingExtra="1dp"
             android:maxLines="2"
-            android:paddingHorizontal="9dp"
-            android:paddingBottom="9dp"
-            android:shadowColor="#CC000000"
+            android:paddingHorizontal="8dp"
+            android:paddingBottom="8dp"
+            android:shadowColor="#DD000000"
             android:shadowDx="0"
-            android:shadowDy="2"
-            android:shadowRadius="4"
+            android:shadowDy="1"
+            android:shadowRadius="3"
             android:text="Movie Title"
-            android:textColor="#FFFFFF"
-            android:textSize="12.5sp"
+            android:textColor="#F1F5F9"
+            android:textSize="11.5sp"
             android:textStyle="bold" />
 
     </FrameLayout>

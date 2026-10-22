@@ -333,35 +333,80 @@ object OttRepository {
         result
     }
 
-    suspend fun fetchVodCatalogPage(isSeries: Boolean, page: Int = 1, genreOrFilter: String = ""): List<VodItem> = withContext(Dispatchers.IO) {
+    suspend fun fetchVodCatalogPage(
+        isSeries: Boolean,
+        page: Int,
+        filterCode: String = "",
+        sortMode: String = "POPULAR"
+    ): List<VodItem> = withContext(Dispatchers.IO) {
         try {
-            val endpoint = when {
-                genreOrFilter == "TR" -> "https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=TR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=$page"
-                genreOrFilter == "KR" -> "https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_origin_country=KR&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=$page"
-                genreOrFilter == "ACTION" -> "https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=28,53&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=$page"
-                genreOrFilter == "ANIME" -> "https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&with_genres=16&with_origin_country=JP&sort_by=popularity.desc&page=$page"
-                genreOrFilter == "SCIFI" -> "https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=878,14&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=$page"
-                genreOrFilter == "DOC" -> "https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&with_genres=99&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=$page"
-                genreOrFilter == "TOP_MOVIE" -> "https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=1500&$RELEASED_MOVIE_FILTER&page=$page"
-                genreOrFilter == "TOP_TV" -> "https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&sort_by=vote_average.desc&vote_count.gte=800&$RELEASED_TV_FILTER&page=$page"
-                isSeries -> "https://api.themoviedb.org/3/discover/tv?api_key=$TMDB_API_KEY&sort_by=popularity.desc&$RELEASED_TV_FILTER&page=$page"
-                else -> "https://api.themoviedb.org/3/discover/movie?api_key=$TMDB_API_KEY&sort_by=popularity.desc&$RELEASED_MOVIE_FILTER&page=$page"
+            val safePage = page.coerceIn(1, 500)
+            val media = if (isSeries) "tv" else "movie"
+            val baseReleaseFilter = if (isSeries) RELEASED_TV_FILTER else RELEASED_MOVIE_FILTER
+
+            // إذا كان التصنيف ALL وماكانش فلتر خاص، نستعملو مسارات TMDB المباشرة حسب الـ SortMode
+            val url = if (filterCode.isEmpty() || filterCode == "ALL") {
+                when (sortMode) {
+                    "TOP_RATED" -> "https://api.themoviedb.org/3/$media/top_rated?api_key=$TMDB_API_KEY&page=$safePage"
+                    "UPCOMING" -> if (isSeries) {
+                        "https://api.themoviedb.org/3/tv/on_the_air?api_key=$TMDB_API_KEY&page=$safePage"
+                    } else {
+                        "https://api.themoviedb.org/3/movie/upcoming?api_key=$TMDB_API_KEY&page=$safePage"
+                    }
+                    "NOW_PLAYING" -> if (isSeries) {
+                        "https://api.themoviedb.org/3/tv/airing_today?api_key=$TMDB_API_KEY&page=$safePage"
+                    } else {
+                        "https://api.themoviedb.org/3/movie/now_playing?api_key=$TMDB_API_KEY&page=$safePage"
+                    }
+                    else -> "https://api.themoviedb.org/3/$media/popular?api_key=$TMDB_API_KEY&page=$safePage"
+                }
+            } else {
+                val sortParam = when (sortMode) {
+                    "TOP_RATED" -> "vote_average.desc&vote_count.gte=120"
+                    "UPCOMING" -> if (isSeries) "first_air_date.desc" else "primary_release_date.desc"
+                    "NOW_PLAYING" -> "popularity.desc"
+                    else -> "popularity.desc"
+                }
+                val extraGenreOrLang = when (filterCode) {
+                    "TOP_MOVIE", "TOP_TV" -> "&vote_count.gte=200"
+                    "TR" -> "&with_original_language=tr"
+                    "KR" -> "&with_original_language=ko"
+                    "ACTION" -> if (isSeries) "&with_genres=10759" else "&with_genres=28"
+                    "ANIME" -> "&with_genres=16"
+                    "SCIFI" -> if (isSeries) "&with_genres=10765" else "&with_genres=878"
+                    "DOC" -> "&with_genres=99"
+                    else -> "&with_genres=$filterCode"
+                }
+                "https://api.themoviedb.org/3/discover/$media?api_key=$TMDB_API_KEY&sort_by=$sortParam&$baseReleaseFilter$extraGenreOrLang&page=$safePage"
             }
-            val root = JSONObject(fastGet(endpoint))
-            return@withContext parseTmdbArrayToVodList(root.optJSONArray("results"), if (isSeries) "Series" else "Movie", isSeries)
+
+            val raw = fastGet(url)
+            val arr = JSONObject(raw).optJSONArray("results")
+            parseTmdbArrayToVodList(arr, if (isSeries) "Series" else "Movie", isSeries)
         } catch (_: Exception) {
-            return@withContext emptyList()
+            emptyList()
         }
     }
 
-    suspend fun searchTmdbCatalog(query: String): List<VodItem> = withContext(Dispatchers.IO) {
+    suspend fun searchTmdbCatalog(query: String, filterType: String = "ALL"): List<VodItem> = withContext(Dispatchers.IO) {
         try {
             val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-            val url = "https://api.themoviedb.org/3/search/multi?api_key=$TMDB_API_KEY&query=$encoded&page=1"
-            val root = JSONObject(fastGet(url))
-            return@withContext parseTmdbArrayToVodList(root.optJSONArray("results"), "Search")
+            val endpoint = when (filterType) {
+                "MOVIES" -> "search/movie"
+                "SERIES" -> "search/tv"
+                else -> "search/multi"
+            }
+            val forceSeriesFlag: Boolean? = when (filterType) {
+                "MOVIES" -> false
+                "SERIES" -> true
+                else -> null
+            }
+            val url = "https://api.themoviedb.org/3/$endpoint?api_key=$TMDB_API_KEY&query=$encoded&page=1"
+            val raw = fastGet(url)
+            val arr = JSONObject(raw).optJSONArray("results")
+            parseTmdbArrayToVodList(arr, "Search", forceSeriesFlag)
         } catch (_: Exception) {
-            return@withContext emptyList()
+            emptyList()
         }
     }
 
