@@ -1,0 +1,940 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootWatchTogether"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#090C12"
+    android:layoutDirection="rtl">
+
+    <!-- ========================================================================= -->
+    <!-- VIEW 1: WATCH TOGETHER HUB / LOBBY (مركز الغرف والبحث والإنشاء والانضمام) -->
+    <!-- ========================================================================= -->
+    <LinearLayout
+        android:id="@+id/layoutLobbyContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:visibility="visible">
+
+        <!-- Top Lobby Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingBottom="10dp">
+
+            <TextView
+                android:id="@+id/btnLobbyBack"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:text="رجوع ↩"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginHorizontal="10dp"
+                android:text="المشاهدة الجماعية • Watch Together"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvBackendHealthLobby"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="8dp"
+                android:text="🟢 متصل"
+                android:textColor="#00E676"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/btnBlockedUsersLobby"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="8dp"
+                android:text="🚫 المحظورون"
+                android:textColor="#FFCDD2"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- Create Room + Join by Code Row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/wt_bg_card"
+            android:orientation="vertical"
+            android:padding="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnCreateRoomOpen"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/wt_bg_btn_primary"
+                    android:text="➕ إنشاء غرفة مشاهدة جديدة"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnRefreshRooms"
+                    android:layout_width="wrap_content"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="🔄 تحديث"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- Join by Room Code -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/etJoinByCodeInput"
+                    android:layout_width="0dp"
+                    android:layout_height="42dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/wt_bg_input"
+                    android:hint="🔑 أدخل رمز الغرفة أو رابط الدعوة..."
+                    android:imeOptions="actionDone"
+                    android:inputType="text"
+                    android:paddingHorizontal="12dp"
+                    android:singleLine="true"
+                    android:textColor="#FFFFFF"
+                    android:textColorHint="#8A96A8"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btnJoinByCodeSubmit"
+                    android:layout_width="wrap_content"
+                    android:layout_height="42dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/wt_bg_btn_green"
+                    android:paddingHorizontal="16dp"
+                    android:text="انضمام بالرمز"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Search & Filters -->
+        <EditText
+            android:id="@+id/etRoomSearch"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/wt_bg_input"
+            android:hint="🔍 ابحث عن غرفة، مباراة، قناة، أو اسم المضيف..."
+            android:paddingHorizontal="12dp"
+            android:singleLine="true"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#7C889B"
+            android:textSize="12sp" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/chipFilterAll"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/wt_bg_badge_live"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="🔥 الكل"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/chipFilterPublic"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="🌐 غرف عامة"
+                    android:textColor="#D0D7E2"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/chipFilterPrivate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="🔒 غرف خاصة"
+                    android:textColor="#D0D7E2"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/chipFilterMatches"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="⚽ مباريات اليوم"
+                    android:textColor="#D0D7E2"
+                    android:textSize="12sp" />
+
+                <TextView
+                    android:id="@+id/chipFilterChannels"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:gravity="center"
+                    android:paddingHorizontal="12dp"
+                    android:text="📺 قنوات مباشرة"
+                    android:textColor="#D0D7E2"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <!-- Active Rooms Statistics Header -->
+        <TextView
+            android:id="@+id/tvLobbyStatsSummary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="4dp"
+            android:text="الغرف النشطة الآن: 0 | إجمالي المشاهدين: 0"
+            android:textColor="#9AA5B8"
+            android:textSize="11sp" />
+
+        <!-- Active Rooms List -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvActiveRooms"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingBottom="16dp" />
+
+            <TextView
+                android:id="@+id/tvEmptyRoomsHint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:gravity="center"
+                android:padding="24dp"
+                android:text="لا توجد غرف مطابقة حالياً.
+اضغط على «إنشاء غرفة مشاهدة جديدة» لبدء البث الجماعي!"
+                android:textColor="#7D889C"
+                android:textSize="14sp"
+                android:visibility="gone" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- ========================================================================= -->
+    <!-- VIEW 2: ACTIVE WATCH ROOM (شاشة الغرفة الحية والمزامنة والدردشة والتحكم) -->
+    <!-- ========================================================================= -->
+    <LinearLayout
+        android:id="@+id/layoutActiveRoomContainer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <!-- Room Top Action Header -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#121722"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="6dp">
+
+            <TextView
+                android:id="@+id/btnLeaveRoom"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="8dp"
+                android:text="🚪 مغادرة"
+                android:textColor="#FF8A80"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="6dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tvRoomHeaderTitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:singleLine="true"
+                    android:text="غرفة المشاهدة"
+                    android:textColor="#FFFFFF"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tvRoomCodeBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="#CODE 📋"
+                        android:textColor="#FFD54F"
+                        android:textSize="10sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvRoomStatusBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:text="🔴 LIVE"
+                        android:textColor="#00E676"
+                        android:textSize="10sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvBackendHealthRoom"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:text="🟢 35ms"
+                        android:textColor="#90CAF9"
+                        android:textSize="10sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvOnlineCountBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:layout_marginEnd="4dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="7dp"
+                android:text="👥 1/25"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/btnInviteShare"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:layout_marginEnd="4dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="7dp"
+                android:text="🔗 دعوة"
+                android:textColor="#80D8FF"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/btnHostControlsOpen"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:layout_marginEnd="4dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="7dp"
+                android:text="⚙️ تحكم"
+                android:textColor="#FFD54F"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/btnCloseRoomHost"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:background="@drawable/wt_bg_badge_live"
+                android:gravity="center"
+                android:paddingHorizontal="7dp"
+                android:text="⛔ إغلاق"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- Pending Join Request Alert Banner (For Host) -->
+        <LinearLayout
+            android:id="@+id/layoutJoinRequestBanner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#263238"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvJoinRequestInfo"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="🔔 طلب انضمام جديد إلى الغرفة"
+                android:textColor="#FFF59D"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnApproveJoinReq"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:background="@drawable/wt_bg_btn_green"
+                android:paddingHorizontal="10dp"
+                android:text="قبول ✓"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btnRejectJoinReq"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/wt_bg_btn_primary"
+                android:paddingHorizontal="10dp"
+                android:text="رفض ✕"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- Synchronized Video Player + Floating Emoji Layer -->
+        <FrameLayout
+            android:id="@+id/playerContainerFrame"
+            android:layout_width="match_parent"
+            android:layout_height="230dp"
+            android:background="#000000">
+
+            <androidx.media3.ui.PlayerView
+                android:id="@+id/watchPlayerView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                app:use_controller="true" />
+
+            <FrameLayout
+                android:id="@+id/emojiFloatingOverlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clickable="false"
+                android:focusable="false" />
+
+            <TextView
+                android:id="@+id/tvStreamStatusOverlay"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|start"
+                android:layout_margin="8dp"
+                android:background="#99000000"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp"
+                android:text="📺 البث المتزامن جاهز"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tvExpirationTimerBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_margin="8dp"
+                android:background="#99000000"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp"
+                android:text="⏳ 02:59:59"
+                android:textColor="#FFE082"
+                android:textSize="11sp" />
+        </FrameLayout>
+
+        <!-- Playback Sync & Channel/Match Quick Toolbar -->
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#101520"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="38dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="8dp">
+
+                <TextView
+                    android:id="@+id/btnSyncPlayPause"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/wt_bg_badge_live"
+                    android:gravity="center"
+                    android:paddingHorizontal="10dp"
+                    android:text="⏸️ إيقاف / تشغيل متزامن"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnForceSyncNow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:gravity="center"
+                    android:paddingHorizontal="10dp"
+                    android:text="🔄 مزامنة الكل"
+                    android:textColor="#80D8FF"
+                    android:textSize="11sp" />
+
+                <TextView
+                    android:id="@+id/btnPickChannelOpen"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:gravity="center"
+                    android:paddingHorizontal="10dp"
+                    android:text="📺 اختيار قناة"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp" />
+
+                <TextView
+                    android:id="@+id/btnPickMatchOpen"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:gravity="center"
+                    android:paddingHorizontal="10dp"
+                    android:text="⚽ اختيار مباراة"
+                    android:textColor="#69F0AE"
+                    android:textSize="11sp" />
+
+                <TextView
+                    android:id="@+id/btnAspectRatioToggle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:gravity="center"
+                    android:paddingHorizontal="10dp"
+                    android:text="📐 أبعاد الشاشة"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp" />
+
+                <TextView
+                    android:id="@+id/btnRoomStatsOpen"
+                    android:layout_width="wrap_content"
+                    android:layout_height="28dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:gravity="center"
+                    android:paddingHorizontal="10dp"
+                    android:text="📊 إحصائيات الغرفة"
+                    android:textColor="#FFD54F"
+                    android:textSize="11sp" />
+            </LinearLayout>
+        </HorizontalScrollView>
+
+        <!-- Voice Chat Controls + Live Emoji Reactions Bar -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:background="#151C28"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="8dp">
+
+            <TextView
+                android:id="@+id/btnToggleMic"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="🎤 الميكروفون: مكتوم"
+                android:textColor="#FF8A80"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/btnToggleSpeaker"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:layout_marginStart="4dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="8dp"
+                android:text="🔊"
+                android:textColor="#00E676"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tvVoiceSpeakingIndicator"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="6dp"
+                android:text="صوت نقي"
+                android:textColor="#9AA5B8"
+                android:textSize="10sp" />
+
+            <HorizontalScrollView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <TextView android:id="@+id/btnEmojiFire" android:layout_width="32dp" android:layout_height="30dp" android:gravity="center" android:text="🔥" android:textSize="16sp" />
+                    <TextView android:id="@+id/btnEmojiHeart" android:layout_width="32dp" android:layout_height="30dp" android:gravity="center" android:text="❤️" android:textSize="16sp" />
+                    <TextView android:id="@+id/btnEmojiLaugh" android:layout_width="32dp" android:layout_height="30dp" android:gravity="center" android:text="😂" android:textSize="16sp" />
+                    <TextView android:id="@+id/btnEmojiClap" android:layout_width="32dp" android:layout_height="30dp" android:gravity="center" android:text="👏" android:textSize="16sp" />
+                    <TextView android:id="@+id/btnEmojiSoccer" android:layout_width="32dp" android:layout_height="30dp" android:gravity="center" android:text="⚽" android:textSize="16sp" />
+                    <TextView android:id="@+id/btnEmojiGoal" android:layout_width="32dp" android:layout_height="30dp" android:gravity="center" android:text="🥅" android:textSize="16sp" />
+                    <TextView android:id="@+id/btnEmojiShock" android:layout_width="32dp" android:layout_height="30dp" android:gravity="center" android:text="😱" android:textSize="16sp" />
+                    <TextView android:id="@+id/btnEmojiParty" android:layout_width="32dp" android:layout_height="30dp" android:gravity="center" android:text="🎉" android:textSize="16sp" />
+                </LinearLayout>
+            </HorizontalScrollView>
+        </LinearLayout>
+
+        <!-- Room Internal Navigation Tabs -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="38dp"
+            android:background="#0E131D"
+            android:orientation="horizontal"
+            android:padding="3dp">
+
+            <TextView
+                android:id="@+id/tabBtnChat"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/wt_bg_badge_live"
+                android:gravity="center"
+                android:text="💬 الدردشة"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tabBtnParticipants"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="👥 المتصلون"
+                android:textColor="#B0BEC5"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tabBtnMediaPicker"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="📺 القنوات والمباريات"
+                android:textColor="#B0BEC5"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tabBtnLogsStats"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="📋 السجل والحالة"
+                android:textColor="#B0BEC5"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- TAB 1: REAL-TIME TEXT CHAT & MESSAGE HISTORY -->
+        <LinearLayout
+            android:id="@+id/panelTabChat"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:visibility="visible">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvChatMessages"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipToPadding="false" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/etChatMessageInput"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/wt_bg_input"
+                    android:hint="اكتب رسالة فورية للغرفة..."
+                    android:imeOptions="actionSend"
+                    android:inputType="text"
+                    android:paddingHorizontal="12dp"
+                    android:singleLine="true"
+                    android:textColor="#FFFFFF"
+                    android:textColorHint="#7A869A"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btnSendChatMessage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/wt_bg_btn_primary"
+                    android:paddingHorizontal="16dp"
+                    android:text="إرسال ➤"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- TAB 2: PARTICIPANT MANAGEMENT, VOICE STATUS & HOST CONTROLS -->
+        <LinearLayout
+            android:id="@+id/panelTabParticipants"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="6dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnMuteAllParticipants"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_marginEnd="6dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:text="🔇 كتم الجميع (للمضيف)"
+                    android:textAllCaps="false"
+                    android:textColor="#FFCDD2"
+                    android:textSize="11sp" />
+
+                <Button
+                    android:id="@+id/btnManageBansOpen"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:text="🚫 قائمة المحظورين والطلبات"
+                    android:textAllCaps="false"
+                    android:textColor="#FFE082"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvParticipantsList"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+        </LinearLayout>
+
+        <!-- TAB 3: IN-ROOM LIVE CHANNEL & MATCH SELECTION -->
+        <LinearLayout
+            android:id="@+id/panelTabMediaPicker"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnSubTabChannels"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/wt_bg_btn_primary"
+                    android:text="📺 القنوات المباشرة"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp" />
+
+                <Button
+                    android:id="@+id/btnSubTabMatches"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:text="⚽ مباريات اليوم"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp" />
+
+                <Button
+                    android:id="@+id/btnCustomStreamUrl"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:paddingHorizontal="10dp"
+                    android:text="🔗 رابط مباشر"
+                    android:textAllCaps="false"
+                    android:textColor="#80D8FF"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <EditText
+                android:id="@+id/etSearchMediaInRoom"
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:layout_marginVertical="6dp"
+                android:background="@drawable/wt_bg_input"
+                android:hint="🔍 ابحث عن قناة أو مباراة لتشغيلها للغرفة..."
+                android:paddingHorizontal="10dp"
+                android:singleLine="true"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#7A869A"
+                android:textSize="12sp" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvMediaPickerList"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+        </LinearLayout>
+
+        <!-- TAB 4: ROOM EVENT LOGS, STATISTICS & HEALTH MONITORING -->
+        <LinearLayout
+            android:id="@+id/panelTabLogsStats"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvRoomDetailedStats"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/wt_bg_card"
+                android:padding="8dp"
+                android:text="إحصائيات الغرفة وحالة المزامنة"
+                android:textColor="#E0E6ED"
+                android:textSize="11sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginVertical="6dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnExtendRoomTime"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_marginEnd="6dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/wt_bg_btn_green"
+                    android:text="⏱️ تمديد صلاحية الغرفة (+1 ساعة)"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11sp" />
+
+                <Button
+                    android:id="@+id/btnClearEventLogs"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:paddingHorizontal="12dp"
+                    android:text="🧹 مسح السجل"
+                    android:textAllCaps="false"
+                    android:textColor="#B0BEC5"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvRoomEventLogs"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>
