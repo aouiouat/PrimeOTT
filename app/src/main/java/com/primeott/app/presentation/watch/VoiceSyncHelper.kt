@@ -20,7 +20,7 @@ object VoiceSyncHelper {
         .writeTimeout(5, TimeUnit.SECONDS)
         .build()
 
-    var baseUrl: String = "https://prime-ott-worker.workers.dev"
+    var baseUrl: String = "https://prime-ott-panel.prime-ott-stream.workers.dev"
 
     fun pushAudioChunk(
         roomId: String,
