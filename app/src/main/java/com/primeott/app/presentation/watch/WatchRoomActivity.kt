@@ -131,7 +131,7 @@ class WatchTogetherController(
         .pingInterval(15, TimeUnit.SECONDS)
         .build()
 
-    private var workerBaseUrl = "https://prime-ott-worker.workers.dev"
+    private var workerBaseUrl = "https://prime-ott-panel.prime-ott-stream.workers.dev"
     private var defaultXtreamHost = "http://kwick.cc:8080"
 
     private lateinit var localUserId: String
@@ -370,6 +370,30 @@ class WatchTogetherController(
 
     private fun setupLobbyListeners() {
         rootView.findViewById<View>(R.id.btnBlockedUsersLobby).setOnClickListener { showBlockedUsersDialog() }
+
+        rootView.findViewById<View>(R.id.btnLogoutLobby)?.setOnClickListener {
+            AlertDialog.Builder(hostContext)
+                .setTitle("🚪 تسجيل الخروج • Logout")
+                .setMessage("هل أنت متأكد أنك تريد تسجيل الخروج من حسابك؟")
+                .setPositiveButton("تسجيل الخروج") { _, _ ->
+                    hostContext.getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE).edit()
+                        .putBoolean("session_active", false)
+                        .putBoolean("is_guest", false)
+                        .remove("current_user")
+                        .apply()
+                    Toast.makeText(hostContext, "تم تسجيل الخروج بنجاح", Toast.LENGTH_SHORT).show()
+                    try {
+                        val loginCls = Class.forName("com.primeott.app.presentation.auth.LoginActivity")
+                        val intent = Intent(hostContext, loginCls)
+                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        hostContext.startActivity(intent)
+                        hostActivity?.finish()
+                    } catch (_: Exception) {}
+                }
+                .setNegativeButton("إلغاء", null)
+                .show()
+        }
+
         rootView.findViewById<View>(R.id.btnCreateRoomOpen).setOnClickListener { showCreateRoomDialog() }
         rootView.findViewById<View>(R.id.btnRefreshRooms).setOnClickListener {
             Toast.makeText(hostContext, "جاري تحديث الغرف النشطة...", Toast.LENGTH_SHORT).show()

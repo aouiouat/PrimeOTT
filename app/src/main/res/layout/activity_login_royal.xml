@@ -1,0 +1,289 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#090C12"
+    android:fillViewport="true"
+    android:layoutDirection="rtl">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:padding="22dp">
+
+        <!-- Skip / Sauter Top Button -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/btnTopSkipGuest"
+                android:layout_width="wrap_content"
+                android:layout_height="34dp"
+                android:background="@drawable/auth_btn_guest"
+                android:gravity="center"
+                android:paddingHorizontal="14dp"
+                android:text="Sauter • تخطي كزائر ⬅"
+                android:textColor="#D0D7E2"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <Space android:layout_width="match_parent" android:layout_height="18dp" />
+
+        <!-- Royal TV Logo -->
+        <FrameLayout
+            android:layout_width="84dp"
+            android:layout_height="84dp"
+            android:background="@drawable/auth_avatar_circle">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="👑"
+                android:textSize="36sp" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/tvRoyalLogoTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:letterSpacing="0.08"
+            android:text="ROYAL TV"
+            android:textColor="#E50914"
+            android:textSize="30sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="LOGIN — تسجيل الدخول"
+            android:textColor="#B0BEC5"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <!-- System Authentication Message Banner -->
+        <TextView
+            android:id="@+id/tvAuthMessageBanner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/auth_bg_card"
+            android:gravity="center"
+            android:padding="12dp"
+            android:textColor="#FFD54F"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <!-- Username -->
+        <EditText
+            android:id="@+id/etLoginUsername"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="20dp"
+            android:background="@drawable/auth_bg_input"
+            android:hint="👤 اسم المستخدم (Username)"
+            android:imeOptions="actionNext"
+            android:inputType="text"
+            android:paddingHorizontal="16dp"
+            android:singleLine="true"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#7A869A"
+            android:textSize="14sp" />
+
+        <!-- Password + Show/Hide Password -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/auth_bg_input"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <EditText
+                android:id="@+id/etLoginPassword"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@null"
+                android:hint="🔒 كلمة المرور (Password)"
+                android:imeOptions="actionDone"
+                android:inputType="textPassword"
+                android:paddingHorizontal="16dp"
+                android:singleLine="true"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#7A869A"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/btnToggleLoginPassword"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:paddingHorizontal="14dp"
+                android:text="إظهار 👁️"
+                android:textColor="#80D8FF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Remember Me & Forgot Password -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <CheckBox
+                android:id="@+id/cbRememberMe"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:buttonTint="#E50914"
+                android:checked="true"
+                android:text="تذكرني (Remember Me)"
+                android:textColor="#D0D7E2"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tvForgotPassword"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="4dp"
+                android:text="نسيت كلمة المرور؟ (Forgot Password?)"
+                android:textColor="#80D8FF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Login Button -->
+        <Button
+            android:id="@+id/btnLoginSubmit"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="18dp"
+            android:background="@drawable/auth_btn_primary"
+            android:text="تسجيل الدخول • Login"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <!-- Google Sign-In Button -->
+        <Button
+            android:id="@+id/btnGoogleSignIn"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/auth_btn_google"
+            android:text="🌐 المتابعة بحساب جوجل • Sign in with Google"
+            android:textAllCaps="false"
+            android:textColor="#111622"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <!-- Guest Mode Button (Sauter / Continue as Guest / Browse as Guest) -->
+        <Button
+            android:id="@+id/btnContinueAsGuest"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/auth_btn_guest"
+            android:text="🚀 الدخول كزائر • Sauter (Continue as Guest)"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <!-- Create New Account Button -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:background="@drawable/auth_bg_card"
+            android:gravity="center"
+            android:orientation="horizontal"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="ليس لديك حساب؟ "
+                android:textColor="#B0BEC5"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/btnOpenCreateAccount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="إنشاء حساب جديد • Create New Account"
+                android:textColor="#E50914"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <!-- Footer: Contact Support | Privacy Policy | App Version -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="22dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvContactSupport"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="6dp"
+                android:text="📞 Contact Support"
+                android:textColor="#90CAF9"
+                android:textSize="11sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=" | "
+                android:textColor="#4A5B7F"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tvPrivacyPolicy"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="6dp"
+                android:text="🛡️ Privacy Policy"
+                android:textColor="#90CAF9"
+                android:textSize="11sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=" | "
+                android:textColor="#4A5B7F"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/tvAppVersion"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:padding="6dp"
+                android:text="App Version v3.2.0"
+                android:textColor="#7A869A"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>
