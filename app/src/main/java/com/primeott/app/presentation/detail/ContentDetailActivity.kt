@@ -489,7 +489,7 @@ class ContentDetailActivity : AppCompatActivity() {
 
         colorExtractionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             startDelay = 180L
-            duration = 7200L
+            duration = 2000L
             interpolator = AccelerateDecelerateInterpolator()
             addUpdateListener { va ->
                 val f = va.animatedFraction
