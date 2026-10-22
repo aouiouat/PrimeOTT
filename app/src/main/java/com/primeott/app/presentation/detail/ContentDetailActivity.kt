@@ -3,10 +3,8 @@ package com.primeott.app.presentation.detail
 import android.animation.ArgbEvaluator
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
-import android.app.Dialog
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -21,7 +19,6 @@ import android.graphics.PorterDuff
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
-import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -36,15 +33,12 @@ import android.transition.ChangeBounds
 import android.transition.Fade
 import android.transition.TransitionManager
 import android.transition.TransitionSet
-import android.view.GestureDetector
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.Window
 import android.view.WindowManager
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
-import android.view.animation.OvershootInterpolator
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -58,26 +52,20 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
-import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.cardview.widget.CardView
 import androidx.core.content.res.ResourcesCompat
 import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.toColorInt
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.isVisible
 import androidx.core.widget.ImageViewCompat
 import androidx.lifecycle.lifecycleScope
-import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -93,7 +81,6 @@ import com.primeott.app.data.repository.SeriesEpisode
 import com.primeott.app.domain.model.CastMember
 import com.primeott.app.domain.model.MovieFullDetails
 import com.primeott.app.domain.model.StreamSource
-import com.primeott.app.domain.model.SubtitleCue
 import com.primeott.app.domain.model.SubtitleTrack
 import com.primeott.app.domain.model.VodItem
 import com.primeott.app.presentation.common.AnimUtils
@@ -103,15 +90,16 @@ import com.primeott.app.presentation.watch.WatchRoomActivity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 @OptIn(UnstableApi::class)
 class ContentDetailActivity : AppCompatActivity() {
@@ -120,10 +108,7 @@ class ContentDetailActivity : AppCompatActivity() {
         const val EXTRA_VOD = "extra_vod_item"
         private const val SNIFFER_UA =
             "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-        private const val INTRO_START_MS = 5_000L
-        private const val INTRO_END_MS = 90_000L
 
-        // اللون الابتدائي الهادئ عند أول لحظة لفتح الصفحة قبل انتشار لون الكوفر خلال أول 3 ثوانٍ
         private val FLIX_INITIAL_LEFT_COLOR = "#233242".toColorInt()
         private val FLIX_INITIAL_RIGHT_COLOR = "#000000".toColorInt()
 
@@ -150,6 +135,8 @@ class ContentDetailActivity : AppCompatActivity() {
     private val navigationBackStack = ArrayDeque<NavHistoryEntry>()
 
     private lateinit var playerEngine: PrimePlayerEngine
+    private lateinit var moviePlayerController: MovieInlinePlayerController
+
     private var currentVod: VodItem? = null
     private var fullDetails: MovieFullDetails? = null
 
@@ -162,20 +149,9 @@ class ContentDetailActivity : AppCompatActivity() {
     private var selectedSeason: Int = 1
     private var selectedEpisode: Int = 1
 
-    private var availableSubtitles: List<SubtitleTrack> = emptyList()
-    private var activeSubtitleCues: List<SubtitleCue> = emptyList()
-    private var selectedSubtitleId: String = ""
-    private var subtitleOffsetMs: Long = 0L
-
-    private var currentPlaybackSpeed: Float = 1.0f
-    private var isFullscreen: Boolean = false
-    private var isControlsLocked: Boolean = false
-    private var isUserSeeking: Boolean = false
     private var isOverviewExpanded: Boolean = false
     private var fullOverviewRawText: String = ""
-    private var hasSkippedIntroForCurrentMedia: Boolean = false
 
-    private var progressJob: Job? = null
     private var snifferTimeoutJob: Job? = null
     private var detailsFetchJob: Job? = null
     private var streamFetchJob: Job? = null
@@ -188,55 +164,16 @@ class ContentDetailActivity : AppCompatActivity() {
     private lateinit var fontProductBold: Typeface
     private lateinit var fontProductRegular: Typeface
 
-    private var resizeModeIndex: Int = 0
-    private val resizeModes = listOf(
-        AspectRatioFrameLayout.RESIZE_MODE_FILL,
-        AspectRatioFrameLayout.RESIZE_MODE_FIT,
-        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-    )
-
     private lateinit var rootFrameWrapper: FrameLayout
     private lateinit var heroBackdropFixedContainer: FrameLayout
     private lateinit var ivHeroBackdrop: ImageView
-    private lateinit var playTransitionOverlay: FrameLayout
-    private lateinit var ivPlayTransitionPulse: ImageView
     private lateinit var vFullDynamicAmbientBg: View
 
     private lateinit var rootVerticalLayout: LinearLayout
     private lateinit var heroTopActionsRow: FrameLayout
     private lateinit var btnTopBackHero: ImageView
     private lateinit var btnFavBox: ImageView
-
-    private lateinit var playerContainer: FrameLayout
-    private lateinit var playerView: PlayerView
     private lateinit var headlessSnifferWebView: WebView
-    private lateinit var tvSubtitleOverlay: TextView
-    private lateinit var loadingContainer: LinearLayout
-    private lateinit var loadingSpinner: ProgressBar
-    private lateinit var tvLoadingStatus: TextView
-    private lateinit var controlsOverlay: FrameLayout
-    private lateinit var btnMinimizePlayer: ImageView
-    private lateinit var tvTopPlayerTitle: TextView
-    private lateinit var btnTopLock: ImageView
-    private lateinit var btnTopServerHd: TextView
-    private lateinit var btnTopSubtitles: ImageView
-
-    private lateinit var btnRewind15: ImageView
-    private lateinit var btnCenterPlayPause: ImageView
-    private lateinit var btnForward15: ImageView
-    private lateinit var tvSeekFeedbackBadge: TextView
-    private lateinit var btnSkipIntro: LinearLayout
-
-    private lateinit var tvElapsed: TextView
-    private lateinit var seekBar: SeekBar
-    private lateinit var tvDuration: TextView
-    private lateinit var btnInlineFullscreen: ImageView
-    private lateinit var fullscreenBottomActionsRow: LinearLayout
-    private lateinit var btnBottomSubtitles: LinearLayout
-    private lateinit var btnBottomSpeed: LinearLayout
-    private lateinit var tvBottomSpeedLabel: TextView
-    private lateinit var btnBottomAspect: LinearLayout
-    private lateinit var btnUnlockScreenOnly: LinearLayout
 
     private lateinit var detailsScrollView: ScrollView
     private lateinit var detailsMasterColumn: LinearLayout
@@ -283,12 +220,14 @@ class ContentDetailActivity : AppCompatActivity() {
     private var currentActorFilterMode: String = "ALL"
     private var currentActorSortByYearDesc: Boolean = true
 
-    private var selectedQualityHeight: Int? = null
     private var pendingResumePositionMs: Long = 0L
-    private var lastSavedTick: Int = 0
 
-    private val autoHideRunnable = Runnable {
-        controlsOverlay.visibility = View.GONE
+    private val localSubtitleLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            moviePlayerController.loadExternalSubtitleFromUri(uri)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -314,6 +253,68 @@ class ContentDetailActivity : AppCompatActivity() {
         }
         currentVod = item
 
+        moviePlayerController = MovieInlinePlayerController(
+            activity = this,
+            scope = lifecycleScope,
+            fontBold = fontProductBold,
+            fontRegular = fontProductRegular,
+            onMinimizeToCover = { switchToPosterShowcaseMode(saveCurrentPlayerPos = true) },
+            onFullscreenChanged = { enterFull ->
+                if (enterFull) {
+                    heroBackdropFixedContainer.visibility = View.GONE
+                    heroTopActionsRow.visibility = View.GONE
+                    vHeroTopSpacer.visibility = View.GONE
+                    detailsScrollView.visibility = View.GONE
+                } else {
+                    detailsScrollView.visibility = View.VISIBLE
+                }
+            },
+            onServerSelected = { srvIdx, server ->
+                currentProviderIndex = srvIdx
+                hasLockedPrimaryStream = false
+                resolvedDirectStreams.clear()
+                moviePlayerController.setLoadingState(true)
+                if (server.isDirectStream) {
+                    onRawStreamIntercepted(server.url, server.referer, server.origin, server.userAgent)
+                } else {
+                    loadProviderInHeadlessSniffer(srvIdx)
+                }
+            },
+            onRequestRefreshSubtitles = { onResult ->
+                val vod = currentVod
+                if (vod != null) {
+                    lifecycleScope.launch {
+                        val fresh = withContext(Dispatchers.IO) {
+                            OttRepository.fetchRealSubtitlesForMovie(
+                                vod.id,
+                                fullDetails?.imdbId.orEmpty(),
+                                vod.isSeries,
+                                selectedSeason,
+                                selectedEpisode
+                            )
+                        }
+                        onResult(fresh)
+                    }
+                } else {
+                    onResult(emptyList())
+                }
+            },
+            onDownloadSubtitleTrack = { track ->
+                withContext(Dispatchers.IO) {
+                    OttRepository.downloadAndParseSubtitles(track)
+                }
+            },
+            onPickLocalSubtitleFile = {
+                runCatching { localSubtitleLauncher.launch("*/*") }
+            },
+            onSaveProgressTick = { pos, dur ->
+                currentVod?.let { v ->
+                    pendingResumePositionMs = pos
+                    SessionManager.saveWatchProgress(this@ContentDetailActivity, v, pos, dur)
+                }
+            }
+        )
+
         buildPrimeTvDetailLayout()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -325,44 +326,57 @@ class ContentDetailActivity : AppCompatActivity() {
         playerEngine = PrimePlayerEngine(
             context = this,
             scope = lifecycleScope,
-            onSourceSwitched = { _, _ ->
-                updatePlayPauseVectorIcon(true)
+            onSourceSwitched = { _, src ->
+                moviePlayerController.setServerBadgeLabel(src.label)
+                moviePlayerController.updatePlayPauseVectorIcon(true)
             },
             onRealQualityDetected = { qualityBadge, _ ->
                 runOnUiThread {
-                    btnTopServerHd.text = qualityBadge
+                    moviePlayerController.setQualityBadgeLabel(qualityBadge)
                 }
             },
             onFirstFrameRendered = {
                 runOnUiThread {
-                    loadingContainer.visibility = View.GONE
-                    controlsOverlay.visibility = View.GONE
-                    updatePlayPauseVectorIcon(true)
+                    moviePlayerController.setLoadingState(false)
+                    moviePlayerController.hideControlsSmoothly()
+                    moviePlayerController.updatePlayPauseVectorIcon(true)
                 }
             },
             onPlaybackExhausted = {
                 runOnUiThread {
+                    // إذا تعطل السيرفر الحالي يتحول تلقائياً إلى السيرفر التالي بدون توقف
                     hasLockedPrimaryStream = false
                     tryNextProviderInBackground()
                 }
             }
         )
 
+        moviePlayerController.bindEngineAndActions(
+            engine = playerEngine,
+            getProviders = { providerTargets },
+            getCurrentProviderIdx = { currentProviderIndex }
+        )
+
         setupInvisibleStreamSniffer()
-        loadVodItemIntoScreen(item, resetScroll = true)
-        startPlayerProgressAndSubtitlesLoop()
+        loadVodItemIntoScreen(item, resetScroll = true, animatePageEntry = false)
+        moviePlayerController.startProgressAndNetworkLoop(playerEngine)
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode)
+        moviePlayerController.onPictureInPictureModeChanged(isInPictureInPictureMode)
     }
 
     private fun handleSmartBackNavigation() {
         when {
-            isFullscreen -> {
-                applyFullscreenState(false)
+            moviePlayerController.isFullscreen -> {
+                moviePlayerController.applyFullscreenState(false)
             }
             actorPageOverlay.isVisible -> {
                 closeActorPageOverlayAndRestoreIfNeeded()
             }
             isPlayerModeActive -> {
-                switchToPosterShowcaseMode()
+                switchToPosterShowcaseMode(saveCurrentPlayerPos = true)
             }
             navigationBackStack.isNotEmpty() -> {
                 when (val prev = navigationBackStack.removeLast()) {
@@ -370,7 +384,12 @@ class ContentDetailActivity : AppCompatActivity() {
                         restoreActorPageFromState(prev)
                     }
                     is NavHistoryEntry.MovieState -> {
-                        loadVodItemIntoScreen(prev.vod, resetScroll = false, targetScrollY = prev.scrollY)
+                        loadVodItemIntoScreen(
+                            vod = prev.vod,
+                            resetScroll = false,
+                            targetScrollY = prev.scrollY,
+                            animatePageEntry = true
+                        )
                     }
                 }
             }
@@ -399,9 +418,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * استخراج لون الغلاف (الجهة اليسرى بلون الكوفر المتناسق، والجهة اليمنى أسود ناعم مثل FlixVision)
-     */
     private fun extractFlixVisionPalette(bitmap: Bitmap): Pair<Int, Int> {
         return try {
             val scaled = Bitmap.createScaledBitmap(bitmap, 40, 40, false)
@@ -440,7 +456,6 @@ class ContentDetailActivity : AppCompatActivity() {
                     (bSum / weightTotal).toInt().coerceIn(0, 255)
                 )
                 Color.colorToHSV(baseColor, hsv)
-                // توازن دقيق للإشباع والإضاءة ليطابق لقطة FlixVision (The Invite / Bad Apples)
                 hsv[1] = hsv[1].coerceIn(0.45f, 0.78f)
                 hsv[2] = hsv[2].coerceIn(0.32f, 0.44f)
                 val leftBrightColor = Color.HSVToColor(hsv)
@@ -454,7 +469,7 @@ class ContentDetailActivity : AppCompatActivity() {
     }
 
     /**
-     * أنيميشن استخراج اللون خلال أول 3 ثوانٍ (3000ms) بنعومة تامة، ثم التوقف والاستقرار بدون أي قفزة
+     * أنيميشن استخراج اللون الهادئة والواضحة (7.2 ثوانٍ بمنحنى انسيابي متدرج تحس بحركته دون سرعة مفاجئة)
      */
     private fun startCoverColorExtractionAnimation(targetLeftColor: Int, targetRightColor: Int) {
         colorExtractionAnimator?.cancel()
@@ -462,6 +477,7 @@ class ContentDetailActivity : AppCompatActivity() {
         val evaluator = ArgbEvaluator()
         val startLeft = FLIX_INITIAL_LEFT_COLOR
         val startRight = FLIX_INITIAL_RIGHT_COLOR
+        val midBridgeLeft = ColorUtils.blendARGB(startLeft, targetLeftColor, 0.45f)
 
         currentLeftBrightColor = startLeft
         currentRightDarkColor = startRight
@@ -472,11 +488,16 @@ class ContentDetailActivity : AppCompatActivity() {
         )
 
         colorExtractionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 2800L
-            interpolator = DecelerateInterpolator(1.5f)
+            startDelay = 180L
+            duration = 7200L
+            interpolator = AccelerateDecelerateInterpolator()
             addUpdateListener { va ->
                 val f = va.animatedFraction
-                val liveLeft = evaluator.evaluate(f, startLeft, targetLeftColor) as Int
+                val liveLeft = if (f < 0.45f) {
+                    evaluator.evaluate(f / 0.45f, startLeft, midBridgeLeft) as Int
+                } else {
+                    evaluator.evaluate((f - 0.45f) / 0.55f, midBridgeLeft, targetLeftColor) as Int
+                }
                 val liveRight = evaluator.evaluate(f, startRight, targetRightColor) as Int
                 currentLeftBrightColor = liveLeft
                 currentRightDarkColor = liveRight
@@ -490,9 +511,7 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    @SuppressLint("ClickableViewAccessibility")
     private fun buildPrimeTvDetailLayout() {
-        // وسط الكوفر يبقى صافياً تماماً، والتدرج السفلي يبدأ بنعومة عند 175dp ويندمج 100% عند نهاية اسم الفيلم (295dp)
         fullScreenAmbientDrawable = FlixVisionFullScreenAmbientDrawable(
             coverHeightPx = dpF(365f),
             bottomFadeStartAtRestPx = dpF(175f),
@@ -509,7 +528,6 @@ class ContentDetailActivity : AppCompatActivity() {
             )
         }
 
-        // 1. الكوفر الثابت في الأعلى (365dp)
         heroBackdropFixedContainer = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -526,29 +544,8 @@ class ContentDetailActivity : AppCompatActivity() {
             scaleType = ImageView.ScaleType.CENTER_CROP
         }
         heroBackdropFixedContainer.addView(ivHeroBackdrop)
-
-        playTransitionOverlay = FrameLayout(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            setBackgroundColor("#77000000".toColorInt())
-            alpha = 0f
-            visibility = View.GONE
-        }
-        ivPlayTransitionPulse = ImageView(this).apply {
-            setImageDrawable(VectorIcons.createPlayPauseIcon(this@ContentDetailActivity, isPlaying = false))
-            background = makeRoundedBg("#E6FFFFFF".toColorInt(), 36f)
-            ImageViewCompat.setImageTintList(this, ColorStateList.valueOf("#08090E".toColorInt()))
-            setPadding(dp(18), dp(18), dp(16), dp(18))
-            layoutParams = FrameLayout.LayoutParams(dp(64), dp(64), Gravity.CENTER)
-        }
-        playTransitionOverlay.addView(ivPlayTransitionPulse)
-        heroBackdropFixedContainer.addView(playTransitionOverlay)
-
         rootFrameWrapper.addView(heroBackdropFixedContainer)
 
-        // 2. طبقة الألوان الديناميكية الموحدة (تندمج مع أسفل الكوفر وجوانبه اليمنى واليسرى بدون أي خط فاصل)
         vFullDynamicAmbientBg = View(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -558,7 +555,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
         rootFrameWrapper.addView(vFullDynamicAmbientBg)
 
-        // 3. العمود الرئيسي
         rootVerticalLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.TRANSPARENT)
@@ -576,477 +572,8 @@ class ContentDetailActivity : AppCompatActivity() {
         }
         rootFrameWrapper.addView(headlessSnifferWebView)
 
-        // =========================================================================
-        // A. MOVIE & SERIES INLINE PLAYER (بدون أي فراغ علوي)
-        // =========================================================================
-        playerContainer = FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK)
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(210)
-            ).apply {
-                topMargin = 0
-                bottomMargin = 0
-            }
-        }
+        rootVerticalLayout.addView(moviePlayerController.buildPlayerView())
 
-        playerView = PlayerView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                Gravity.TOP
-            )
-            useController = false
-            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
-        }
-        playerContainer.addView(playerView)
-
-        tvSubtitleOverlay = TextView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            ).apply {
-                setMargins(dp(18), 0, dp(18), dp(32))
-            }
-            gravity = Gravity.CENTER
-            textSize = 15f
-            typeface = fontProductBold
-            setTextColor(Color.WHITE)
-            setShadowLayer(8f, 0f, 3f, Color.BLACK)
-            setPadding(dp(10), dp(4), dp(10), dp(4))
-            visibility = View.GONE
-        }
-        playerContainer.addView(tvSubtitleOverlay)
-
-        loadingContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            )
-        }
-        loadingSpinner = ProgressBar(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
-            indeterminateTintList = ColorStateList.valueOf("#E50914".toColorInt())
-        }
-        tvLoadingStatus = TextView(this).apply {
-            text = "Loading 1080p Stream..."
-            setTextColor("#E2E8F0".toColorInt())
-            textSize = 11.5f
-            typeface = fontProductBold
-            setPadding(0, dp(6), 0, 0)
-        }
-        loadingContainer.addView(loadingSpinner)
-        loadingContainer.addView(tvLoadingStatus)
-        playerContainer.addView(loadingContainer)
-
-        tvSeekFeedbackBadge = TextView(this).apply {
-            text = "+15s"
-            setTextColor(Color.WHITE)
-            textSize = 12.5f
-            typeface = fontProductBold
-            background = makeRoundedBg("#B3000000".toColorInt(), 20f, "#66FFFFFF".toColorInt(), 1f)
-            setPadding(dp(14), dp(5), dp(14), dp(5))
-            visibility = View.GONE
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            ).apply {
-                topMargin = dp(50)
-            }
-        }
-        playerContainer.addView(tvSeekFeedbackBadge)
-
-        btnSkipIntro = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#D912151E".toColorInt(), 20f, "#CCFFFFFF".toColorInt(), 1.2f)
-            setPadding(dp(14), dp(7), dp(12), dp(7))
-            visibility = View.GONE
-            elevation = dpF(6f)
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.END
-            ).apply {
-                setMargins(0, 0, dp(14), dp(44))
-            }
-            setOnClickListener {
-                val exo = playerEngine.player ?: return@setOnClickListener
-                hasSkippedIntroForCurrentMedia = true
-                val target = max(exo.currentPosition + 80_000L, INTRO_END_MS)
-                exo.seekTo(target.coerceAtMost(exo.duration.coerceAtLeast(target)))
-                animate().alpha(0f).translationX(dpF(20f)).setDuration(200L).withEndAction {
-                    visibility = View.GONE
-                    alpha = 1f
-                    translationX = 0f
-                }.start()
-                showSeekFeedbackToast("Intro Skipped")
-            }
-        }
-        val tvSkipIntroLabel = TextView(this).apply {
-            text = "Skip Intro"
-            setTextColor(Color.WHITE)
-            textSize = 12f
-            typeface = fontProductBold
-        }
-        val ivSkipIntroArrow = ImageView(this).apply {
-            setImageDrawable(VectorIcons.createSkipNextIcon(this@ContentDetailActivity, Color.WHITE))
-            layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply {
-                marginStart = dp(5)
-            }
-        }
-        btnSkipIntro.addView(tvSkipIntroLabel)
-        btnSkipIntro.addView(ivSkipIntroArrow)
-        AnimUtils.attachPressBounce(btnSkipIntro)
-        playerContainer.addView(btnSkipIntro)
-
-        controlsOverlay = FrameLayout(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf("#B3000000".toColorInt(), "#4D000000".toColorInt(), "#CC000000".toColorInt())
-            )
-            visibility = View.VISIBLE
-        }
-
-        val topBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(10), dp(10), dp(12), dp(6))
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP
-            )
-        }
-
-        btnMinimizePlayer = ImageView(this).apply {
-            setImageResource(R.drawable.ic_back_chevron)
-            background = makeRoundedBg("#40FFFFFF".toColorInt(), 18f)
-            setPadding(dp(7), dp(7), dp(8), dp(7))
-            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
-            setOnClickListener {
-                if (isFullscreen) {
-                    applyFullscreenState(false)
-                } else {
-                    switchToPosterShowcaseMode()
-                }
-            }
-        }
-
-        tvTopPlayerTitle = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            typeface = fontProductBold
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setPadding(dp(10), 0, dp(8), 0)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
-        btnTopLock = ImageView(this).apply {
-            setImageDrawable(VectorIcons.createLockIcon(this@ContentDetailActivity, Color.WHITE, locked = false))
-            background = makeRoundedBg("#33FFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(7), dp(7), dp(7), dp(7))
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginEnd = dp(6) }
-            setOnClickListener {
-                isControlsLocked = true
-                controlsOverlay.visibility = View.GONE
-                btnUnlockScreenOnly.visibility = View.VISIBLE
-            }
-        }
-
-        btnTopServerHd = TextView(this).apply {
-            text = "FHD"
-            textSize = 11f
-            typeface = fontProductBold
-            setTextColor(Color.WHITE)
-            background = makeRoundedBg("#33E50914".toColorInt(), 8f, "#99FF4757".toColorInt(), 1f)
-            setPadding(dp(9), dp(4), dp(9), dp(4))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginEnd = dp(6) }
-            setOnClickListener { showPrimeServersAndQualityPopup() }
-        }
-
-        btnTopSubtitles = ImageView(this).apply {
-            setImageDrawable(VectorIcons.createSubtitlesCcIcon(this@ContentDetailActivity, Color.WHITE))
-            background = makeRoundedBg("#33FFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
-            setOnClickListener { showSubtitlesDialog() }
-        }
-
-        topBar.addView(btnMinimizePlayer)
-        topBar.addView(tvTopPlayerTitle)
-        topBar.addView(btnTopLock)
-        topBar.addView(btnTopServerHd)
-        topBar.addView(btnTopSubtitles)
-        controlsOverlay.addView(topBar)
-
-        val centerControlsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            )
-        }
-
-        btnRewind15 = ImageView(this).apply {
-            setImageDrawable(VectorIcons.createSeek15Icon(this@ContentDetailActivity, isForward = false))
-            background = makeRoundedBg("#660A0C12".toColorInt(), 24f, "#50FFFFFF".toColorInt(), 1f)
-            setPadding(dp(9), dp(9), dp(9), dp(9))
-            layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
-                marginEnd = dp(24)
-            }
-            setOnClickListener {
-                resetAutoHide()
-                seekByDeltaMs(-15_000L, "-15s")
-            }
-        }
-
-        btnCenterPlayPause = ImageView(this).apply {
-            setImageDrawable(VectorIcons.createPlayPauseIcon(this@ContentDetailActivity, isPlaying = true))
-            background = makeRoundedBg("#CC0B0D14".toColorInt(), 30f, "#EEFFFFFF".toColorInt(), 1.4f)
-            setPadding(dp(13), dp(13), dp(13), dp(13))
-            layoutParams = LinearLayout.LayoutParams(dp(54), dp(54))
-            setOnClickListener {
-                resetAutoHide()
-                if (playerEngine.isPlaying()) {
-                    playerEngine.pause()
-                    updatePlayPauseVectorIcon(false)
-                } else {
-                    playerEngine.resume()
-                    updatePlayPauseVectorIcon(true)
-                }
-            }
-        }
-
-        btnForward15 = ImageView(this).apply {
-            setImageDrawable(VectorIcons.createSeek15Icon(this@ContentDetailActivity, isForward = true))
-            background = makeRoundedBg("#660A0C12".toColorInt(), 24f, "#50FFFFFF".toColorInt(), 1f)
-            setPadding(dp(9), dp(9), dp(9), dp(9))
-            layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply {
-                marginStart = dp(24)
-            }
-            setOnClickListener {
-                resetAutoHide()
-                seekByDeltaMs(15_000L, "+15s")
-            }
-        }
-
-        AnimUtils.attachPressBounce(btnRewind15)
-        AnimUtils.attachPressBounce(btnCenterPlayPause)
-        AnimUtils.attachPressBounce(btnForward15)
-
-        centerControlsRow.addView(btnRewind15)
-        centerControlsRow.addView(btnCenterPlayPause)
-        centerControlsRow.addView(btnForward15)
-        controlsOverlay.addView(centerControlsRow)
-
-        val bottomPlayerBar = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(4), dp(12), dp(8))
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM
-            )
-        }
-
-        val seekRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        tvElapsed = TextView(this).apply {
-            text = "0:00"
-            setTextColor(Color.WHITE)
-            textSize = 11.5f
-            typeface = fontProductBold
-        }
-
-        seekBar = SeekBar(this).apply {
-            max = 1000
-            progress = 0
-            progressTintList = ColorStateList.valueOf("#E50914".toColorInt())
-            thumbTintList = ColorStateList.valueOf(Color.WHITE)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
-                    if (fromUser) resetAutoHide()
-                }
-                override fun onStartTrackingTouch(s: SeekBar?) {
-                    isUserSeeking = true
-                    resetAutoHide()
-                }
-                override fun onStopTrackingTouch(s: SeekBar?) {
-                    isUserSeeking = false
-                    val exo = playerEngine.player ?: return
-                    val dur = exo.duration
-                    if (dur > 0) {
-                        exo.seekTo((dur * (s?.progress ?: 0)) / 1000L)
-                    }
-                }
-            })
-        }
-
-        tvDuration = TextView(this).apply {
-            text = "--:--"
-            setTextColor("#CBD5E1".toColorInt())
-            textSize = 11.5f
-            typeface = fontProductBold
-        }
-
-        btnInlineFullscreen = ImageView(this).apply {
-            setImageDrawable(VectorIcons.createFullscreenIcon(this@ContentDetailActivity, isFullscreen = false))
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).apply {
-                marginStart = dp(6)
-            }
-            setOnClickListener { applyFullscreenState(!isFullscreen) }
-        }
-
-        seekRow.addView(tvElapsed)
-        seekRow.addView(seekBar)
-        seekRow.addView(tvDuration)
-        seekRow.addView(btnInlineFullscreen)
-        bottomPlayerBar.addView(seekRow)
-
-        fullscreenBottomActionsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            visibility = View.GONE
-            setPadding(0, dp(6), 0, 0)
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        btnBottomSubtitles = createPlayerBottomActionChip(
-            icon = VectorIcons.createSubtitlesCcIcon(this, Color.WHITE),
-            label = "Subtitles"
-        ) { showSubtitlesDialog() }
-
-        tvBottomSpeedLabel = TextView(this).apply {
-            text = "Speed: 1x"
-            setTextColor(Color.WHITE)
-            textSize = 12f
-            typeface = fontProductBold
-        }
-        btnBottomSpeed = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#26FFFFFF".toColorInt(), 16f, "#40FFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(12), dp(5), dp(12), dp(5))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                marginStart = dp(8)
-                marginEnd = dp(8)
-            }
-            addView(tvBottomSpeedLabel)
-            setOnClickListener { showPlaybackSpeedDialog() }
-        }
-
-        btnBottomAspect = createPlayerBottomActionChip(
-            icon = VectorIcons.createAspectRatioIcon(this, Color.WHITE),
-            label = "Scale"
-        ) {
-            resizeModeIndex = (resizeModeIndex + 1) % resizeModes.size
-            playerView.resizeMode = resizeModes[resizeModeIndex]
-        }
-
-        fullscreenBottomActionsRow.addView(btnBottomSubtitles)
-        fullscreenBottomActionsRow.addView(btnBottomSpeed)
-        fullscreenBottomActionsRow.addView(btnBottomAspect)
-        bottomPlayerBar.addView(fullscreenBottomActionsRow)
-
-        controlsOverlay.addView(bottomPlayerBar)
-        playerContainer.addView(controlsOverlay)
-
-        btnUnlockScreenOnly = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#CC000000".toColorInt(), 20f, "#99FFFFFF".toColorInt(), 1f)
-            setPadding(dp(12), dp(7), dp(14), dp(7))
-            visibility = View.GONE
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.END
-            ).apply { setMargins(dp(16), dp(16), dp(16), dp(16)) }
-            val ivLock = ImageView(this@ContentDetailActivity).apply {
-                setImageDrawable(VectorIcons.createLockIcon(this@ContentDetailActivity, Color.WHITE, locked = true))
-                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(6) }
-            }
-            val tvUnlock = TextView(this@ContentDetailActivity).apply {
-                text = "Tap to Unlock"
-                setTextColor(Color.WHITE)
-                textSize = 12f
-                typeface = fontProductBold
-            }
-            addView(ivLock)
-            addView(tvUnlock)
-            setOnClickListener {
-                isControlsLocked = false
-                visibility = View.GONE
-                toggleControlsOverlay()
-            }
-        }
-        playerContainer.addView(btnUnlockScreenOnly)
-
-        val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                if (isControlsLocked) {
-                    btnUnlockScreenOnly.isVisible = !btnUnlockScreenOnly.isVisible
-                } else {
-                    toggleControlsOverlay()
-                }
-                return true
-            }
-
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                if (!isControlsLocked) {
-                    val width = playerView.width.coerceAtLeast(1)
-                    if (e.x < width * 0.45f) {
-                        seekByDeltaMs(-15_000L, "-15s")
-                    } else if (e.x > width * 0.55f) {
-                        seekByDeltaMs(15_000L, "+15s")
-                    }
-                }
-                return true
-            }
-        })
-        playerView.setOnTouchListener { _, ev ->
-            gestureDetector.onTouchEvent(ev)
-            true
-        }
-        controlsOverlay.setOnClickListener { toggleControlsOverlay() }
-        rootVerticalLayout.addView(playerContainer)
-
-        // =========================================================================
-        // B. SCROLLABLE CONTENT SHEET OVER HERO COVER
-        // =========================================================================
         detailsScrollView = ScrollView(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
             layoutParams = LinearLayout.LayoutParams(
@@ -1105,7 +632,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
         contentSheetColumn.addView(tvMovieGenresLine)
 
-        // 1. البطاقات الصغيرة (Rating | PG-13 | Year | Runtime | FHD)
         val pillsScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_NEVER
@@ -1123,7 +649,6 @@ class ContentDetailActivity : AppCompatActivity() {
         pillsScroll.addView(metaPillsRow)
         contentSheetColumn.addView(pillsScroll)
 
-        // 2. صف الأزرار الأربعة بالترتيب: Play → Party → Trailer → Download (كلها بيضاء مثل Play)
         val primaryActionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1131,13 +656,12 @@ class ContentDetailActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
-                bottomMargin = dp(16)
+                bottomMargin = dp(14)
             }
         }
 
         val darkBtnContentTint = "#16181E".toColorInt()
 
-        // 1) زر PLAY
         btnPlayNowMain = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -1148,7 +672,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 marginEnd = dp(8)
             }
             setOnClickListener {
-                triggerPlayTransitionAndStart()
+                activateInlinePlayerSmoothly()
             }
         }
         val ivPlayIcon = ImageView(this).apply {
@@ -1168,7 +692,6 @@ class ContentDetailActivity : AppCompatActivity() {
         btnPlayNowMain.addView(ivPlayIcon)
         btnPlayNowMain.addView(tvPlayNowBtnLabel)
 
-        // 2) زر Party
         btnWatchPartyBox = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -1197,7 +720,6 @@ class ContentDetailActivity : AppCompatActivity() {
         btnWatchPartyBox.addView(ivPartyIcon)
         btnWatchPartyBox.addView(tvPartyLabel)
 
-        // 3) زر Trailer
         btnTrailerBox = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -1234,7 +756,6 @@ class ContentDetailActivity : AppCompatActivity() {
         btnTrailerBox.addView(ivTrailerIcon)
         btnTrailerBox.addView(tvTrailerLabel)
 
-        // 4) زر Download (أيقونة مكبرة 23dp بدون نص)
         btnDownloadBox = FrameLayout(this).apply {
             setBackgroundResource(R.drawable.bg_btn_play_white_luxury)
             elevation = dpF(3f)
@@ -1261,7 +782,6 @@ class ContentDetailActivity : AppCompatActivity() {
         primaryActionsRow.addView(btnDownloadBox)
         contentSheetColumn.addView(primaryActionsRow)
 
-        // 3. قسم المسلسلات (Seasons & Episodes)
         seriesContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -1284,7 +804,7 @@ class ContentDetailActivity : AppCompatActivity() {
         seriesContainer.addView(rvEpisodes)
         contentSheetColumn.addView(seriesContainer)
 
-        // 4. القصة (Overview) مختصرة مع "... More"
+        // القصة مباشرة تحت الأزرار بدون عنوان Overview كما طلبت
         tvOverviewText = TextView(this).apply {
             setTextColor("#F1F5F9".toColorInt())
             textSize = 14f
@@ -1295,7 +815,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
         contentSheetColumn.addView(tvOverviewText)
 
-        // 5. سطرا DIRECTOR و WRITTEN BY باللون الأبيض
         crewMetadataContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -1351,7 +870,6 @@ class ContentDetailActivity : AppCompatActivity() {
         crewMetadataContainer.addView(rowWriters)
         contentSheetColumn.addView(crewMetadataContainer)
 
-        // 6. قسم CAST
         tvCastHeader = TextView(this).apply {
             text = "CAST"
             setTextColor(Color.WHITE)
@@ -1370,7 +888,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
         contentSheetColumn.addView(rvCast)
 
-        // 7. قسم RECOMMENDED
         tvRecommendedHeader = TextView(this).apply {
             text = "RECOMMENDED"
             setTextColor(Color.WHITE)
@@ -1389,7 +906,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
         contentSheetColumn.addView(rvRecommended)
 
-        // 8. قسم YOU MAY ALSO LIKE
         tvMoreLikeHeader = TextView(this).apply {
             text = "YOU MAY ALSO LIKE"
             setTextColor(Color.WHITE)
@@ -1436,9 +952,16 @@ class ContentDetailActivity : AppCompatActivity() {
             setPadding(dp(9), dp(9), dp(9), dp(9))
             layoutParams = FrameLayout.LayoutParams(dp(40), dp(40), Gravity.END or Gravity.CENTER_VERTICAL)
             setOnClickListener {
-                val id = currentVod?.id ?: return@setOnClickListener
-                OttRepository.toggleFavorite(id, this@ContentDetailActivity)
-                updateFavoriteIcon(id)
+                val vod = currentVod ?: return@setOnClickListener
+                OttRepository.toggleFavorite(vod.id, this@ContentDetailActivity)
+                val nowFav = OttRepository.isChannelFavorite(vod.id)
+                updateFavoriteIcon(vod.id)
+                val msg = if (nowFav) {
+                    "Added \"${vod.title}\" to Favorites"
+                } else {
+                    "Removed \"${vod.title}\" from Favorites"
+                }
+                Toast.makeText(this@ContentDetailActivity, msg, Toast.LENGTH_SHORT).show()
             }
         }
         AnimUtils.attachPressBounce(btnTopBackHero)
@@ -1621,6 +1144,9 @@ class ContentDetailActivity : AppCompatActivity() {
         actorPageOverlay.addView(gridContainer)
     }
 
+    /**
+     * فتح صفحة الممثل بأنيميشن دخول سينمائية سلسة (Slide Up + Fade)
+     */
     private fun openFlixVisionActorPage(actor: CastMember) {
         currentVod?.let { vod ->
             navigationBackStack.addLast(
@@ -1646,9 +1172,16 @@ class ContentDetailActivity : AppCompatActivity() {
             ivActorPageAvatar.setImageDrawable(VectorIcons.createPersonAvatarPlaceholder(this))
         }
 
+        actorPageOverlay.animate().cancel()
         actorPageOverlay.alpha = 0f
+        actorPageOverlay.translationY = dpF(36f)
         actorPageOverlay.visibility = View.VISIBLE
-        actorPageOverlay.animate().alpha(1f).setDuration(200L).start()
+        actorPageOverlay.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(280L)
+            .setInterpolator(DecelerateInterpolator(1.5f))
+            .start()
 
         val cached = actorCreditsCache[actor.id]
         if (cached != null) {
@@ -1720,7 +1253,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 )
             }
             actorPageOverlay.visibility = View.GONE
-            loadVodItemIntoScreen(clickedMovie, resetScroll = true)
+            loadVodItemIntoScreen(clickedMovie, resetScroll = true, animatePageEntry = true)
         }
 
         if (restoreScrollPos > 0) {
@@ -1747,14 +1280,30 @@ class ContentDetailActivity : AppCompatActivity() {
         actorPageSpinner.visibility = View.GONE
         updateActorTabsCounts(state.credits)
         refreshActorOverlayGrid(restoreScrollPos = state.firstVisibleGridPos)
-        actorPageOverlay.alpha = 1f
+        actorPageOverlay.animate().cancel()
+        actorPageOverlay.alpha = 0f
+        actorPageOverlay.translationY = dpF(28f)
         actorPageOverlay.visibility = View.VISIBLE
+        actorPageOverlay.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(250L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
     }
 
     private fun closeActorPageOverlayAndRestoreIfNeeded() {
-        actorPageOverlay.animate().alpha(0f).setDuration(160L).withEndAction {
-            actorPageOverlay.visibility = View.GONE
-        }.start()
+        actorPageOverlay.animate().cancel()
+        actorPageOverlay.animate()
+            .alpha(0f)
+            .translationY(dpF(32f))
+            .setDuration(220L)
+            .setInterpolator(DecelerateInterpolator())
+            .withEndAction {
+                actorPageOverlay.visibility = View.GONE
+                actorPageOverlay.translationY = 0f
+            }
+            .start()
 
         val topEntry = navigationBackStack.lastOrNull()
         if (topEntry is NavHistoryEntry.MovieState && topEntry.vod.id == currentVod?.id) {
@@ -1762,40 +1311,6 @@ class ContentDetailActivity : AppCompatActivity() {
             detailsScrollView.post {
                 detailsScrollView.scrollTo(0, saved.scrollY)
             }
-        }
-    }
-
-    private fun createPlayerBottomActionChip(
-        icon: Drawable,
-        label: String,
-        onClick: () -> Unit
-    ): LinearLayout {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#26FFFFFF".toColorInt(), 16f, "#40FFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(12), dp(5), dp(12), dp(5))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                marginStart = dp(6)
-                marginEnd = dp(6)
-            }
-
-            val iv = ImageView(this@ContentDetailActivity).apply {
-                setImageDrawable(icon)
-                layoutParams = LinearLayout.LayoutParams(dp(15), dp(15)).apply { marginEnd = dp(6) }
-            }
-            val tv = TextView(this@ContentDetailActivity).apply {
-                text = label
-                setTextColor(Color.WHITE)
-                textSize = 12f
-                typeface = fontProductBold
-            }
-            addView(iv)
-            addView(tv)
-            setOnClickListener { onClick() }
         }
     }
 
@@ -1862,58 +1377,51 @@ class ContentDetailActivity : AppCompatActivity() {
         renderOverviewWithInlineMore(fullOverviewRawText, isOverviewExpanded)
     }
 
-    private fun triggerPlayTransitionAndStart() {
-        if (isPlayerModeActive) {
-            activateInlinePlayerAndStart()
-            return
-        }
-
-        playTransitionOverlay.visibility = View.VISIBLE
-        playTransitionOverlay.alpha = 0f
-        ivPlayTransitionPulse.scaleX = 0.65f
-        ivPlayTransitionPulse.scaleY = 0.65f
-
-        playTransitionOverlay.animate()
-            .alpha(1f)
-            .setDuration(180L)
-            .start()
-
-        ivPlayTransitionPulse.animate()
-            .scaleX(1.1f)
-            .scaleY(1.1f)
-            .setDuration(220L)
-            .setInterpolator(OvershootInterpolator(1.6f))
-            .withEndAction {
-                playTransitionOverlay.visibility = View.GONE
-                activateInlinePlayerAndStart()
-            }
-            .start()
-    }
-
-    private fun activateInlinePlayerAndStart() {
+    /**
+     * أنيميشن دخول سلسة للمشغل عند الضغط على PLAY وإخفاء زر PLAY أثناء التشغيل
+     */
+    private fun activateInlinePlayerSmoothly() {
         isPlayerModeActive = true
         fullScreenAmbientDrawable.setPlayerModeActive(true)
 
         val transition = TransitionSet().apply {
+            ordering = TransitionSet.ORDERING_TOGETHER
             addTransition(ChangeBounds())
             addTransition(Fade())
-            duration = 260L
-            interpolator = DecelerateInterpolator()
+            duration = 320L
+            interpolator = DecelerateInterpolator(1.5f)
         }
         TransitionManager.beginDelayedTransition(rootFrameWrapper, transition)
 
+        btnPlayNowMain.visibility = View.GONE
         heroBackdropFixedContainer.visibility = View.GONE
         heroTopActionsRow.visibility = View.GONE
         vHeroTopSpacer.visibility = View.GONE
-        playerContainer.visibility = View.VISIBLE
+
+        val pContainer = moviePlayerController.playerContainer
+        pContainer.alpha = 0f
+        pContainer.translationY = -dpF(18f)
+        pContainer.visibility = View.VISIBLE
+        pContainer.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(300L)
+            .setInterpolator(DecelerateInterpolator(1.4f))
+            .start()
+
         detailsScrollView.smoothScrollTo(0, 0)
 
         if (resolvedDirectStreams.isNotEmpty()) {
-            loadingContainer.visibility = View.GONE
-            updatePlayPauseVectorIcon(true)
-            playerEngine.playSources(playerView, resolvedDirectStreams.toList(), 0, pendingResumePositionMs)
+            moviePlayerController.setLoadingState(false)
+            moviePlayerController.updatePlayPauseVectorIcon(true)
+            playerEngine.playSources(
+                moviePlayerController.playerView,
+                resolvedDirectStreams.toList(),
+                0,
+                pendingResumePositionMs
+            )
         } else {
-            loadingContainer.visibility = View.VISIBLE
+            moviePlayerController.setLoadingState(true)
             val vod = currentVod ?: return
             if (providerTargets.isEmpty()) {
                 startStreamExtractionForEpisodeOrMovie(vod, selectedSeason, selectedEpisode, runWebViewNow = true)
@@ -1923,61 +1431,44 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun switchToPosterShowcaseMode() {
+    /**
+     * أنيميشن خروج سلسة للمشغل عند الضغط على Back وإظهار الكوفر وزر PLAY / RESUME الصحيح
+     */
+    private fun switchToPosterShowcaseMode(saveCurrentPlayerPos: Boolean) {
+        if (saveCurrentPlayerPos && isPlayerModeActive) {
+            playerEngine.player?.let { exo ->
+                if (exo.currentPosition > 5000L && exo.duration > 10000L) {
+                    pendingResumePositionMs = exo.currentPosition
+                    currentVod?.let { v ->
+                        SessionManager.saveWatchProgress(this, v, exo.currentPosition, exo.duration)
+                    }
+                }
+            }
+        }
         isPlayerModeActive = false
         playerEngine.pause()
+        moviePlayerController.updatePlayPauseVectorIcon(false)
         fullScreenAmbientDrawable.setPlayerModeActive(false)
 
         val transition = TransitionSet().apply {
+            ordering = TransitionSet.ORDERING_TOGETHER
             addTransition(ChangeBounds())
             addTransition(Fade())
-            duration = 260L
-            interpolator = DecelerateInterpolator()
+            duration = 300L
+            interpolator = DecelerateInterpolator(1.4f)
         }
         TransitionManager.beginDelayedTransition(rootFrameWrapper, transition)
 
-        playerContainer.visibility = View.GONE
+        moviePlayerController.playerContainer.visibility = View.GONE
         vHeroTopSpacer.visibility = View.VISIBLE
         heroBackdropFixedContainer.visibility = View.VISIBLE
         heroTopActionsRow.visibility = View.VISIBLE
+
+        btnPlayNowMain.visibility = View.VISIBLE
+        tvPlayNowBtnLabel.text = if (pendingResumePositionMs > 15_000L) "RESUME" else "PLAY"
+
         ivHeroBackdrop.alpha = 1f
         detailsScrollView.smoothScrollTo(0, 0)
-    }
-
-    private fun seekByDeltaMs(deltaMs: Long, badgeLabel: String) {
-        val exo = playerEngine.player ?: return
-        val dur = exo.duration
-        val target = (exo.currentPosition + deltaMs).coerceAtLeast(0L)
-        exo.seekTo(if (dur > 0) min(target, dur) else target)
-        showSeekFeedbackToast(badgeLabel)
-    }
-
-    private fun showSeekFeedbackToast(text: String) {
-        tvSeekFeedbackBadge.text = text
-        tvSeekFeedbackBadge.visibility = View.VISIBLE
-        tvSeekFeedbackBadge.alpha = 1f
-        tvSeekFeedbackBadge.scaleX = 0.85f
-        tvSeekFeedbackBadge.scaleY = 0.85f
-        tvSeekFeedbackBadge.animate().cancel()
-        tvSeekFeedbackBadge.animate()
-            .scaleX(1f)
-            .scaleY(1f)
-            .setDuration(150L)
-            .withEndAction {
-                tvSeekFeedbackBadge.animate()
-                    .alpha(0f)
-                    .setStartDelay(450L)
-                    .setDuration(200L)
-                    .withEndAction { tvSeekFeedbackBadge.visibility = View.GONE }
-                    .start()
-            }
-            .start()
-    }
-
-    private fun updatePlayPauseVectorIcon(isPlaying: Boolean) {
-        btnCenterPlayPause.setImageDrawable(
-            VectorIcons.createPlayPauseIcon(this, isPlaying = isPlaying)
-        )
     }
 
     private fun handleDirectMovieDownload() {
@@ -1985,7 +1476,7 @@ class ContentDetailActivity : AppCompatActivity() {
         if (!directUrl.isNullOrEmpty() && !directUrl.contains(".m3u8", ignoreCase = true)) {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(directUrl)))
         } else if (!directUrl.isNullOrEmpty()) {
-            Toast.makeText(this, "Stream Ready (${btnTopServerHd.text}) — Opening Downloader...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Opening External Downloader...", Toast.LENGTH_SHORT).show()
             runCatching {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(directUrl)))
             }
@@ -2078,19 +1569,22 @@ class ContentDetailActivity : AppCompatActivity() {
                     val subTrack = SubtitleTrack(
                         id = "stream_sync_${reqUrl.hashCode()}",
                         languageCode = if (isAr) "ar" else "en",
-                        languageLabel = if (isAr) "Arabic (100% Stream Synced)" else "English (100% Stream Synced)",
+                        languageLabel = if (isAr) "Arabic (Stream Synced)" else "English (Stream Synced)",
                         releaseName = "Direct.Stream.Embedded.VTT",
                         url = reqUrl
                     )
                     runOnUiThread {
-                        if (availableSubtitles.none { it.url == reqUrl }) {
-                            availableSubtitles = listOf(subTrack) + availableSubtitles
-                            if (isAr || activeSubtitleCues.isEmpty()) {
+                        val existing = moviePlayerController.getAvailableSubtitles()
+                        if (existing.none { it.url == reqUrl }) {
+                            val updated = listOf(subTrack) + existing
+                            moviePlayerController.updateAvailableSubtitles(updated)
+                            if (isAr || moviePlayerController.getActiveSubtitleCues().isEmpty()) {
                                 lifecycleScope.launch {
-                                    val cues = OttRepository.downloadAndParseSubtitles(subTrack)
+                                    val cues = withContext(Dispatchers.IO) {
+                                        OttRepository.downloadAndParseSubtitles(subTrack)
+                                    }
                                     if (cues.isNotEmpty()) {
-                                        activeSubtitleCues = cues
-                                        selectedSubtitleId = subTrack.id
+                                        moviePlayerController.updateAvailableSubtitles(updated, cues, subTrack.id)
                                     }
                                 }
                             }
@@ -2125,9 +1619,21 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * قفل السيرفر الأساسي ومنع أي إعادة تهيئة مزدوجة كانت تسبب رجوع الفيديو بـ 2 ثانية
+     */
     private fun onRawStreamIntercepted(url: String, referer: String, origin: String, userAgent: String) {
         runOnUiThread {
-            val providerLabel = providerTargets.getOrNull(currentProviderIndex)?.label ?: "Prime Server 1080p"
+            if (hasLockedPrimaryStream) return@runOnUiThread
+            hasLockedPrimaryStream = true
+
+            snifferTimeoutJob?.cancel()
+            headlessSnifferWebView.stopLoading()
+            headlessSnifferWebView.loadUrl("about:blank")
+            headlessSnifferWebView.onPause()
+            headlessSnifferWebView.pauseTimers()
+
+            val providerLabel = providerTargets.getOrNull(currentProviderIndex)?.label ?: "Server 1"
             val newDirectSource = StreamSource(
                 label = providerLabel,
                 url = url,
@@ -2137,22 +1643,17 @@ class ContentDetailActivity : AppCompatActivity() {
                 isDirectStream = true
             )
 
-            if (!hasLockedPrimaryStream) {
-                hasLockedPrimaryStream = true
-                snifferTimeoutJob?.cancel()
-                headlessSnifferWebView.stopLoading()
-                headlessSnifferWebView.loadUrl("about:blank")
-                headlessSnifferWebView.onPause()
-                headlessSnifferWebView.pauseTimers()
+            resolvedDirectStreams.clear()
+            resolvedDirectStreams.add(newDirectSource)
+            moviePlayerController.setServerBadgeLabel(providerLabel)
 
-                resolvedDirectStreams.add(0, newDirectSource)
-                tvLoadingStatus.text = "Starting 1080p Playback..."
-                if (isPlayerModeActive) {
-                    playerEngine.playSources(playerView, resolvedDirectStreams.toList(), 0, pendingResumePositionMs)
-                }
-            } else {
-                resolvedDirectStreams.add(newDirectSource)
-                playerEngine.appendBackupSourcesSilently(listOf(newDirectSource))
+            if (isPlayerModeActive) {
+                playerEngine.playSources(
+                    moviePlayerController.playerView,
+                    resolvedDirectStreams.toList(),
+                    0,
+                    pendingResumePositionMs
+                )
             }
         }
     }
@@ -2166,9 +1667,6 @@ class ContentDetailActivity : AppCompatActivity() {
         snifferTimeoutJob?.cancel()
         streamFetchJob?.cancel()
         hasLockedPrimaryStream = false
-        hasSkippedIntroForCurrentMedia = false
-        btnSkipIntro.visibility = View.GONE
-        selectedQualityHeight = null
         playerEngine.pauseAndReleaseSocket()
         resolvedDirectStreams.clear()
         providerTargets = emptyList()
@@ -2178,13 +1676,7 @@ class ContentDetailActivity : AppCompatActivity() {
         headlessSnifferWebView.onPause()
         headlessSnifferWebView.pauseTimers()
 
-        tvElapsed.text = "0:00"
-        tvDuration.text = "--:--"
-        seekBar.progress = 0
-        tvSubtitleOverlay.text = ""
-        tvSubtitleOverlay.visibility = View.GONE
-        loadingContainer.visibility = if (isPlayerModeActive) View.VISIBLE else View.GONE
-        tvLoadingStatus.text = "Connecting to fastest server..."
+        moviePlayerController.resetForNewStream(isPlayerModeActive)
 
         streamFetchJob = lifecycleScope.launch {
             val panelServers = withContext(Dispatchers.IO) {
@@ -2197,14 +1689,16 @@ class ContentDetailActivity : AppCompatActivity() {
                     episode = episode,
                     onFastestDirectReady = { fastestServer ->
                         runOnUiThread {
-                            val idx = providerTargets.indexOfFirst { it.label == fastestServer.label }.coerceAtLeast(0)
-                            currentProviderIndex = idx
-                            onRawStreamIntercepted(
-                                url = fastestServer.url,
-                                referer = fastestServer.referer,
-                                origin = fastestServer.origin,
-                                userAgent = fastestServer.userAgent
-                            )
+                            if (!hasLockedPrimaryStream) {
+                                val idx = providerTargets.indexOfFirst { it.label == fastestServer.label }.coerceAtLeast(0)
+                                currentProviderIndex = idx
+                                onRawStreamIntercepted(
+                                    url = fastestServer.url,
+                                    referer = fastestServer.referer,
+                                    origin = fastestServer.origin,
+                                    userAgent = fastestServer.userAgent
+                                )
+                            }
                         }
                     }
                 )
@@ -2212,10 +1706,11 @@ class ContentDetailActivity : AppCompatActivity() {
             providerTargets = panelServers
 
             if (panelServers.isEmpty()) {
-                tvLoadingStatus.text = "No active servers in Admin Panel"
-                loadingSpinner.visibility = View.GONE
+                moviePlayerController.setLoadingState(false)
                 return@launch
             }
+
+            moviePlayerController.setServerBadgeLabel(panelServers.first().label)
 
             if (!hasLockedPrimaryStream) {
                 val firstDirectIdx = panelServers.indexOfFirst { it.isDirectStream }
@@ -2234,16 +1729,18 @@ class ContentDetailActivity : AppCompatActivity() {
         if (providerTargets.isEmpty() || hasLockedPrimaryStream) return
         currentProviderIndex = index.coerceIn(0, providerTargets.lastIndex)
         val target = providerTargets[currentProviderIndex]
-        tvLoadingStatus.text = "Connecting to ${target.label}..."
+        moviePlayerController.setServerBadgeLabel(target.label)
+        moviePlayerController.setLoadingState(isPlayerModeActive)
 
         headlessSnifferWebView.onResume()
         headlessSnifferWebView.resumeTimers()
         val headers = if (target.referer.isNotEmpty()) mapOf("Referer" to target.referer) else emptyMap()
         headlessSnifferWebView.loadUrl(target.url, headers)
 
+        // إذا لم يستجب السيرفر خلال 5.5 ثوانٍ، يتحول تلقائياً للسيرفر التالي
         snifferTimeoutJob?.cancel()
         snifferTimeoutJob = lifecycleScope.launch {
-            delay(7000L)
+            delay(5500L)
             if (!hasLockedPrimaryStream && !playerEngine.isPlaying()) {
                 tryNextProviderInBackground()
             }
@@ -2254,7 +1751,15 @@ class ContentDetailActivity : AppCompatActivity() {
         if (providerTargets.isEmpty()) return
         hasLockedPrimaryStream = false
         val nextIdx = (currentProviderIndex + 1) % providerTargets.size
-        loadProviderInHeadlessSniffer(nextIdx)
+        val nextServer = providerTargets[nextIdx]
+        currentProviderIndex = nextIdx
+        moviePlayerController.setServerBadgeLabel(nextServer.label)
+
+        if (nextServer.isDirectStream) {
+            onRawStreamIntercepted(nextServer.url, nextServer.referer, nextServer.origin, nextServer.userAgent)
+        } else {
+            loadProviderInHeadlessSniffer(nextIdx)
+        }
     }
 
     private fun loadPosterAndExtractPalette(vod: VodItem) {
@@ -2289,31 +1794,51 @@ class ContentDetailActivity : AppCompatActivity() {
             })
     }
 
+    /**
+     * تحميل الفيلم في الواجهة مع إصلاح مشكلة RESUME + إضافة أنيميشن دخول ناعمة عند التنقل بين الأفلام
+     */
     private fun loadVodItemIntoScreen(
         vod: VodItem,
         resetScroll: Boolean = true,
-        targetScrollY: Int = 0
+        targetScrollY: Int = 0,
+        animatePageEntry: Boolean = false
     ) {
         detailsFetchJob?.cancel()
+
+        // حفظ تقدم الفيلم القديم فقط إذا كان المشغل مفتوحاً قبل التبديل للفيلم الجديد
+        val previousVod = currentVod
+        if (previousVod != null && previousVod.id != vod.id && isPlayerModeActive) {
+            playerEngine.player?.let { exo ->
+                if (exo.currentPosition > 5000L && exo.duration > 10000L) {
+                    SessionManager.saveWatchProgress(this, previousVod, exo.currentPosition, exo.duration)
+                }
+            }
+        }
+
+        // إيقاف المشغل أولاً قبل تعيين الفيلم الجديد حتى لا ينتقل موضع الفيلم القديم للفيلم الجديد!
+        isPlayerModeActive = false
+        playerEngine.pauseAndReleaseSocket()
+        moviePlayerController.playerContainer.visibility = View.GONE
+        vHeroTopSpacer.visibility = View.VISIBLE
+        heroBackdropFixedContainer.visibility = View.VISIBLE
+        heroTopActionsRow.visibility = View.VISIBLE
+        btnPlayNowMain.visibility = View.VISIBLE
+        fullScreenAmbientDrawable.setPlayerModeActive(false)
+
         currentVod = vod
         selectedSeason = 1
         selectedEpisode = 1
-        selectedSubtitleId = ""
-        subtitleOffsetMs = 0L
         isOverviewExpanded = false
-        hasSkippedIntroForCurrentMedia = false
-        activeSubtitleCues = emptyList()
-        availableSubtitles = emptyList()
+        moviePlayerController.updateAvailableSubtitles(emptyList(), emptyList(), "")
 
-        switchToPosterShowcaseMode()
-
-        pendingResumePositionMs = SessionManager.getSavedPositionForVod(this, vod.id)
+        // قراءة التقدم المحفوظ لهذا الفيلم تحديداً فقط (بدون الكتابة فوقه عند فتح الصفحة)
+        val savedForThisMovie = SessionManager.getSavedPositionForVod(this, vod.id)
             .coerceAtLeast(vod.savedPositionMs)
-        SessionManager.saveWatchProgress(this, vod, pendingResumePositionMs, vod.totalDurationMs)
+        pendingResumePositionMs = if (savedForThisMovie > 15_000L) savedForThisMovie else 0L
 
         tvPlayNowBtnLabel.text = if (pendingResumePositionMs > 15_000L) "RESUME" else "PLAY"
 
-        tvTopPlayerTitle.text = vod.title
+        moviePlayerController.setTitle(vod.title)
         tvMovieTitle.text = vod.title
 
         val initialGenres = vod.category.ifEmpty { if (vod.isSeries) "TV Series • Drama" else "Movie • Action" }
@@ -2352,6 +1877,21 @@ class ContentDetailActivity : AppCompatActivity() {
             }
         }
 
+        // أنيميشن دخول سينمائية ناعمة عند الانتقال من فيلم لآخر
+        if (animatePageEntry) {
+            ivHeroBackdrop.alpha = 0f
+            ivHeroBackdrop.animate().alpha(1f).setDuration(320L).start()
+
+            contentSheetColumn.alpha = 0f
+            contentSheetColumn.translationY = dpF(26f)
+            contentSheetColumn.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(320L)
+                .setInterpolator(DecelerateInterpolator(1.5f))
+                .start()
+        }
+
         detailsFetchJob = lifecycleScope.launch {
             val details = cachedDetails ?: withContext(Dispatchers.IO) {
                 OttRepository.fetchMovieOrSeriesFullDetails(vod)
@@ -2373,8 +1913,8 @@ class ContentDetailActivity : AppCompatActivity() {
                     selectedEpisode
                 )
                 if (subs.isNotEmpty()) {
-                    availableSubtitles = subs
-                    autoSelectPreferredSubtitle()
+                    moviePlayerController.updateAvailableSubtitles(subs)
+                    autoSelectPreferredSubtitle(subs)
                 }
             }
         }
@@ -2436,13 +1976,13 @@ class ContentDetailActivity : AppCompatActivity() {
             currentVod?.let { cur ->
                 navigationBackStack.addLast(NavHistoryEntry.MovieState(cur, detailsScrollView.scrollY))
             }
-            loadVodItemIntoScreen(clickedVod, resetScroll = true)
+            loadVodItemIntoScreen(clickedVod, resetScroll = true, animatePageEntry = true)
         }
         rvMoreLike.adapter = VodGridAdapter(details.similar, isGrid = false) { clickedVod ->
             currentVod?.let { cur ->
                 navigationBackStack.addLast(NavHistoryEntry.MovieState(cur, detailsScrollView.scrollY))
             }
-            loadVodItemIntoScreen(clickedVod, resetScroll = true)
+            loadVodItemIntoScreen(clickedVod, resetScroll = true, animatePageEntry = true)
         }
     }
 
@@ -2541,20 +2081,19 @@ class ContentDetailActivity : AppCompatActivity() {
                     selectedEpisode = ep.episodeNumber
                     val vod = currentVod ?: return@EpisodesHorizontalAdapter
                     val epTitle = "${vod.title}  •  S${seasonNum}:E${ep.episodeNumber}"
-                    tvTopPlayerTitle.text = epTitle
-                    activateInlinePlayerAndStart()
+                    moviePlayerController.setTitle(epTitle)
+                    activateInlinePlayerSmoothly()
                     startStreamExtractionForEpisodeOrMovie(vod, seasonNum, ep.episodeNumber, runWebViewNow = true)
                     lifecycleScope.launch(Dispatchers.IO) {
-                        availableSubtitles = OttRepository.fetchRealSubtitlesForMovie(
+                        val subs = OttRepository.fetchRealSubtitlesForMovie(
                             vod.id,
                             fullDetails?.imdbId.orEmpty(),
                             true,
                             seasonNum,
                             ep.episodeNumber
                         )
-                        activeSubtitleCues = emptyList()
-                        selectedSubtitleId = ""
-                        autoSelectPreferredSubtitle()
+                        moviePlayerController.updateAvailableSubtitles(subs, emptyList(), "")
+                        autoSelectPreferredSubtitle(subs)
                     }
                 }
             }
@@ -2583,524 +2122,23 @@ class ContentDetailActivity : AppCompatActivity() {
         loadSeason(1)
     }
 
-    private suspend fun autoSelectPreferredSubtitle() {
-        if (availableSubtitles.isEmpty()) return
-        val arabicTracks = availableSubtitles.filter { it.languageCode == "ar" }
-        val candidates = if (arabicTracks.isNotEmpty()) arabicTracks else availableSubtitles
-        if (selectedSubtitleId.isEmpty() || activeSubtitleCues.isEmpty()) {
+    private suspend fun autoSelectPreferredSubtitle(subs: List<SubtitleTrack>) {
+        if (subs.isEmpty()) return
+        val arabicTracks = subs.filter { it.languageCode.startsWith("ar", true) }
+        val candidates = if (arabicTracks.isNotEmpty()) arabicTracks else subs
+        if (moviePlayerController.getSelectedSubtitleId().isEmpty() ||
+            moviePlayerController.getActiveSubtitleCues().isEmpty()
+        ) {
             for (track in candidates.take(4)) {
                 val parsed = OttRepository.downloadAndParseSubtitles(track)
                 if (parsed.size > 15) {
-                    selectedSubtitleId = track.id
-                    activeSubtitleCues = parsed
+                    withContext(Dispatchers.Main) {
+                        moviePlayerController.updateAvailableSubtitles(subs, parsed, track.id)
+                    }
                     break
                 }
             }
         }
-    }
-
-    private fun startPlayerProgressAndSubtitlesLoop() {
-        progressJob?.cancel()
-        progressJob = lifecycleScope.launch {
-            while (isActive) {
-                delay(200)
-                val p = playerEngine.player ?: continue
-                if (p.isPlaying) {
-                    loadingContainer.visibility = View.GONE
-                    updatePlayPauseVectorIcon(true)
-                }
-                val pos = p.currentPosition.coerceAtLeast(0L)
-                val dur = p.duration
-
-                if (!isUserSeeking && dur > 0) {
-                    seekBar.progress = ((pos * 1000L) / dur).toInt().coerceIn(0, 1000)
-                    tvElapsed.text = formatTimeMs(pos)
-                    tvDuration.text = formatTimeMs(dur)
-
-                    val shouldShowSkipIntro = isPlayerModeActive &&
-                            !hasSkippedIntroForCurrentMedia &&
-                            dur > 300_000L &&
-                            pos in INTRO_START_MS..INTRO_END_MS
-
-                    if (shouldShowSkipIntro && btnSkipIntro.visibility != View.VISIBLE) {
-                        btnSkipIntro.alpha = 0f
-                        btnSkipIntro.visibility = View.VISIBLE
-                        btnSkipIntro.animate().alpha(1f).setDuration(250L).start()
-                    } else if (!shouldShowSkipIntro && btnSkipIntro.visibility == View.VISIBLE) {
-                        btnSkipIntro.visibility = View.GONE
-                    }
-
-                    lastSavedTick++
-                    if (lastSavedTick >= 15 && pos > 5000L) {
-                        lastSavedTick = 0
-                        currentVod?.let { v ->
-                            SessionManager.saveWatchProgress(this@ContentDetailActivity, v, pos, dur)
-                        }
-                    }
-                }
-
-                if (selectedSubtitleId != "NONE" && activeSubtitleCues.isNotEmpty() && p.isPlaying) {
-                    val syncedPos = (pos - subtitleOffsetMs).coerceAtLeast(0L)
-                    val cue = activeSubtitleCues.firstOrNull { syncedPos in it.startMs..it.endMs }
-                    if (cue != null) {
-                        tvSubtitleOverlay.text = cue.text
-                        tvSubtitleOverlay.visibility = View.VISIBLE
-                    } else {
-                        tvSubtitleOverlay.text = ""
-                    }
-                } else if (selectedSubtitleId == "NONE") {
-                    tvSubtitleOverlay.visibility = View.GONE
-                }
-            }
-        }
-    }
-
-    private fun showPrimeServersAndQualityPopup() {
-        val dialog = Dialog(this)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-
-        val widthPx = (290 * resources.displayMetrics.density).toInt()
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = makeRoundedBg("#16181F".toColorInt(), 14f, "#2A2E3B".toColorInt())
-            setPadding(dp(18), dp(14), dp(18), dp(14))
-            layoutParams = ViewGroup.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-
-        if (providerTargets.isEmpty()) {
-            val emptyTv = TextView(this).apply {
-                text = "No servers configured in panel"
-                setTextColor(Color.WHITE)
-                textSize = 14f
-                typeface = fontProductRegular
-                setPadding(dp(12), dp(12), dp(12), dp(12))
-            }
-            card.addView(emptyTv)
-            dialog.setContentView(card)
-            dialog.show()
-            return
-        }
-
-        val realQualities = playerEngine.getAvailableQualityTracks()
-        val currentDetectedBadge = playerEngine.getCurrentDetectedQualityLabel()
-
-        providerTargets.forEachIndexed { srvIdx, server ->
-            val isCurrentServer = (srvIdx == currentProviderIndex)
-
-            if (isCurrentServer && realQualities.isNotEmpty()) {
-                realQualities.forEach { qTrack ->
-                    val shortQ = when {
-                        qTrack.height >= 2160 -> "4K"
-                        qTrack.height >= 1080 -> "1080p"
-                        qTrack.height >= 720 -> "720p"
-                        qTrack.height >= 480 -> "480p"
-                        else -> "${qTrack.height}p"
-                    }
-                    val isSelectedQuality = (selectedQualityHeight == qTrack.height) ||
-                            (selectedQualityHeight == null && qTrack == realQualities.first())
-
-                    val row = TextView(this).apply {
-                        text = "${server.label} • $shortQ"
-                        textSize = 14f
-                        typeface = fontProductBold
-                        setTextColor(if (isSelectedQuality) "#E50914".toColorInt() else Color.WHITE)
-                        setPadding(dp(12), dp(11), dp(12), dp(11))
-                        setOnClickListener {
-                            selectedQualityHeight = qTrack.height
-                            playerEngine.selectVideoQualityHeight(qTrack.height)
-                            btnTopServerHd.text = shortQ
-                            dialog.dismiss()
-                        }
-                    }
-                    card.addView(row)
-                }
-            } else if (isCurrentServer) {
-                val row = TextView(this).apply {
-                    text = "${server.label} • $currentDetectedBadge"
-                    textSize = 14f
-                    typeface = fontProductBold
-                    setTextColor("#E50914".toColorInt())
-                    setPadding(dp(12), dp(11), dp(12), dp(11))
-                    setOnClickListener { dialog.dismiss() }
-                }
-                card.addView(row)
-            } else {
-                val row = TextView(this).apply {
-                    text = server.label
-                    textSize = 14f
-                    typeface = fontProductBold
-                    setTextColor("#CBD5E1".toColorInt())
-                    setPadding(dp(12), dp(11), dp(12), dp(11))
-                    setOnClickListener {
-                        currentProviderIndex = srvIdx
-                        selectedQualityHeight = null
-                        hasLockedPrimaryStream = false
-                        resolvedDirectStreams.clear()
-                        loadingContainer.visibility = View.VISIBLE
-                        if (server.isDirectStream) {
-                            onRawStreamIntercepted(server.url, server.referer, server.origin, server.userAgent)
-                        } else {
-                            loadProviderInHeadlessSniffer(srvIdx)
-                        }
-                        dialog.dismiss()
-                    }
-                }
-                card.addView(row)
-            }
-        }
-
-        dialog.setContentView(card)
-        dialog.show()
-        dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
-    }
-
-    private fun showPlaybackSpeedDialog() {
-        val dialog = Dialog(this)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-
-        val speeds = listOf(
-            0.5f to "0.5x",
-            0.75f to "0.75x",
-            1.0f to "1x",
-            1.25f to "1.25x",
-            1.5f to "1.5x",
-            2.0f to "2x"
-        )
-
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = makeRoundedBg("#16181F".toColorInt(), 12f, "#2A2E3B".toColorInt())
-            setPadding(dp(24), dp(16), dp(24), dp(16))
-        }
-
-        speeds.forEach { (spd, label) ->
-            val isSel = spd == currentPlaybackSpeed
-            val tv = TextView(this).apply {
-                text = label
-                textSize = 14f
-                typeface = fontProductBold
-                setTextColor(if (isSel) "#E50914".toColorInt() else Color.WHITE)
-                setPadding(dp(16), dp(10), dp(28), dp(10))
-                setOnClickListener {
-                    currentPlaybackSpeed = spd
-                    playerEngine.player?.playbackParameters = PlaybackParameters(spd)
-                    tvBottomSpeedLabel.text = "Speed: $label"
-                    dialog.dismiss()
-                }
-            }
-            card.addView(tv)
-        }
-
-        dialog.setContentView(card)
-        dialog.show()
-    }
-
-    private fun showSubtitlesDialog() {
-        val dialog = Dialog(this)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-
-        val widthPx = (resources.displayMetrics.widthPixels * 0.92).toInt()
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = makeRoundedBg("#121318".toColorInt(), 16f, "#282B36".toColorInt())
-            setPadding(dp(18), dp(16), dp(18), dp(16))
-            layoutParams = ViewGroup.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-
-        val headerRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(10))
-        }
-        val titleTv = TextView(this).apply {
-            text = "Subtitles (${availableSubtitles.size})"
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            typeface = fontProductBold
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        val refreshBtn = TextView(this).apply {
-            text = "Refresh"
-            setTextColor("#E50914".toColorInt())
-            textSize = 12f
-            typeface = fontProductBold
-            background = makeRoundedBg("#2A1215".toColorInt(), 8f)
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-        }
-        headerRow.addView(titleTv)
-        headerRow.addView(refreshBtn)
-        root.addView(headerRow)
-
-        val syncBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#191C26".toColorInt(), 10f, "#2A2E3D".toColorInt())
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(12) }
-        }
-        val tvSyncStatus = TextView(this).apply {
-            text = String.format(Locale.US, "Sync: %+.1fs", subtitleOffsetMs / 1000.0)
-            setTextColor("#38BDF8".toColorInt())
-            textSize = 12.5f
-            typeface = fontProductBold
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        val btnMinusHalf = TextView(this).apply {
-            text = "-0.5s"
-            setTextColor(Color.WHITE)
-            textSize = 12f
-            typeface = fontProductBold
-            background = makeRoundedBg("#262B38".toColorInt(), 6f)
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = dp(6)
-            }
-            setOnClickListener {
-                subtitleOffsetMs -= 500L
-                tvSyncStatus.text = String.format(Locale.US, "Sync: %+.1fs", subtitleOffsetMs / 1000.0)
-            }
-        }
-        val btnResetSync = TextView(this).apply {
-            text = "0.0s"
-            setTextColor(Color.WHITE)
-            textSize = 12f
-            typeface = fontProductBold
-            background = makeRoundedBg("#E50914".toColorInt(), 6f)
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = dp(6)
-            }
-            setOnClickListener {
-                subtitleOffsetMs = 0L
-                tvSyncStatus.text = "Sync: +0.0s"
-            }
-        }
-        val btnPlusHalf = TextView(this).apply {
-            text = "+0.5s"
-            setTextColor(Color.WHITE)
-            textSize = 12f
-            typeface = fontProductBold
-            background = makeRoundedBg("#262B38".toColorInt(), 6f)
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            setOnClickListener {
-                subtitleOffsetMs += 500L
-                tvSyncStatus.text = String.format(Locale.US, "Sync: %+.1fs", subtitleOffsetMs / 1000.0)
-            }
-        }
-        syncBar.addView(tvSyncStatus)
-        syncBar.addView(btnMinusHalf)
-        syncBar.addView(btnResetSync)
-        syncBar.addView(btnPlusHalf)
-        root.addView(syncBar)
-
-        val filterScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
-        val filterRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 0, 0, dp(10))
-        }
-        filterScroll.addView(filterRow)
-        root.addView(filterScroll)
-
-        val tracksScroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(230))
-        }
-        val tracksContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        tracksScroll.addView(tracksContainer)
-        root.addView(tracksScroll)
-
-        var selectedLangFilter = "ALL"
-
-        fun renderSubtitleRows() {
-            tracksContainer.removeAllViews()
-            titleTv.text = "Subtitles (${availableSubtitles.size})"
-
-            val noSubRow = TextView(this).apply {
-                text = if (selectedSubtitleId == "NONE") "✓  Disable Subtitles" else "   Disable Subtitles"
-                setTextColor(if (selectedSubtitleId == "NONE") "#E50914".toColorInt() else "#94A3B8".toColorInt())
-                textSize = 13.5f
-                typeface = fontProductBold
-                setPadding(dp(10), dp(10), dp(10), dp(10))
-                setOnClickListener {
-                    selectedSubtitleId = "NONE"
-                    tvSubtitleOverlay.visibility = View.GONE
-                    dialog.dismiss()
-                }
-            }
-            tracksContainer.addView(noSubRow)
-
-            val filtered = availableSubtitles.filter {
-                selectedLangFilter == "ALL" || it.languageCode.startsWith(selectedLangFilter.lowercase(Locale.ROOT))
-            }
-
-            filtered.forEach { track ->
-                val isSelected = track.id == selectedSubtitleId
-                val isWebDl = track.releaseName.contains("WEB", true) || track.releaseName.contains("Stream", true)
-                val itemLayout = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    background = if (isSelected) makeRoundedBg("#261217".toColorInt(), 10f, "#E50914".toColorInt()) else null
-                    setPadding(dp(12), dp(9), dp(12), dp(9))
-                    setOnClickListener {
-                        selectedSubtitleId = track.id
-                        subtitleOffsetMs = 0L
-                        lifecycleScope.launch {
-                            val parsed = OttRepository.downloadAndParseSubtitles(track)
-                            if (parsed.isNotEmpty()) {
-                                activeSubtitleCues = parsed
-                                tvSubtitleOverlay.visibility = View.VISIBLE
-                                Toast.makeText(this@ContentDetailActivity, "Synced: ${track.languageLabel}", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(this@ContentDetailActivity, "Choose another track below", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                        dialog.dismiss()
-                    }
-                }
-                val langTv = TextView(this).apply {
-                    text = "${track.languageLabel}  ${if (isSelected) "✓" else ""}"
-                    setTextColor(Color.WHITE)
-                    textSize = 14f
-                    typeface = fontProductBold
-                }
-                val badgeText = if (isWebDl) "100% WEB-DL Synced" else "OpenSubtitles"
-                val relTv = TextView(this).apply {
-                    text = "${track.releaseName} • $badgeText"
-                    setTextColor(if (isWebDl) "#34D399".toColorInt() else "#94A3B8".toColorInt())
-                    textSize = 11f
-                    typeface = fontProductRegular
-                }
-                itemLayout.addView(langTv)
-                itemLayout.addView(relTv)
-                tracksContainer.addView(itemLayout)
-            }
-        }
-
-        refreshBtn.setOnClickListener {
-            val vod = currentVod ?: return@setOnClickListener
-            refreshBtn.text = "..."
-            lifecycleScope.launch {
-                availableSubtitles = withContext(Dispatchers.IO) {
-                    OttRepository.fetchRealSubtitlesForMovie(
-                        vod.id,
-                        fullDetails?.imdbId.orEmpty(),
-                        vod.isSeries,
-                        selectedSeason,
-                        selectedEpisode
-                    )
-                }
-                refreshBtn.text = "Refresh"
-                renderSubtitleRows()
-            }
-        }
-
-        val filters = listOf(
-            "ALL" to "All",
-            "ar" to "Arabic",
-            "en" to "English",
-            "fr" to "French",
-            "es" to "Spanish",
-            "tr" to "Turkish"
-        )
-        filters.forEach { (code, name) ->
-            val chip = TextView(this).apply {
-                text = name
-                textSize = 12f
-                typeface = fontProductBold
-                setTextColor(Color.WHITE)
-                background = makeRoundedBg(if (selectedLangFilter == code) "#E50914".toColorInt() else "#1C202B".toColorInt(), 16f)
-                setPadding(dp(14), dp(6), dp(14), dp(6))
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { marginEnd = dp(8) }
-                setOnClickListener {
-                    selectedLangFilter = code
-                    for (i in 0 until filterRow.childCount) {
-                        (filterRow.getChildAt(i) as? TextView)?.background = makeRoundedBg("#1C202B".toColorInt(), 16f)
-                    }
-                    background = makeRoundedBg("#E50914".toColorInt(), 16f)
-                    renderSubtitleRows()
-                }
-            }
-            filterRow.addView(chip)
-        }
-
-        if (availableSubtitles.isEmpty()) {
-            refreshBtn.performClick()
-        } else {
-            renderSubtitleRows()
-        }
-
-        dialog.setContentView(root)
-        dialog.show()
-        dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
-    }
-
-    private fun applyFullscreenState(enterFullscreen: Boolean) {
-        isFullscreen = enterFullscreen
-        btnInlineFullscreen.setImageDrawable(
-            VectorIcons.createFullscreenIcon(this, isFullscreen = enterFullscreen)
-        )
-        if (enterFullscreen) {
-            isPlayerModeActive = true
-            heroBackdropFixedContainer.visibility = View.GONE
-            heroTopActionsRow.visibility = View.GONE
-            vHeroTopSpacer.visibility = View.GONE
-            playerContainer.visibility = View.VISIBLE
-            detailsScrollView.visibility = View.GONE
-            btnTopLock.visibility = View.VISIBLE
-            fullscreenBottomActionsRow.visibility = View.VISIBLE
-
-            playerContainer.layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-
-            WindowCompat.setDecorFitsSystemWindows(window, false)
-            WindowInsetsControllerCompat(window, rootFrameWrapper).let { controller ->
-                controller.hide(WindowInsetsCompat.Type.systemBars())
-                controller.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            }
-            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        } else {
-            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            WindowCompat.setDecorFitsSystemWindows(window, true)
-            WindowInsetsControllerCompat(window, rootFrameWrapper).show(WindowInsetsCompat.Type.systemBars())
-
-            playerContainer.layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(210)
-            )
-            btnTopLock.visibility = View.GONE
-            fullscreenBottomActionsRow.visibility = View.GONE
-            detailsScrollView.visibility = View.VISIBLE
-        }
-        playerContainer.requestLayout()
-        resetAutoHide()
-    }
-
-    private fun toggleControlsOverlay() {
-        controlsOverlay.removeCallbacks(autoHideRunnable)
-        if (controlsOverlay.visibility == View.VISIBLE) {
-            controlsOverlay.visibility = View.GONE
-        } else {
-            controlsOverlay.visibility = View.VISIBLE
-            controlsOverlay.postDelayed(autoHideRunnable, 3500)
-        }
-    }
-
-    private fun resetAutoHide() {
-        controlsOverlay.removeCallbacks(autoHideRunnable)
-        controlsOverlay.visibility = View.VISIBLE
-        controlsOverlay.postDelayed(autoHideRunnable, 3500)
     }
 
     private fun updateFavoriteIcon(id: String) {
@@ -3117,7 +2155,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 deviceId = SessionManager.getDeviceId(this@ContentDetailActivity),
                 userName = SessionManager.getUserName(this@ContentDetailActivity),
                 roomName = vod.title.take(25),
-                roomIcon = "🎬",
+                roomIcon = "VOD",
                 isPrivate = false,
                 password = "",
                 allowGuestsControl = true,
@@ -3138,50 +2176,41 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun formatTimeMs(ms: Long): String {
-        val totalSecs = (ms / 1000L).coerceAtLeast(0L)
-        val hours = totalSecs / 3600
-        val mins = (totalSecs % 3600) / 60
-        val secs = totalSecs % 60
-        return if (hours > 0) {
-            String.format(Locale.US, "%d:%02d:%02d", hours, mins, secs)
-        } else {
-            String.format(Locale.US, "%d:%02d", mins, secs)
-        }
-    }
-
+    /**
+     * عند الخروج من التطبيق يتوقف المشغل فوراً وتتحدث أيقونة التشغيل إلى (Play ▶) دون أي انعكاس
+     */
     override fun onPause() {
         super.onPause()
         val p = playerEngine.player
         val vod = currentVod
-        if (p != null && vod != null && p.currentPosition > 5000L && p.duration > 10000L) {
+        if (isPlayerModeActive && p != null && vod != null && p.currentPosition > 5000L && p.duration > 10000L) {
+            pendingResumePositionMs = p.currentPosition
             SessionManager.saveWatchProgress(this, vod, p.currentPosition, p.duration)
         }
-        if (!isChangingConfigurations) {
+        if (!isChangingConfigurations && !isInPictureInPictureMode) {
             playerEngine.pause()
+            moviePlayerController.updatePlayPauseVectorIcon(false)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val isPlayingNow = playerEngine.player?.isPlaying == true
+        moviePlayerController.updatePlayPauseVectorIcon(isPlayingNow)
     }
 
     override fun onDestroy() {
         detailsFetchJob?.cancel()
         streamFetchJob?.cancel()
         snifferTimeoutJob?.cancel()
-        progressJob?.cancel()
         colorExtractionAnimator?.cancel()
-        controlsOverlay.removeCallbacks(autoHideRunnable)
+        moviePlayerController.release()
         headlessSnifferWebView.destroy()
         playerEngine.release()
         super.onDestroy()
     }
 }
 
-/**
- * محرك التدرج الناعم المطابق لـ FlixVision (صورة 2 - The Invite):
- * - يبقي وسط الكوفر صافياً تماماً بدون أي خط أفقي أو ضبابية.
- * - يبدأ التدرج السفلي بنعومة عند مستوى اسم الفيلم وينتهي بدمج كامل تحت اسم الفيلم وسطر التصنيف.
- * - يضع تدرجاً خفيفاً وناعماً على الحافتين اليسرى واليمنى للكوفر (اليمين داكن واليسار بلون الكوفر).
- * - عند التمرير للأعلى (`scrollY > 0`)، يصعد نفس التدرج بسلاسة ليغطي الكوفر تدريجياً، وعند النزول يعود لحالته الأصلية.
- */
 class FlixVisionFullScreenAmbientDrawable(
     private val coverHeightPx: Float,
     private val bottomFadeStartAtRestPx: Float,
@@ -3189,8 +2218,8 @@ class FlixVisionFullScreenAmbientDrawable(
     private val scrollToHideDistancePx: Float
 ) : Drawable() {
 
-    private val mainThemePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val sideEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val mainThemePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
+    private val sideEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
 
     private var leftBrightColor: Int = "#233242".toColorInt()
     private var rightDarkColor: Int = "#000000".toColorInt()
@@ -3234,11 +2263,10 @@ class FlixVisionFullScreenAmbientDrawable(
             (currentScrollY / scrollToHideDistancePx).coerceIn(0f, 1f)
         }
 
-        val midBlend1 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.28f)
-        val midBlend2 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.62f)
-        val midBlend3 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.86f)
+        val midBlend1 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.25f)
+        val midBlend2 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.54f)
+        val midBlend3 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.82f)
 
-        // 1. التدرج الأفقي السلس من اليسار (فاتح بلون الكوفر) إلى اليمين (داكن/أسود)
         val horizontalThemeShader = LinearGradient(
             0f,
             0f,
@@ -3251,19 +2279,18 @@ class FlixVisionFullScreenAmbientDrawable(
                 midBlend3,
                 rightDarkColor
             ),
-            floatArrayOf(0f, 0.28f, 0.56f, 0.80f, 1f),
+            floatArrayOf(0f, 0.26f, 0.54f, 0.80f, 1f),
             Shader.TileMode.CLAMP
         )
 
-        // 2. قناع الشفافية العمودي السلس (في وضع السكون يبقي وسط الكوفر صافياً تماماً، ويبدأ التدرج عند اسم الفيلم)
         val dynamicFadeStart = bottomFadeStartAtRestPx * (1f - scrollFraction)
         val dynamicOpaqueY = (fullOpaqueYAtRestPx * (1f - scrollFraction * 0.90f))
             .coerceAtLeast(dynamicFadeStart + 16f)
 
         val topCoverAlpha = (255f * scrollFraction).toInt().coerceIn(0, 255)
-        val fadeStep1Alpha = (255f * (0.18f + 0.82f * scrollFraction)).toInt().coerceIn(0, 255)
-        val fadeStep2Alpha = (255f * (0.52f + 0.48f * scrollFraction)).toInt().coerceIn(0, 255)
-        val fadeStep3Alpha = (255f * (0.84f + 0.16f * scrollFraction)).toInt().coerceIn(0, 255)
+        val fadeStep1Alpha = (255f * (0.16f + 0.84f * scrollFraction)).toInt().coerceIn(0, 255)
+        val fadeStep2Alpha = (255f * (0.48f + 0.52f * scrollFraction)).toInt().coerceIn(0, 255)
+        val fadeStep3Alpha = (255f * (0.82f + 0.18f * scrollFraction)).toInt().coerceIn(0, 255)
 
         val s0 = (dynamicFadeStart / h).coerceIn(0f, 0.90f)
         val sEnd = (dynamicOpaqueY / h).coerceIn(s0 + 0.03f, 0.98f)
@@ -3302,14 +2329,12 @@ class FlixVisionFullScreenAmbientDrawable(
         )
         canvas.drawRect(0f, 0f, w, h, mainThemePaint)
 
-        // 3. تدرج خفيف وناعم على الحافتين اليسرى واليمنى فوق الكوفر (كما في لقطة The Invite من FlixVision)
         if (!isPlayerMode && scrollFraction < 0.99f) {
             val coverBottom = min(h, coverHeightPx)
-            val sideGrowth = 1f + (scrollFraction * 1.1f)
+            val sideGrowth = 1f + (scrollFraction * 1.15f)
 
-            // الحافة اليسرى (لون الكوفر الفاتح الخفيف على طرف الصورة الأيسر)
-            val leftEdgeW = w * (0.16f * sideGrowth).coerceAtMost(0.45f)
-            val leftAlpha = ((95 + 65 * extractionFraction) * (1f - scrollFraction * 0.5f)).toInt().coerceIn(0, 255)
+            val leftEdgeW = w * (0.22f * sideGrowth).coerceAtMost(0.48f)
+            val leftAlpha = ((110 + 70 * extractionFraction) * (1f - scrollFraction * 0.45f)).toInt().coerceIn(0, 255)
             sideEdgePaint.shader = LinearGradient(
                 0f,
                 0f,
@@ -3317,17 +2342,18 @@ class FlixVisionFullScreenAmbientDrawable(
                 0f,
                 intArrayOf(
                     ColorUtils.setAlphaComponent(leftBrightColor, leftAlpha),
-                    ColorUtils.setAlphaComponent(leftBrightColor, (leftAlpha * 0.35f).toInt()),
+                    ColorUtils.setAlphaComponent(leftBrightColor, (leftAlpha * 0.68f).toInt()),
+                    ColorUtils.setAlphaComponent(leftBrightColor, (leftAlpha * 0.36f).toInt()),
+                    ColorUtils.setAlphaComponent(leftBrightColor, (leftAlpha * 0.12f).toInt()),
                     Color.TRANSPARENT
                 ),
-                floatArrayOf(0f, 0.48f, 1f),
+                floatArrayOf(0f, 0.25f, 0.52f, 0.78f, 1f),
                 Shader.TileMode.CLAMP
             )
             canvas.drawRect(0f, 0f, leftEdgeW, coverBottom, sideEdgePaint)
 
-            // الحافة اليمنى (تدرج داكن/أسود خفيف على طرف الصورة الأيمن)
-            val rightEdgeW = w * (0.22f * sideGrowth).coerceAtMost(0.55f)
-            val rightAlpha = (155 * (1f - scrollFraction * 0.4f)).toInt().coerceIn(0, 255)
+            val rightEdgeW = w * (0.28f * sideGrowth).coerceAtMost(0.58f)
+            val rightAlpha = (175 * (1f - scrollFraction * 0.35f)).toInt().coerceIn(0, 255)
             sideEdgePaint.shader = LinearGradient(
                 w,
                 0f,
@@ -3335,10 +2361,12 @@ class FlixVisionFullScreenAmbientDrawable(
                 0f,
                 intArrayOf(
                     ColorUtils.setAlphaComponent(rightDarkColor, rightAlpha),
-                    ColorUtils.setAlphaComponent(rightDarkColor, (rightAlpha * 0.42f).toInt()),
+                    ColorUtils.setAlphaComponent(rightDarkColor, (rightAlpha * 0.70f).toInt()),
+                    ColorUtils.setAlphaComponent(rightDarkColor, (rightAlpha * 0.38f).toInt()),
+                    ColorUtils.setAlphaComponent(rightDarkColor, (rightAlpha * 0.14f).toInt()),
                     Color.TRANSPARENT
                 ),
-                floatArrayOf(0f, 0.50f, 1f),
+                floatArrayOf(0f, 0.25f, 0.52f, 0.78f, 1f),
                 Shader.TileMode.CLAMP
             )
             canvas.drawRect(w - rightEdgeW, 0f, w, coverBottom, sideEdgePaint)
@@ -3402,11 +2430,13 @@ object VectorIcons {
     }
 
     fun createPlayPauseIcon(context: Context, isPlaying: Boolean): Drawable {
-        val sizePx = (28 * context.resources.displayMetrics.density).toInt()
+        val d = context.resources.displayMetrics.density
+        val sizePx = (34 * d).toInt()
         return object : Drawable() {
             private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 style = Paint.Style.FILL
+                setShadowLayer(6f * d, 0f, 2f * d, "#99000000".toColorInt())
             }
 
             override fun draw(canvas: Canvas) {
@@ -3414,19 +2444,19 @@ object VectorIcons {
                 val w = b.width().toFloat()
                 val h = b.height().toFloat()
                 if (isPlaying) {
-                    val barW = w * 0.22f
-                    val barH = h * 0.68f
+                    val barW = w * 0.21f
+                    val barH = h * 0.72f
                     val top = (h - barH) / 2f
                     val r = barW * 0.35f
-                    val left1 = w * 0.22f
-                    val left2 = w * 0.56f
+                    val left1 = w * 0.21f
+                    val left2 = w * 0.58f
                     canvas.drawRoundRect(RectF(left1, top, left1 + barW, top + barH), r, r, paint)
                     canvas.drawRoundRect(RectF(left2, top, left2 + barW, top + barH), r, r, paint)
                 } else {
                     val path = Path().apply {
-                        moveTo(w * 0.26f, h * 0.16f)
-                        lineTo(w * 0.84f, h * 0.50f)
-                        lineTo(w * 0.26f, h * 0.84f)
+                        moveTo(w * 0.24f, h * 0.14f)
+                        lineTo(w * 0.86f, h * 0.50f)
+                        lineTo(w * 0.24f, h * 0.86f)
                         close()
                     }
                     canvas.drawPath(path, paint)
@@ -3444,13 +2474,14 @@ object VectorIcons {
 
     fun createSeek15Icon(context: Context, isForward: Boolean): Drawable {
         val d = context.resources.displayMetrics.density
-        val sizePx = (28 * d).toInt()
+        val sizePx = (32 * d).toInt()
         return object : Drawable() {
             private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 style = Paint.Style.STROKE
-                strokeWidth = 2.0f * d
+                strokeWidth = 2.2f * d
                 strokeCap = Paint.Cap.ROUND
+                setShadowLayer(5f * d, 0f, 1.5f * d, "#99000000".toColorInt())
             }
             private val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
@@ -3458,37 +2489,38 @@ object VectorIcons {
             }
             private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
-                textSize = 8.8f * d
+                textSize = 9.5f * d
                 typeface = Typeface.create("sans-serif", Typeface.BOLD)
                 textAlign = Paint.Align.CENTER
+                setShadowLayer(4f * d, 0f, 1f * d, "#99000000".toColorInt())
             }
 
             override fun draw(canvas: Canvas) {
                 val b = bounds
                 val w = b.width().toFloat()
                 val h = b.height().toFloat()
-                val pad = w * 0.12f
+                val pad = w * 0.10f
                 val rect = RectF(pad, pad, w - pad, h - pad)
 
                 if (isForward) {
                     canvas.drawArc(rect, -80f, 290f, false, arcPaint)
-                    val tipX = w * 0.66f
+                    val tipX = w * 0.67f
                     val tipY = pad
                     val arrow = Path().apply {
-                        moveTo(w * 0.48f, tipY - w * 0.11f)
+                        moveTo(w * 0.48f, tipY - w * 0.12f)
                         lineTo(tipX, tipY)
-                        lineTo(w * 0.48f, tipY + w * 0.11f)
+                        lineTo(w * 0.48f, tipY + w * 0.12f)
                         close()
                     }
                     canvas.drawPath(arrow, arrowPaint)
                 } else {
                     canvas.drawArc(rect, -100f, -290f, false, arcPaint)
-                    val tipX = w * 0.34f
+                    val tipX = w * 0.33f
                     val tipY = pad
                     val arrow = Path().apply {
-                        moveTo(w * 0.52f, tipY - w * 0.11f)
+                        moveTo(w * 0.52f, tipY - w * 0.12f)
                         lineTo(tipX, tipY)
-                        lineTo(w * 0.52f, tipY + w * 0.11f)
+                        lineTo(w * 0.52f, tipY + w * 0.12f)
                         close()
                     }
                     canvas.drawPath(arrow, arrowPaint)
@@ -3510,6 +2542,125 @@ object VectorIcons {
                 arrowPaint.colorFilter = colorFilter
                 textPaint.colorFilter = colorFilter
             }
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+        }
+    }
+
+    fun createFastForwardDoubleArrowIcon(context: Context, tintColor: Int): Drawable {
+        val d = context.resources.displayMetrics.density
+        val sizePx = (18 * d).toInt()
+        return object : Drawable() {
+            private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tintColor
+                style = Paint.Style.FILL
+            }
+
+            override fun draw(canvas: Canvas) {
+                val w = bounds.width().toFloat()
+                val h = bounds.height().toFloat()
+                val p1 = Path().apply {
+                    moveTo(w * 0.08f, h * 0.20f)
+                    lineTo(w * 0.50f, h * 0.50f)
+                    lineTo(w * 0.08f, h * 0.80f)
+                    close()
+                }
+                val p2 = Path().apply {
+                    moveTo(w * 0.50f, h * 0.20f)
+                    lineTo(w * 0.92f, h * 0.50f)
+                    lineTo(w * 0.50f, h * 0.80f)
+                    close()
+                }
+                canvas.drawPath(p1, paint)
+                canvas.drawPath(p2, paint)
+            }
+
+            override fun getIntrinsicWidth(): Int = sizePx
+            override fun getIntrinsicHeight(): Int = sizePx
+            override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+            override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+        }
+    }
+
+    fun createBrightnessSunIcon(context: Context, tintColor: Int): Drawable {
+        val d = context.resources.displayMetrics.density
+        val sizePx = (20 * d).toInt()
+        return object : Drawable() {
+            private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tintColor
+                style = Paint.Style.FILL
+            }
+            private val rayPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tintColor
+                style = Paint.Style.STROKE
+                strokeWidth = 1.6f * d
+                strokeCap = Paint.Cap.ROUND
+            }
+
+            override fun draw(canvas: Canvas) {
+                val w = bounds.width().toFloat()
+                val h = bounds.height().toFloat()
+                val cx = w / 2f
+                val cy = h / 2f
+                val coreR = min(w, h) * 0.22f
+                canvas.drawCircle(cx, cy, coreR, fillPaint)
+
+                val innerR = min(w, h) * 0.31f
+                val outerR = min(w, h) * 0.44f
+                for (i in 0 until 8) {
+                    val angle = Math.toRadians((i * 45).toDouble())
+                    val x1 = cx + (innerR * cos(angle)).toFloat()
+                    val y1 = cy + (innerR * sin(angle)).toFloat()
+                    val x2 = cx + (outerR * cos(angle)).toFloat()
+                    val y2 = cy + (outerR * sin(angle)).toFloat()
+                    canvas.drawLine(x1, y1, x2, y2, rayPaint)
+                }
+            }
+
+            override fun getIntrinsicWidth(): Int = sizePx
+            override fun getIntrinsicHeight(): Int = sizePx
+            override fun setAlpha(alpha: Int) {
+                fillPaint.alpha = alpha
+                rayPaint.alpha = alpha
+            }
+            override fun setColorFilter(colorFilter: ColorFilter?) {
+                fillPaint.colorFilter = colorFilter
+                rayPaint.colorFilter = colorFilter
+            }
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+        }
+    }
+
+    fun createCheckMarkIcon(context: Context, tintColor: Int): Drawable {
+        val d = context.resources.displayMetrics.density
+        val sizePx = (16 * d).toInt()
+        return object : Drawable() {
+            private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tintColor
+                style = Paint.Style.STROKE
+                strokeWidth = 2.0f * d
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+            }
+
+            override fun draw(canvas: Canvas) {
+                val w = bounds.width().toFloat()
+                val h = bounds.height().toFloat()
+                val path = Path().apply {
+                    moveTo(w * 0.18f, h * 0.52f)
+                    lineTo(w * 0.42f, h * 0.76f)
+                    lineTo(w * 0.84f, h * 0.24f)
+                }
+                canvas.drawPath(path, paint)
+            }
+
+            override fun getIntrinsicWidth(): Int = sizePx
+            override fun getIntrinsicHeight(): Int = sizePx
+            override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+            override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
             @Deprecated("Deprecated in Java")
             override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
         }
@@ -3613,6 +2764,89 @@ object VectorIcons {
             override fun setColorFilter(colorFilter: ColorFilter?) {
                 strokePaint.colorFilter = colorFilter
                 textPaint.colorFilter = colorFilter
+            }
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+        }
+    }
+
+    fun createAudioSpeakerIcon(context: Context, tintColor: Int): Drawable {
+        val d = context.resources.displayMetrics.density
+        val sizePx = (20 * d).toInt()
+        return object : Drawable() {
+            private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tintColor
+                style = Paint.Style.FILL
+            }
+            private val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tintColor
+                style = Paint.Style.STROKE
+                strokeWidth = 1.6f * d
+                strokeCap = Paint.Cap.ROUND
+            }
+
+            override fun draw(canvas: Canvas) {
+                val w = bounds.width().toFloat()
+                val h = bounds.height().toFloat()
+                val speaker = Path().apply {
+                    moveTo(w * 0.14f, h * 0.38f)
+                    lineTo(w * 0.30f, h * 0.38f)
+                    lineTo(w * 0.52f, h * 0.20f)
+                    lineTo(w * 0.52f, h * 0.80f)
+                    lineTo(w * 0.30f, h * 0.62f)
+                    lineTo(w * 0.14f, h * 0.62f)
+                    close()
+                }
+                canvas.drawPath(speaker, fillPaint)
+                canvas.drawArc(RectF(w * 0.45f, h * 0.30f, w * 0.72f, h * 0.70f), -45f, 90f, false, wavePaint)
+                canvas.drawArc(RectF(w * 0.38f, h * 0.16f, w * 0.88f, h * 0.84f), -45f, 90f, false, wavePaint)
+            }
+
+            override fun getIntrinsicWidth(): Int = sizePx
+            override fun getIntrinsicHeight(): Int = sizePx
+            override fun setAlpha(alpha: Int) {
+                fillPaint.alpha = alpha
+                wavePaint.alpha = alpha
+            }
+            override fun setColorFilter(colorFilter: ColorFilter?) {
+                fillPaint.colorFilter = colorFilter
+                wavePaint.colorFilter = colorFilter
+            }
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+        }
+    }
+
+    fun createPipMiniPlayerIcon(context: Context, tintColor: Int): Drawable {
+        val d = context.resources.displayMetrics.density
+        val sizePx = (20 * d).toInt()
+        return object : Drawable() {
+            private val outerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tintColor
+                style = Paint.Style.STROKE
+                strokeWidth = 1.6f * d
+            }
+            private val innerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tintColor
+                style = Paint.Style.FILL
+            }
+
+            override fun draw(canvas: Canvas) {
+                val w = bounds.width().toFloat()
+                val h = bounds.height().toFloat()
+                canvas.drawRoundRect(RectF(w * 0.10f, h * 0.18f, w * 0.90f, h * 0.82f), w * 0.10f, w * 0.10f, outerPaint)
+                canvas.drawRoundRect(RectF(w * 0.48f, h * 0.46f, w * 0.82f, h * 0.74f), w * 0.06f, w * 0.06f, innerPaint)
+            }
+
+            override fun getIntrinsicWidth(): Int = sizePx
+            override fun getIntrinsicHeight(): Int = sizePx
+            override fun setAlpha(alpha: Int) {
+                outerPaint.alpha = alpha
+                innerPaint.alpha = alpha
+            }
+            override fun setColorFilter(colorFilter: ColorFilter?) {
+                outerPaint.colorFilter = colorFilter
+                innerPaint.colorFilter = colorFilter
             }
             @Deprecated("Deprecated in Java")
             override fun getOpacity(): Int = PixelFormat.TRANSLUCENT

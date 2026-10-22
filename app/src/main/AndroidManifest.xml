@@ -51,6 +51,7 @@
         <!-- إضافة configChanges هنا تجعل تكبير وتصغير مشغل الأفلام يتم في 0.0 ثانية بدون انقطاع البث -->
         <activity
             android:name=".presentation.detail.ContentDetailActivity"
+            android:supportsPictureInPicture="true"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
             android:exported="false" />
 
