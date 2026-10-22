@@ -4,17 +4,19 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#080B11"
+    android:clipToPadding="false"
     android:fillViewport="true"
-    android:layoutDirection="rtl">
+    android:layoutDirection="rtl"
+    android:paddingBottom="130dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:padding="16dp"
-        android:paddingBottom="80dp">
+        android:paddingBottom="140dp">
 
-        <!-- ترويسة الملف الشخصي والإعدادات -->
+        <!-- ترويسة الصفحة بدون زر تسجيل الخروج العلوي -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -39,268 +41,284 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginHorizontal="8dp"
-                android:text="👤 الملف الشخصي والإعدادات • Profil &amp; Paramètres"
+                android:text="👤 الملف الشخصي والإعدادات"
                 android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/btnOpenWatchTogetherFromProfile"
-                android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:background="@drawable/auth_btn_primary"
-                android:gravity="center"
-                android:paddingHorizontal="10dp"
-                android:text="🎬 الغرف الجماعية"
-                android:textColor="#FFFFFF"
-                android:textSize="11sp"
+                android:textSize="18sp"
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- بطاقة معلومات الحساب الشخصي (Mon Profil) -->
+        <!-- بطاقة الحساب الشخصي وتعديل الصورة والاسم -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:background="@drawable/auth_bg_card"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:id="@+id/flUserProfileAvatar"
+                    android:layout_width="76dp"
+                    android:layout_height="76dp"
+                    android:background="@drawable/auth_avatar_circle">
+
+                    <ImageView
+                        android:id="@+id/ivUserProfilePhoto"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:scaleType="centerCrop"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/tvUserProfileAvatarEmoji"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="👑"
+                        android:textSize="34sp" />
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="14dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvProfileDisplayName"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="مستخدم Royal TV"
+                        android:textColor="#FFFFFF"
+                        android:textSize="17sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvProfileEmailOrUsername"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="🔒 email@gmail.com"
+                        android:textColor="#80D8FF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:orientation="horizontal">
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/btnChangeProfilePhoto"
+                    android:layout_width="0dp"
+                    android:layout_height="38dp"
+                    android:layout_marginEnd="6dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/auth_btn_guest"
+                    android:text="📷 تغيير الصورة الشخصية"
+                    android:textAllCaps="false"
+                    android:textColor="#80D8FF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/btnEditProfileInfo"
+                    android:layout_width="0dp"
+                    android:layout_height="38dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/auth_btn_guest"
+                    android:text="✏️ تعديل اسم المستخدم"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <!-- خيار إنشاء كلمة مرور للحساب عندما يفتح المستخدم حساباً جديداً بالإيميل (Google) -->
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/btnCreatePasswordForEmailAccount"
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/wt_bg_btn_green"
+                android:text="🔑 إنشاء كلمة مرور للحساب (للدخول باسم المستخدم أو الإيميل)"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:layout_marginBottom="8dp"
+            android:text="⚙️ أقسام الإعدادات (اضغط على أي قسم لفتحه)"
+            android:textColor="#9AA5B8"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <!-- 1. قسم إعدادات الحساب وكلمة المرور -->
+        <LinearLayout
+            android:id="@+id/cardSectionAccount"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
             android:background="@drawable/auth_bg_card"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:padding="16dp">
 
-            <FrameLayout
-                android:id="@+id/flUserProfileAvatar"
-                android:layout_width="68dp"
-                android:layout_height="68dp"
-                android:background="@drawable/auth_avatar_circle">
-
-                <TextView
-                    android:id="@+id/tvUserProfileAvatarEmoji"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:gravity="center"
-                    android:text="👑"
-                    android:textSize="30sp" />
-            </FrameLayout>
-
-            <LinearLayout
+            <TextView
+                android:id="@+id/tvSectionAccountTitle"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginHorizontal="14dp"
                 android:layout_weight="1"
-                android:orientation="vertical">
+                android:text="🔐 إعدادات الحساب وكلمة المرور"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
 
-                <TextView
-                    android:id="@+id/tvProfileDisplayName"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="مستخدم Royal TV"
-                    android:textColor="#FFFFFF"
-                    android:textSize="16sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tvProfileEmailOrUsername"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:text="@user • حساب موثق"
-                    android:textColor="#80D8FF"
-                    android:textSize="12sp" />
-
-                <TextView
-                    android:id="@+id/tvProfileBadgeStatus"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:text="🟢 متصل بسيرفر Cloudflare"
-                    android:textColor="#00E676"
-                    android:textSize="11sp" />
-            </LinearLayout>
-
-            <androidx.appcompat.widget.AppCompatButton
-                android:id="@+id/btnEditProfileInfo"
+            <TextView
                 android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:background="@drawable/auth_btn_guest"
-                android:paddingHorizontal="12dp"
-                android:text="✏️ تعديل"
-                android:textAllCaps="false"
-                android:textColor="#FFFFFF"
-                android:textSize="11sp" />
-        </LinearLayout>
-
-        <!-- قسم إعدادات الفيديو والمشغل (Paramètres Vidéo & Lecteur) -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:layout_marginBottom="6dp"
-            android:text="📺 إعدادات البث والمشغل • Paramètres Vidéo"
-            android:textColor="#E50914"
-            android:textSize="13sp"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/auth_bg_card"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <TextView
-                android:id="@+id/btnSettingStreamQuality"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:gravity="center_vertical"
-                android:text="⚡ جودة البث الافتراضية: تلقائي (FHD 1080p / HD)"
-                android:textColor="#FFFFFF"
-                android:textSize="13sp" />
-
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#1E293B" />
-
-            <TextView
-                android:id="@+id/btnSettingPlayerDecoder"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:gravity="center_vertical"
-                android:text="🎬 محرك المشغل: ExoPlayer Media3 (HLS + MPEG-TS)"
-                android:textColor="#FFFFFF"
-                android:textSize="13sp" />
-
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#1E293B" />
-
-            <Switch
-                android:id="@+id/swAutoReconnectStream"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:checked="true"
-                android:text="🔄 إعادة الاتصال التلقائي عند انقطاع البث"
-                android:textColor="#FFFFFF"
-                android:textSize="13sp" />
-        </LinearLayout>
-
-        <!-- قسم إعدادات المشاهدة الجماعية والصوت (Watch Together & Audio) -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:layout_marginBottom="6dp"
-            android:text="🎙️ إعدادات الغرف والصوت • Watch Together &amp; Audio"
-            android:textColor="#E50914"
-            android:textSize="13sp"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/auth_bg_card"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <Switch
-                android:id="@+id/swNoiseSuppression"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:checked="true"
-                android:text="🎧 عزل الضوضاء والصدى الصوتي في الغرف"
-                android:textColor="#FFFFFF"
-                android:textSize="13sp" />
-
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#1E293B" />
-
-            <Switch
-                android:id="@+id/swRoomNotifications"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:checked="true"
-                android:text="🔔 إشعارات الدعوات وطلبات الانضمام للغرف"
-                android:textColor="#FFFFFF"
-                android:textSize="13sp" />
-
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#1E293B" />
-
-            <TextView
-                android:id="@+id/btnManageBlockedUsersProfile"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:gravity="center_vertical"
-                android:text="🚫 إدارة قائمة المستخدمين المحظورين (Blocked Users)"
-                android:textColor="#FFCDD2"
-                android:textSize="13sp" />
-        </LinearLayout>
-
-        <!-- قسم الحساب والنظام والسيرفر (Compte & Système) -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:layout_marginBottom="6dp"
-            android:text="⚙️ إعدادات الحساب والنظام • Compte &amp; Système"
-            android:textColor="#E50914"
-            android:textSize="13sp"
-            android:textStyle="bold" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/auth_bg_card"
-            android:orientation="vertical"
-            android:padding="14dp">
-
-            <TextView
-                android:id="@+id/btnChangePasswordProfile"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:gravity="center_vertical"
-                android:text="🔑 تغيير كلمة المرور (Change Password)"
-                android:textColor="#FFFFFF"
-                android:textSize="13sp" />
-
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#1E293B" />
-
-            <TextView
-                android:id="@+id/btnChangeLanguageProfile"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:gravity="center_vertical"
-                android:text="🌐 لغة التطبيق: العربية / Français / English"
-                android:textColor="#FFFFFF"
-                android:textSize="13sp" />
-
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#1E293B" />
-
-            <TextView
-                android:id="@+id/btnClearAppCache"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:gravity="center_vertical"
-                android:text="🧹 مسح الذاكرة المؤقتة (Vider le Cache)"
+                android:layout_height="wrap_content"
+                android:text="فتح ⬅"
                 android:textColor="#80D8FF"
-                android:textSize="13sp" />
-
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#1E293B" />
-
-            <TextView
-                android:id="@+id/btnContactSupportProfile"
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:gravity="center_vertical"
-                android:text="📞 التواصل مع الدعم الفني وسياسة الخصوصية"
-                android:textColor="#FFFFFF"
-                android:textSize="13sp" />
+                android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- زر تسجيل الخروج (Déconnexion / Logout) -->
+        <!-- 2. قسم إعدادات جودة المشاهدة والعرض -->
+        <LinearLayout
+            android:id="@+id/cardSectionPlayback"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/auth_bg_card"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="📺 إعدادات جودة المشاهدة والعرض"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="فتح ⬅"
+                android:textColor="#80D8FF"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- 3. قسم إعدادات الإشعارات والصوت -->
+        <LinearLayout
+            android:id="@+id/cardSectionAudioNotif"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/auth_bg_card"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="🔔 إعدادات الإشعارات والصوت"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="فتح ⬅"
+                android:textColor="#80D8FF"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- 4. قسم اللغة وتنظيف الذاكرة -->
+        <LinearLayout
+            android:id="@+id/cardSectionLanguageApp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/auth_bg_card"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="🌐 لغة التطبيق وتنظيف الذاكرة"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="فتح ⬅"
+                android:textColor="#80D8FF"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- 5. قسم المساعدة والدعم الفني -->
+        <LinearLayout
+            android:id="@+id/cardSectionSupport"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="18dp"
+            android:background="@drawable/auth_bg_card"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="💬 المساعدة والدعم الفني"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="فتح ⬅"
+                android:textColor="#80D8FF"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- زر تسجيل الخروج الوحيد في أسفل الصفحة ومرفوع عن شريط الأيقونات -->
         <androidx.appcompat.widget.AppCompatButton
             android:id="@+id/btnLogoutFromProfile"
             android:layout_width="match_parent"
             android:layout_height="52dp"
-            android:layout_marginTop="20dp"
+            android:layout_marginBottom="90dp"
             android:background="@drawable/auth_btn_primary"
-            android:text="🚪 تسجيل الخروج من الحساب • Déconnexion (Logout)"
+            android:text="🚪 تسجيل الخروج من الحساب"
             android:textAllCaps="false"
             android:textColor="#FFFFFF"
-            android:textSize="14sp"
+            android:textSize="15sp"
             android:textStyle="bold" />
     </LinearLayout>
 </ScrollView>

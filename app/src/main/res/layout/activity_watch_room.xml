@@ -4,35 +4,38 @@
     android:id="@+id/rootWatchTogether"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#090C12"
+    android:background="#090D16"
     android:layoutDirection="rtl">
 
-    <!-- VIEW 1: WATCH TOGETHER HUB / LOBBY -->
+    <!-- ================= VIEW 1: CLEAN HARMONIOUS LOBBY ================= -->
     <LinearLayout
         android:id="@+id/layoutLobbyContainer"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:padding="12dp"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="14dp"
+        android:paddingBottom="82dp"
         android:visibility="visible">
 
+        <!-- ترويسة منسقة في سطر واحد -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="42dp"
             android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingBottom="10dp">
+            android:orientation="horizontal">
 
             <TextView
                 android:id="@+id/btnLobbyBack"
                 android:layout_width="wrap_content"
-                android:layout_height="32dp"
+                android:layout_height="34dp"
+                android:layout_marginEnd="8dp"
                 android:background="@drawable/wt_bg_badge_dark"
                 android:gravity="center"
-                android:paddingHorizontal="10dp"
+                android:paddingHorizontal="12dp"
                 android:text="رجوع ↩"
                 android:textColor="#FFFFFF"
-                android:textSize="11sp"
+                android:textSize="12sp"
                 android:textStyle="bold"
                 android:visibility="gone" />
 
@@ -40,206 +43,119 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:singleLine="true"
                 android:ellipsize="end"
-                android:text="🎬 المشاهدة الجماعية • Watch Together"
+                android:singleLine="true"
+                android:text="🎬 Watch Together"
                 android:textColor="#FFFFFF"
-                android:textSize="15sp"
+                android:textSize="18sp"
                 android:textStyle="bold" />
 
             <TextView
-                android:id="@+id/tvBackendHealthLobby"
+                android:id="@+id/btnRefreshRooms"
                 android:layout_width="wrap_content"
-                android:layout_height="28dp"
-                android:layout_marginStart="6dp"
+                android:layout_height="34dp"
+                android:layout_marginEnd="8dp"
                 android:background="@drawable/wt_bg_badge_dark"
                 android:gravity="center"
-                android:paddingHorizontal="8dp"
-                android:text="🟢 متصل"
-                android:textColor="#00E676"
-                android:textSize="10sp" />
+                android:paddingHorizontal="12dp"
+                android:text="🔄 تحديث"
+                android:textColor="#D0D7E2"
+                android:textSize="11sp"
+                android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/btnBlockedUsersLobby"
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/btnCreateRoomOpen"
                 android:layout_width="wrap_content"
-                android:layout_height="28dp"
-                android:layout_marginStart="6dp"
-                android:background="@drawable/wt_bg_badge_dark"
-                android:gravity="center"
-                android:paddingHorizontal="8dp"
-                android:text="🚫 المحظورون"
-                android:textColor="#FFCDD2"
-                android:textSize="10sp" />
+                android:layout_height="34dp"
+                android:background="@drawable/wt_bg_btn_primary"
+                android:paddingHorizontal="14dp"
+                android:text="➕ إنشاء غرفة"
+                android:textAllCaps="false"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView android:id="@+id/tvBackendHealthLobby" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+            <TextView android:id="@+id/btnBlockedUsersLobby" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
         </LinearLayout>
 
-        <!-- Create Room & Join by Code Card -->
+        <!-- بطاقة مدمجة للدخول بالرمز والبحث -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
             android:background="@drawable/wt_bg_card"
             android:orientation="vertical"
             android:padding="12dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <androidx.appcompat.widget.AppCompatButton
-                    android:id="@+id/btnCreateRoomOpen"
-                    android:layout_width="0dp"
-                    android:layout_height="42dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/wt_bg_btn_primary"
-                    android:text="➕ إنشاء غرفة مشاهدة جديدة"
-                    android:textAllCaps="false"
-                    android:textColor="#FFFFFF"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/btnRefreshRooms"
-                    android:layout_width="wrap_content"
-                    android:layout_height="42dp"
-                    android:layout_marginStart="8dp"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:gravity="center"
-                    android:paddingHorizontal="12dp"
-                    android:text="🔄 تحديث"
-                    android:textColor="#FFFFFF"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
+                android:layout_height="40dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
                 <EditText
                     android:id="@+id/etJoinByCodeInput"
                     android:layout_width="0dp"
-                    android:layout_height="40dp"
+                    android:layout_height="match_parent"
                     android:layout_weight="1"
                     android:background="@drawable/wt_bg_input"
-                    android:hint="🔑 أدخل رمز الغرفة (Code) أو رابط الدعوة..."
+                    android:hint="🔑 أدخل كود الغرفة للانضمام المباشر..."
                     android:imeOptions="actionDone"
                     android:inputType="text"
                     android:paddingHorizontal="12dp"
                     android:singleLine="true"
                     android:textColor="#FFFFFF"
-                    android:textColorHint="#8A96A8"
+                    android:textColorHint="#7C889B"
                     android:textSize="12sp" />
 
                 <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btnJoinByCodeSubmit"
                     android:layout_width="wrap_content"
-                    android:layout_height="40dp"
+                    android:layout_height="match_parent"
                     android:layout_marginStart="8dp"
                     android:background="@drawable/wt_bg_btn_green"
-                    android:paddingHorizontal="14dp"
-                    android:text="انضمام بالرمز"
+                    android:paddingHorizontal="16dp"
+                    android:text="دخول"
                     android:textAllCaps="false"
                     android:textColor="#FFFFFF"
                     android:textSize="12sp"
                     android:textStyle="bold" />
             </LinearLayout>
+
+            <EditText
+                android:id="@+id/etRoomSearch"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/wt_bg_input"
+                android:hint="🔍 ابحث عن غرفة مفتوحة أو فيلم..."
+                android:paddingHorizontal="12dp"
+                android:singleLine="true"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#6E7B91"
+                android:textSize="12sp" />
         </LinearLayout>
 
-        <!-- Search & Room Filters -->
-        <EditText
-            android:id="@+id/etRoomSearch"
-            android:layout_width="match_parent"
-            android:layout_height="38dp"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/wt_bg_input"
-            android:hint="🔍 ابحث عن غرفة، قناة مباشرة، أو اسم المضيف..."
-            android:paddingHorizontal="12dp"
-            android:singleLine="true"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#7C889B"
-            android:textSize="12sp" />
-
-        <HorizontalScrollView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:scrollbars="none">
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/chipFilterAll"
-                    android:layout_width="wrap_content"
-                    android:layout_height="30dp"
-                    android:layout_marginEnd="6dp"
-                    android:background="@drawable/wt_bg_badge_live"
-                    android:gravity="center"
-                    android:paddingHorizontal="12dp"
-                    android:text="🔥 كل الغرف"
-                    android:textColor="#FFFFFF"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/chipFilterPublic"
-                    android:layout_width="wrap_content"
-                    android:layout_height="30dp"
-                    android:layout_marginEnd="6dp"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:gravity="center"
-                    android:paddingHorizontal="12dp"
-                    android:text="🌐 غرف عامة"
-                    android:textColor="#D0D7E2"
-                    android:textSize="11sp" />
-
-                <TextView
-                    android:id="@+id/chipFilterPrivate"
-                    android:layout_width="wrap_content"
-                    android:layout_height="30dp"
-                    android:layout_marginEnd="6dp"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:gravity="center"
-                    android:paddingHorizontal="12dp"
-                    android:text="🔒 غرف خاصة"
-                    android:textColor="#D0D7E2"
-                    android:textSize="11sp" />
-
-                <TextView
-                    android:id="@+id/chipFilterChannels"
-                    android:layout_width="wrap_content"
-                    android:layout_height="30dp"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:gravity="center"
-                    android:paddingHorizontal="12dp"
-                    android:text="📺 بث القنوات المباشرة"
-                    android:textColor="#D0D7E2"
-                    android:textSize="11sp" />
-
-                <TextView
-                    android:id="@+id/chipFilterMatches"
-                    android:layout_width="wrap_content"
-                    android:layout_height="30dp"
-                    android:visibility="gone" />
-            </LinearLayout>
-        </HorizontalScrollView>
-
         <TextView
-            android:id="@+id/tvLobbyStatsSummary"
-            android:layout_width="match_parent"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:layout_marginBottom="4dp"
-            android:text="الغرف النشطة الآن: 0 | إجمالي المشاهدين: 0"
+            android:layout_marginTop="12dp"
+            android:layout_marginBottom="6dp"
+            android:text="🌐 الغرف العامة النشطة الآن"
             android:textColor="#9AA5B8"
-            android:textSize="11sp" />
+            android:textSize="12sp"
+            android:textStyle="bold" />
 
+        <!-- عناصر مخفية لعدم إزعاج المستخدم -->
+        <TextView android:id="@+id/chipFilterAll" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+        <TextView android:id="@+id/chipFilterPublic" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+        <TextView android:id="@+id/chipFilterPrivate" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+        <TextView android:id="@+id/chipFilterChannels" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+        <TextView android:id="@+id/chipFilterMatches" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+        <TextView android:id="@+id/tvLobbyStatsSummary" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+
+        <!-- قائمة الغرف العامة -->
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
@@ -250,163 +166,155 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:clipToPadding="false"
-                android:paddingBottom="70dp" />
+                android:paddingBottom="16dp" />
 
-            <TextView
+            <LinearLayout
                 android:id="@+id/tvEmptyRoomsHint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
+                android:background="@drawable/wt_bg_card"
                 android:gravity="center"
+                android:orientation="vertical"
                 android:padding="24dp"
-                android:text="لا توجد غرف نشطة مطابقة حالياً.\nاضغط على «إنشاء غرفة مشاهدة جديدة» لبدء المشاهدة الجماعية!"
-                android:textColor="#7D889C"
-                android:textSize="13sp"
-                android:visibility="gone" />
+                android:visibility="visible">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🍿"
+                    android:textSize="34sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center"
+                    android:text="لا توجد غرف عامة مفتوحة حالياً"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center"
+                    android:text="اضغط على «➕ إنشاء غرفة» لاختيار فيلم من مكتبة الأفلام ومشاهدته مع أصدقائك!"
+                    android:textColor="#8A96A8"
+                    android:textSize="12sp" />
+            </LinearLayout>
         </FrameLayout>
     </LinearLayout>
 
-    <!-- VIEW 2: ACTIVE WATCH ROOM -->
+    <!-- ================= VIEW 2: COORDINATED ACTIVE WATCH ROOM ================= -->
     <LinearLayout
         android:id="@+id/layoutActiveRoomContainer"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:paddingBottom="60dp"
+        android:paddingBottom="72dp"
         android:visibility="gone">
 
+        <!-- 1. الشريط العلوي الأنيق للغرفة (44dp) -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#121722"
+            android:layout_height="44dp"
+            android:background="#0F1523"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingHorizontal="8dp"
-            android:paddingVertical="6dp">
+            android:paddingHorizontal="10dp">
 
             <TextView
                 android:id="@+id/btnLeaveRoom"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="↩ مغادرة"
+                android:textColor="#FF8A80"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvRoomHeaderTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text="غرفة المشاهدة"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvRoomCodeBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="8dp"
+                android:text="#CODE 📋"
+                android:textColor="#FFD54F"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvOnlineCountBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="8dp"
+                android:text="👥 1"
+                android:textColor="#00E676"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/btnInviteShare"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:layout_marginEnd="4dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="8dp"
+                android:text="🔗 دعوة"
+                android:textColor="#80D8FF"
+                android:textSize="10sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/btnHostControlsOpen"
                 android:layout_width="wrap_content"
                 android:layout_height="28dp"
                 android:background="@drawable/wt_bg_badge_dark"
                 android:gravity="center"
                 android:paddingHorizontal="8dp"
-                android:text="🚪 مغادرة"
-                android:textColor="#FF8A80"
-                android:textSize="11sp"
-                android:textStyle="bold" />
-
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="6dp"
-                android:layout_weight="1"
-                android:orientation="vertical">
-
-                <TextView
-                    android:id="@+id/tvRoomHeaderTitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:singleLine="true"
-                    android:text="غرفة المشاهدة"
-                    android:textColor="#FFFFFF"
-                    android:textSize="12sp"
-                    android:textStyle="bold" />
-
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:id="@+id/tvRoomCodeBadge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="#CODE 📋"
-                        android:textColor="#FFD54F"
-                        android:textSize="10sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/tvRoomStatusBadge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="6dp"
-                        android:text="🔴 LIVE"
-                        android:textColor="#00E676"
-                        android:textSize="10sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/tvBackendHealthRoom"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="6dp"
-                        android:text="🟢 32ms"
-                        android:textColor="#90CAF9"
-                        android:textSize="10sp" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <TextView
-                android:id="@+id/tvOnlineCountBadge"
-                android:layout_width="wrap_content"
-                android:layout_height="26dp"
-                android:layout_marginEnd="4dp"
-                android:background="@drawable/wt_bg_badge_dark"
-                android:gravity="center"
-                android:paddingHorizontal="6dp"
-                android:text="👥 1/25"
-                android:textColor="#FFFFFF"
-                android:textSize="10sp" />
-
-            <TextView
-                android:id="@+id/btnInviteShare"
-                android:layout_width="wrap_content"
-                android:layout_height="26dp"
-                android:layout_marginEnd="4dp"
-                android:background="@drawable/wt_bg_badge_dark"
-                android:gravity="center"
-                android:paddingHorizontal="6dp"
-                android:text="🔗 دعوة"
-                android:textColor="#80D8FF"
-                android:textSize="10sp" />
-
-            <TextView
-                android:id="@+id/btnHostControlsOpen"
-                android:layout_width="wrap_content"
-                android:layout_height="26dp"
-                android:layout_marginEnd="4dp"
-                android:background="@drawable/wt_bg_badge_dark"
-                android:gravity="center"
-                android:paddingHorizontal="6dp"
-                android:text="⚙️ تحكم"
+                android:text="⚙️"
                 android:textColor="#FFD54F"
-                android:textSize="10sp" />
+                android:textSize="11sp" />
 
-            <TextView
-                android:id="@+id/btnCloseRoomHost"
-                android:layout_width="wrap_content"
-                android:layout_height="26dp"
-                android:background="@drawable/wt_bg_badge_live"
-                android:gravity="center"
-                android:paddingHorizontal="6dp"
-                android:text="⛔ إغلاق"
-                android:textColor="#FFFFFF"
-                android:textSize="10sp" />
+            <TextView android:id="@+id/btnCloseRoomHost" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+            <TextView android:id="@+id/tvRoomStatusBadge" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+            <TextView android:id="@+id/tvBackendHealthRoom" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
         </LinearLayout>
 
+        <!-- إشعار طلبات الانضمام -->
         <LinearLayout
             android:id="@+id/layoutJoinRequestBanner"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#263238"
+            android:background="#1E293B"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingHorizontal="10dp"
-            android:paddingVertical="5dp"
+            android:paddingVertical="6dp"
             android:visibility="gone">
 
             <TextView
@@ -414,7 +322,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="🔔 طلب انضمام جديد"
+                android:text="🔔 طلب انضمام"
                 android:textColor="#FFF59D"
                 android:textSize="11sp"
                 android:textStyle="bold" />
@@ -422,25 +330,28 @@
             <androidx.appcompat.widget.AppCompatButton
                 android:id="@+id/btnApproveJoinReq"
                 android:layout_width="wrap_content"
-                android:layout_height="30dp"
+                android:layout_height="28dp"
                 android:background="@drawable/wt_bg_btn_green"
-                android:paddingHorizontal="8dp"
+                android:paddingHorizontal="10dp"
                 android:text="قبول ✓"
+                android:textAllCaps="false"
                 android:textColor="#FFFFFF"
                 android:textSize="10sp" />
 
             <androidx.appcompat.widget.AppCompatButton
                 android:id="@+id/btnRejectJoinReq"
                 android:layout_width="wrap_content"
-                android:layout_height="30dp"
+                android:layout_height="28dp"
                 android:layout_marginStart="6dp"
                 android:background="@drawable/wt_bg_btn_primary"
-                android:paddingHorizontal="8dp"
+                android:paddingHorizontal="10dp"
                 android:text="رفض ✕"
+                android:textAllCaps="false"
                 android:textColor="#FFFFFF"
                 android:textSize="10sp" />
         </LinearLayout>
 
+        <!-- 2. مشغل الفيديو 16:9 المتناسق -->
         <FrameLayout
             android:id="@+id/playerContainerFrame"
             android:layout_width="match_parent"
@@ -465,119 +376,22 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="top|start"
-                android:layout_margin="6dp"
-                android:background="#99000000"
-                android:paddingHorizontal="8dp"
-                android:paddingVertical="3dp"
-                android:text="📺 البث المتزامن جاهز"
+                android:layout_margin="8dp"
+                android:background="#99090D16"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="4dp"
+                android:text="🎬 جاهز للتشغيل"
                 android:textColor="#FFFFFF"
                 android:textSize="10sp" />
 
-            <TextView
-                android:id="@+id/tvExpirationTimerBadge"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="top|end"
-                android:layout_margin="6dp"
-                android:background="#99000000"
-                android:paddingHorizontal="8dp"
-                android:paddingVertical="3dp"
-                android:text="⏳ 02:59:59"
-                android:textColor="#FFE082"
-                android:textSize="10sp" />
+            <TextView android:id="@+id/tvExpirationTimerBadge" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
         </FrameLayout>
 
-        <HorizontalScrollView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="#101520"
-            android:scrollbars="none">
-
-            <LinearLayout
-                android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingHorizontal="8dp">
-
-                <TextView
-                    android:id="@+id/btnSyncPlayPause"
-                    android:layout_width="wrap_content"
-                    android:layout_height="26dp"
-                    android:layout_marginEnd="6dp"
-                    android:background="@drawable/wt_bg_badge_live"
-                    android:gravity="center"
-                    android:paddingHorizontal="10dp"
-                    android:text="⏸️ إيقاف / تشغيل متزامن"
-                    android:textColor="#FFFFFF"
-                    android:textSize="10sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/btnForceSyncNow"
-                    android:layout_width="wrap_content"
-                    android:layout_height="26dp"
-                    android:layout_marginEnd="6dp"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:gravity="center"
-                    android:paddingHorizontal="10dp"
-                    android:text="🔄 مزامنة الكل"
-                    android:textColor="#80D8FF"
-                    android:textSize="10sp" />
-
-                <TextView
-                    android:id="@+id/btnPickChannelOpen"
-                    android:layout_width="wrap_content"
-                    android:layout_height="26dp"
-                    android:layout_marginEnd="6dp"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:gravity="center"
-                    android:paddingHorizontal="10dp"
-                    android:text="📺 اختيار قناة مباشرة"
-                    android:textColor="#FFFFFF"
-                    android:textSize="10sp" />
-
-                <TextView
-                    android:id="@+id/btnPickMatchOpen"
-                    android:layout_width="wrap_content"
-                    android:layout_height="26dp"
-                    android:layout_marginEnd="6dp"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:gravity="center"
-                    android:paddingHorizontal="10dp"
-                    android:text="⚡ قنوات رياضية"
-                    android:textColor="#69F0AE"
-                    android:textSize="10sp" />
-
-                <TextView
-                    android:id="@+id/btnAspectRatioToggle"
-                    android:layout_width="wrap_content"
-                    android:layout_height="26dp"
-                    android:layout_marginEnd="6dp"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:gravity="center"
-                    android:paddingHorizontal="10dp"
-                    android:text="📐 الأبعاد"
-                    android:textColor="#FFFFFF"
-                    android:textSize="10sp" />
-
-                <TextView
-                    android:id="@+id/btnRoomStatsOpen"
-                    android:layout_width="wrap_content"
-                    android:layout_height="26dp"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:gravity="center"
-                    android:paddingHorizontal="10dp"
-                    android:text="📊 الإحصائيات"
-                    android:textColor="#FFD54F"
-                    android:textSize="10sp" />
-            </LinearLayout>
-        </HorizontalScrollView>
-
+        <!-- 3. شريط موحد وأنيق للصوت والتحكم السريع (40dp) -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="36dp"
-            android:background="#151C28"
+            android:layout_height="40dp"
+            android:background="#111827"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingHorizontal="8dp">
@@ -585,11 +399,11 @@
             <TextView
                 android:id="@+id/btnToggleMic"
                 android:layout_width="wrap_content"
-                android:layout_height="26dp"
+                android:layout_height="28dp"
                 android:background="@drawable/wt_bg_badge_dark"
                 android:gravity="center"
-                android:paddingHorizontal="8dp"
-                android:text="🎤 الميكروفون: مكتوم"
+                android:paddingHorizontal="10dp"
+                android:text="🎤 مكتوم"
                 android:textColor="#FF8A80"
                 android:textSize="10sp"
                 android:textStyle="bold" />
@@ -597,7 +411,7 @@
             <TextView
                 android:id="@+id/btnToggleSpeaker"
                 android:layout_width="wrap_content"
-                android:layout_height="26dp"
+                android:layout_height="28dp"
                 android:layout_marginStart="4dp"
                 android:background="@drawable/wt_bg_badge_dark"
                 android:gravity="center"
@@ -608,53 +422,86 @@
 
             <TextView
                 android:id="@+id/tvVoiceSpeakingIndicator"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="6dp"
-                android:text="صوت نقي"
-                android:textColor="#9AA5B8"
-                android:textSize="10sp" />
-
-            <HorizontalScrollView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_marginHorizontal="4dp"
                 android:layout_weight="1"
-                android:scrollbars="none">
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:text=""
+                android:textColor="#00E676"
+                android:textSize="10sp" />
 
-                <LinearLayout
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
+            <TextView
+                android:id="@+id/btnSyncPlayPause"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:layout_marginEnd="4dp"
+                android:background="@drawable/wt_bg_badge_live"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:text="⏯️ تشغيل/إيقاف"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:textStyle="bold" />
 
-                    <TextView android:id="@+id/btnEmojiFire" android:layout_width="30dp" android:layout_height="28dp" android:gravity="center" android:text="🔥" android:textSize="15sp" />
-                    <TextView android:id="@+id/btnEmojiHeart" android:layout_width="30dp" android:layout_height="28dp" android:gravity="center" android:text="❤️" android:textSize="15sp" />
-                    <TextView android:id="@+id/btnEmojiLaugh" android:layout_width="30dp" android:layout_height="28dp" android:gravity="center" android:text="😂" android:textSize="15sp" />
-                    <TextView android:id="@+id/btnEmojiClap" android:layout_width="30dp" android:layout_height="28dp" android:gravity="center" android:text="👏" android:textSize="15sp" />
-                    <TextView android:id="@+id/btnEmojiSoccer" android:layout_width="30dp" android:layout_height="28dp" android:gravity="center" android:text="⚽" android:textSize="15sp" />
-                    <TextView android:id="@+id/btnEmojiGoal" android:layout_width="30dp" android:layout_height="28dp" android:gravity="center" android:text="🥅" android:textSize="15sp" />
-                    <TextView android:id="@+id/btnEmojiShock" android:layout_width="30dp" android:layout_height="28dp" android:gravity="center" android:text="😱" android:textSize="15sp" />
-                    <TextView android:id="@+id/btnEmojiParty" android:layout_width="30dp" android:layout_height="28dp" android:gravity="center" android:text="🎉" android:textSize="15sp" />
-                </LinearLayout>
-            </HorizontalScrollView>
+            <TextView
+                android:id="@+id/btnForceSyncNow"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:layout_marginEnd="4dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="8dp"
+                android:text="🔄 مزامنة"
+                android:textColor="#80D8FF"
+                android:textSize="10sp" />
+
+            <TextView
+                android:id="@+id/btnAspectRatioToggle"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:gravity="center"
+                android:paddingHorizontal="8dp"
+                android:text="📐"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp" />
+
+            <TextView android:id="@+id/btnPickChannelOpen" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+            <TextView android:id="@+id/btnPickMatchOpen" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+            <TextView android:id="@+id/btnRoomStatsOpen" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
         </LinearLayout>
 
+        <!-- 4. شريط التبويبات الثلاثة المتناسق (الأفلام والقنوات | الدردشة | المتصلون) -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="34dp"
-            android:background="#0E131D"
+            android:layout_height="38dp"
+            android:background="#0D1320"
             android:orientation="horizontal"
-            android:padding="2dp">
+            android:padding="4dp">
+
+            <TextView
+                android:id="@+id/tabBtnMediaPicker"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@drawable/wt_bg_badge_live"
+                android:gravity="center"
+                android:text="🎬 الأفلام والقنوات"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/tabBtnChat"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="1"
-                android:background="@drawable/wt_bg_badge_live"
                 android:gravity="center"
                 android:text="💬 الدردشة"
-                android:textColor="#FFFFFF"
-                android:textSize="10sp"
+                android:textColor="#9AA5B8"
+                android:textSize="11sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -664,192 +511,76 @@
                 android:layout_weight="1"
                 android:gravity="center"
                 android:text="👥 المتصلون"
-                android:textColor="#B0BEC5"
-                android:textSize="10sp"
+                android:textColor="#9AA5B8"
+                android:textSize="11sp"
                 android:textStyle="bold" />
 
-            <TextView
-                android:id="@+id/tabBtnMediaPicker"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:gravity="center"
-                android:text="📺 القنوات المباشرة"
-                android:textColor="#B0BEC5"
-                android:textSize="10sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tabBtnLogsStats"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_weight="1"
-                android:gravity="center"
-                android:text="📋 السجل والحالة"
-                android:textColor="#B0BEC5"
-                android:textSize="10sp"
-                android:textStyle="bold" />
+            <TextView android:id="@+id/tabBtnLogsStats" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
         </LinearLayout>
 
-        <!-- TAB 1: CHAT -->
-        <LinearLayout
-            android:id="@+id/panelTabChat"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:padding="6dp"
-            android:visibility="visible">
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/rvChatMessages"
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-
-                <EditText
-                    android:id="@+id/etChatMessageInput"
-                    android:layout_width="0dp"
-                    android:layout_height="38dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/wt_bg_input"
-                    android:hint="اكتب رسالة فورية للغرفة..."
-                    android:imeOptions="actionSend"
-                    android:inputType="text"
-                    android:paddingHorizontal="10dp"
-                    android:singleLine="true"
-                    android:textColor="#FFFFFF"
-                    android:textColorHint="#7A869A"
-                    android:textSize="12sp" />
-
-                <androidx.appcompat.widget.AppCompatButton
-                    android:id="@+id/btnSendChatMessage"
-                    android:layout_width="wrap_content"
-                    android:layout_height="38dp"
-                    android:layout_marginStart="6dp"
-                    android:background="@drawable/wt_bg_btn_primary"
-                    android:paddingHorizontal="14dp"
-                    android:text="إرسال ➤"
-                    android:textAllCaps="false"
-                    android:textColor="#FFFFFF"
-                    android:textSize="11sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <!-- TAB 2: PARTICIPANTS -->
-        <LinearLayout
-            android:id="@+id/panelTabParticipants"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:orientation="vertical"
-            android:padding="6dp"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="6dp"
-                android:orientation="horizontal">
-
-                <androidx.appcompat.widget.AppCompatButton
-                    android:id="@+id/btnMuteAllParticipants"
-                    android:layout_width="0dp"
-                    android:layout_height="32dp"
-                    android:layout_marginEnd="6dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:text="🔇 كتم الجميع (للمضيف)"
-                    android:textAllCaps="false"
-                    android:textColor="#FFCDD2"
-                    android:textSize="10sp" />
-
-                <androidx.appcompat.widget.AppCompatButton
-                    android:id="@+id/btnManageBansOpen"
-                    android:layout_width="0dp"
-                    android:layout_height="32dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:text="🚫 المحظورون والطلبات"
-                    android:textAllCaps="false"
-                    android:textColor="#FFE082"
-                    android:textSize="10sp" />
-            </LinearLayout>
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/rvParticipantsList"
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1" />
-        </LinearLayout>
-
-        <!-- TAB 3: MEDIA PICKER -->
+        <!-- ================= TAB 1: مكتبة الأفلام والقنوات داخل الغرفة ================= -->
         <LinearLayout
             android:id="@+id/panelTabMediaPicker"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:orientation="vertical"
-            android:padding="6dp"
-            android:visibility="gone">
+            android:paddingHorizontal="10dp"
+            android:paddingTop="8dp"
+            android:visibility="visible">
 
+            <!-- أزرار التبديل بين الأفلام والقنوات والرابط المباشر -->
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_height="34dp"
                 android:orientation="horizontal">
-
-                <androidx.appcompat.widget.AppCompatButton
-                    android:id="@+id/btnSubTabChannels"
-                    android:layout_width="0dp"
-                    android:layout_height="32dp"
-                    android:layout_marginEnd="4dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/wt_bg_btn_primary"
-                    android:text="📺 كل القنوات المباشرة"
-                    android:textAllCaps="false"
-                    android:textColor="#FFFFFF"
-                    android:textSize="10sp" />
 
                 <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btnSubTabMatches"
                     android:layout_width="0dp"
-                    android:layout_height="32dp"
-                    android:layout_marginEnd="4dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="6dp"
                     android:layout_weight="1"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:text="⚡ البث الرياضي المباشر"
+                    android:background="@drawable/wt_bg_btn_primary"
+                    android:text="🎬 الأفلام (Movies)"
                     android:textAllCaps="false"
                     android:textColor="#FFFFFF"
-                    android:textSize="10sp" />
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/btnSubTabChannels"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginEnd="6dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/wt_bg_badge_dark"
+                    android:text="📺 القنوات المباشرة"
+                    android:textAllCaps="false"
+                    android:textColor="#D0D7E2"
+                    android:textSize="11sp"
+                    android:textStyle="bold" />
 
                 <androidx.appcompat.widget.AppCompatButton
                     android:id="@+id/btnCustomStreamUrl"
                     android:layout_width="wrap_content"
-                    android:layout_height="32dp"
+                    android:layout_height="match_parent"
                     android:background="@drawable/wt_bg_badge_dark"
-                    android:paddingHorizontal="8dp"
-                    android:text="🔗 رابط مباشر"
+                    android:paddingHorizontal="10dp"
+                    android:text="🔗 رابط"
                     android:textAllCaps="false"
                     android:textColor="#80D8FF"
-                    android:textSize="10sp" />
+                    android:textSize="11sp" />
             </LinearLayout>
 
             <EditText
                 android:id="@+id/etSearchMediaInRoom"
                 android:layout_width="match_parent"
-                android:layout_height="34dp"
-                android:layout_marginVertical="4dp"
+                android:layout_height="36dp"
+                android:layout_marginVertical="6dp"
                 android:background="@drawable/wt_bg_input"
-                android:hint="🔍 ابحث عن قناة لتشغيلها ومزامنتها في الغرفة..."
-                android:paddingHorizontal="10dp"
+                android:hint="🔍 ابحث عن فيلم أو قناة لتشغيلها فوراً في الغرفة..."
+                android:paddingHorizontal="12dp"
                 android:singleLine="true"
                 android:textColor="#FFFFFF"
                 android:textColorHint="#7A869A"
@@ -859,64 +590,127 @@
                 android:id="@+id/rvMediaPickerList"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
-                android:layout_weight="1" />
+                android:layout_weight="1"
+                android:clipToPadding="false"
+                android:paddingBottom="8dp" />
         </LinearLayout>
 
-        <!-- TAB 4: LOGS & STATS -->
+        <!-- ================= TAB 2: الدردشة والتفاعلات المدمجة ================= -->
         <LinearLayout
-            android:id="@+id/panelTabLogsStats"
+            android:id="@+id/panelTabChat"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:orientation="vertical"
-            android:padding="6dp"
+            android:paddingHorizontal="10dp"
+            android:paddingTop="6dp"
             android:visibility="gone">
 
-            <TextView
-                android:id="@+id/tvRoomDetailedStats"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/wt_bg_card"
-                android:padding="8dp"
-                android:text="إحصائيات الغرفة وحالة المزامنة"
-                android:textColor="#E0E6ED"
-                android:textSize="11sp" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginVertical="4dp"
-                android:orientation="horizontal">
-
-                <androidx.appcompat.widget.AppCompatButton
-                    android:id="@+id/btnExtendRoomTime"
-                    android:layout_width="0dp"
-                    android:layout_height="32dp"
-                    android:layout_marginEnd="6dp"
-                    android:layout_weight="1"
-                    android:background="@drawable/wt_bg_btn_green"
-                    android:text="⏱️ تمديد صلاحية الغرفة (+1 ساعة)"
-                    android:textAllCaps="false"
-                    android:textColor="#FFFFFF"
-                    android:textSize="10sp" />
-
-                <androidx.appcompat.widget.AppCompatButton
-                    android:id="@+id/btnClearEventLogs"
-                    android:layout_width="wrap_content"
-                    android:layout_height="32dp"
-                    android:background="@drawable/wt_bg_badge_dark"
-                    android:paddingHorizontal="10dp"
-                    android:text="🧹 مسح السجل"
-                    android:textAllCaps="false"
-                    android:textColor="#B0BEC5"
-                    android:textSize="10sp" />
-            </LinearLayout>
-
             <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/rvRoomEventLogs"
+                android:id="@+id/rvChatMessages"
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
                 android:layout_weight="1" />
+
+            <!-- شريط الإيموجي المدمج فوق الكتابة -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="28dp"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <TextView android:id="@+id/btnEmojiFire" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="🔥" android:textSize="14sp" />
+                <TextView android:id="@+id/btnEmojiHeart" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="❤️" android:textSize="14sp" />
+                <TextView android:id="@+id/btnEmojiLaugh" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="😂" android:textSize="14sp" />
+                <TextView android:id="@+id/btnEmojiClap" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="👏" android:textSize="14sp" />
+                <TextView android:id="@+id/btnEmojiSoccer" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="🍿" android:textSize="14sp" />
+                <TextView android:id="@+id/btnEmojiGoal" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="🎬" android:textSize="14sp" />
+                <TextView android:id="@+id/btnEmojiShock" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="😱" android:textSize="14sp" />
+                <TextView android:id="@+id/btnEmojiParty" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:text="🎉" android:textSize="14sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="4dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/etChatMessageInput"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@drawable/wt_bg_input"
+                    android:hint="اكتب رسالة لأصدقائك في الغرفة..."
+                    android:imeOptions="actionSend"
+                    android:inputType="text"
+                    android:paddingHorizontal="12dp"
+                    android:singleLine="true"
+                    android:textColor="#FFFFFF"
+                    android:textColorHint="#7A869A"
+                    android:textSize="12sp" />
+
+                <androidx.appcompat.widget.AppCompatButton
+                    android:id="@+id/btnSendChatMessage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/wt_bg_btn_primary"
+                    android:paddingHorizontal="16dp"
+                    android:text="إرسال"
+                    android:textAllCaps="false"
+                    android:textColor="#FFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ================= TAB 3: المتصلون ================= -->
+        <LinearLayout
+            android:id="@+id/panelTabParticipants"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:padding="10dp"
+            android:visibility="gone">
+
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/btnMuteAllParticipants"
+                android:layout_width="match_parent"
+                android:layout_height="34dp"
+                android:layout_marginBottom="8dp"
+                android:background="@drawable/wt_bg_badge_dark"
+                android:text="🔇 كتم صوت الجميع (للمضيف)"
+                android:textAllCaps="false"
+                android:textColor="#FFCDD2"
+                android:textSize="11sp" />
+
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/btnManageBansOpen"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:visibility="gone" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvParticipantsList"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1" />
+        </LinearLayout>
+
+        <!-- TAB 4: مخفي -->
+        <LinearLayout
+            android:id="@+id/panelTabLogsStats"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone">
+            <TextView android:id="@+id/tvRoomDetailedStats" android:layout_width="0dp" android:layout_height="0dp" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnExtendRoomTime" android:layout_width="0dp" android:layout_height="0dp" />
+            <androidx.appcompat.widget.AppCompatButton android:id="@+id/btnClearEventLogs" android:layout_width="0dp" android:layout_height="0dp" />
+            <androidx.recyclerview.widget.RecyclerView android:id="@+id/rvRoomEventLogs" android:layout_width="0dp" android:layout_height="0dp" />
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>

@@ -183,13 +183,21 @@ class RegisterActivity : AppCompatActivity() {
             btnCreateAccountSubmit.isEnabled = false
             btnCreateAccountSubmit.text = "⏳ جاري إنشاء الحساب..."
 
-            val avatarVal = selectedDefaultAvatar ?: (selectedImageUri?.toString() ?: "👑")
+            val avatarVal = selectedDefaultAvatar ?: "👑"
+            val photoUriVal = selectedImageUri?.toString() ?: ""
             val newUser = JSONObject().apply {
                 put("fullName", fullName)
                 put("username", username)
-                put("email", email)
+                put("email", email.lowercase(java.util.Locale.US))
                 put("password", password)
+                put("hasPassword", true)
                 put("avatar", avatarVal)
+                put("photoUri", photoUriVal)
+                put("prefQualityIdx", 0)
+                put("notifEnabled", true)
+                put("voiceClear", true)
+                put("autoAudio", true)
+                put("appLang", "ar")
             }
 
             Thread {

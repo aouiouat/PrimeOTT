@@ -1,8 +1,7 @@
 name = "prime-ott-panel"
-main = "src/index.js"
-compatibility_date = "2024-10-01"
+main = "cloudflare_worker.js"
+compatibility_date = "2024-09-01"
 
-[[d1_databases]]
-binding = "DB"
-database_name = "prime_ott_db"
-database_id = "99d13de1-2de3-4881-813a-279545f4d3d6"
+[[kv_namespaces]]
+binding = "ROYAL_KV"
+id = "dd6eb516d447458b99f63c6e3e39bf20"

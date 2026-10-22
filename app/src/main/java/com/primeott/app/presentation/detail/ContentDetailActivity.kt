@@ -197,6 +197,12 @@ class ContentDetailActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // AUTO_BIND_WATCH_TOGETHER_BUTTONS
+        window.decorView.post {
+            this@ContentDetailActivity.bindAllWatchTogetherButtonsInDetail(window.decorView)
+        }
+
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         val item = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -2273,7 +2279,7 @@ class ContentDetailActivity : AppCompatActivity() {
             )
             if (ok) {
                 playerEngine.pauseAndReleaseSocket()
-                startActivity(Intent(this@ContentDetailActivity, WatchRoomActivity::class.java).apply {
+                startActivity(this@ContentDetailActivity.buildDirectWatchTogetherIntent().apply {
                     putExtra(WatchRoomActivity.EXTRA_ROOM_CODE, codeOrErr)
                 })
             } else {
@@ -2483,3 +2489,154 @@ class CastHorizontalAdapter(
         holder.root.setOnClickListener { onActorClick(c) }
     }
 }
+
+
+// === WATCH_TOGETHER_TOP_LEVEL_EXTENSIONS ===
+fun ContentDetailActivity.bindAllWatchTogetherButtonsInDetail(root: android.view.View?) {
+    if (root == null) return
+    val idNames = listOf(
+        "btnWatchTogether", "watchTogetherButton", "btnWatchParty",
+        "btnWatchRoom", "cardWatchTogether", "llWatchTogether", "btnShareWatch"
+    )
+    for (name in idNames) {
+        val id = resources.getIdentifier(name, "id", packageName)
+        if (id != 0) {
+            root.findViewById<android.view.View>(id)?.setOnClickListener {
+                this@bindAllWatchTogetherButtonsInDetail.launchDirectMovieWatchTogether()
+            }
+        }
+    }
+    this.findAndHookWatchViewsRecursive(root)
+}
+
+fun ContentDetailActivity.findAndHookWatchViewsRecursive(v: android.view.View) {
+    if (v is android.widget.TextView) {
+        val t = v.text?.toString()?.lowercase(java.util.Locale.US) ?: ""
+        if (t.contains("watch together") || t.contains("مشاهدة جماعية") || t.contains("المشاهدة الجماعية") || t.contains("غرفة مشاهدة") || t.contains("مع الأصدقاء")) {
+            v.setOnClickListener { this@findAndHookWatchViewsRecursive.launchDirectMovieWatchTogether() }
+            (v.parent as? android.view.View)?.let { parentView ->
+                if (parentView.isClickable) {
+                    parentView.setOnClickListener { this@findAndHookWatchViewsRecursive.launchDirectMovieWatchTogether() }
+                }
+            }
+        }
+    }
+    if (v is android.view.ViewGroup) {
+        for (idx in 0 until v.childCount) {
+            this.findAndHookWatchViewsRecursive(v.getChildAt(idx))
+        }
+    }
+}
+
+fun ContentDetailActivity.extractCurrentMovieTitle(): String {
+    val extras = intent?.extras
+    if (extras != null) {
+        for (k in listOf("title", "name", "stream_title", "channel_name", "movie_name", "EXTRA_TITLE", "EXTRA_NAME", "content_title")) {
+            val v = extras.getString(k)
+            if (!v.isNullOrBlank()) return v
+        }
+    }
+    try {
+        for (f in this.javaClass.declaredFields) {
+            f.isAccessible = true
+            val obj = f.get(this) ?: continue
+            val fn = f.name.lowercase(java.util.Locale.US)
+            if (obj is String && (fn.contains("title") || fn.contains("name")) && obj.isNotBlank() && !obj.startsWith("http")) {
+                return obj
+            }
+        }
+    } catch (_: Throwable) {}
+    return title?.toString()?.takeIf { it.isNotBlank() } ?: "فيلم مشترك"
+}
+
+fun ContentDetailActivity.extractCurrentMovieStreamUrl(): String {
+    val isImg = { u: String ->
+        val l = u.lowercase(java.util.Locale.US).substringBefore("?")
+        l.endsWith(".jpg") || l.endsWith(".jpeg") || l.endsWith(".png") || l.endsWith(".webp") || l.endsWith(".gif") || l.contains("/images/") || l.contains("tmdb.org")
+    }
+
+    val extras = intent?.extras
+    if (extras != null) {
+        for (k in listOf("stream_url", "STREAM_URL", "url", "video_url", "movie_url", "content_url", "play_url", "direct_source", "EXTRA_STREAM_URL", "EXTRA_URL")) {
+            val v = extras.get(k)?.toString() ?: ""
+            if (v.startsWith("http") && !isImg(v)) return v
+        }
+    }
+
+    try {
+        for (m in this.javaClass.declaredMethods) {
+            m.isAccessible = true
+            val mn = m.name.lowercase(java.util.Locale.US)
+            if (m.parameterCount == 0 && m.returnType == String::class.java && (mn.contains("url") || mn.contains("stream"))) {
+                val res = (m.invoke(this) as? String) ?: ""
+                if (res.startsWith("http") && !isImg(res)) return res
+            }
+        }
+    } catch (_: Throwable) {}
+
+    var discoveredStreamId = ""
+    var discoveredExt = "mp4"
+
+    try {
+        for (field in this.javaClass.declaredFields) {
+            field.isAccessible = true
+            val value = field.get(this) ?: continue
+            val fname = field.name.lowercase(java.util.Locale.US)
+            if (value is String) {
+                if (value.startsWith("http") && !isImg(value)) return value
+                if ((fname.contains("streamid") || fname == "id" || fname == "contentid" || fname == "vodid") && value.isNotBlank() && value != "0") {
+                    discoveredStreamId = value
+                }
+                if (fname.contains("ext") && value.isNotBlank() && value.length <= 5) {
+                    discoveredExt = value.trimStart('.')
+                }
+            }
+        }
+    } catch (_: Throwable) {}
+
+    val prefs = getSharedPreferences("prime_ott_prefs", android.content.Context.MODE_PRIVATE)
+    val host = (prefs.getString("server_url", "http://kwick.cc:8080") ?: "http://kwick.cc:8080").trimEnd('/')
+    val user = prefs.getString("username", "") ?: ""
+    val pass = prefs.getString("password", "") ?: ""
+
+    if (discoveredStreamId.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
+        return "$host/movie/$user/$pass/$discoveredStreamId.$discoveredExt"
+    }
+
+    return ""
+}
+
+fun ContentDetailActivity.buildDirectWatchTogetherIntent(): android.content.Intent {
+    val movieTitle = extractCurrentMovieTitle()
+    val directStreamUrl = extractCurrentMovieStreamUrl()
+    val extras = intent?.extras
+    var sid = ""
+    if (extras != null) {
+        for (k in extras.keySet()) {
+            val v = extras.get(k)?.toString() ?: ""
+            if ((k.contains("id", true) || k.contains("stream", true)) && v.isNotBlank() && v != "0") {
+                sid = v
+                break
+            }
+        }
+    }
+    return android.content.Intent(this, com.primeott.app.presentation.watch.WatchRoomActivity::class.java).apply {
+        if (extras != null) putExtras(extras)
+        if (directStreamUrl.isNotEmpty()) putExtra(com.primeott.app.presentation.watch.WatchRoomActivity.EXTRA_STREAM_URL, directStreamUrl)
+        putExtra(com.primeott.app.presentation.watch.WatchRoomActivity.EXTRA_STREAM_TITLE, movieTitle)
+        putExtra(com.primeott.app.presentation.watch.WatchRoomActivity.EXTRA_CHANNEL_NAME, movieTitle)
+        putExtra(com.primeott.app.presentation.watch.WatchRoomActivity.EXTRA_ROOM_NAME, "غرفة " + movieTitle)
+        putExtra(com.primeott.app.presentation.watch.WatchRoomActivity.EXTRA_IS_HOST, true)
+        if (sid.isNotEmpty()) putExtra("stream_id", sid)
+        putExtra("direct_movie_launch", true)
+    }
+}
+
+fun ContentDetailActivity.launchDirectMovieWatchTogether() {
+    try {
+        startActivity(buildDirectWatchTogetherIntent())
+    } catch (e: Throwable) {
+        android.widget.Toast.makeText(this, "جاري فتح غرفة المشاهدة...", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
