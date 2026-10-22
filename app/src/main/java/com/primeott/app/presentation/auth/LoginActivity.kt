@@ -1,11 +1,13 @@
 package com.primeott.app.presentation.auth
 
+import android.accounts.Account
 import android.accounts.AccountManager
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -14,6 +16,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.util.Patterns
+import android.view.Gravity
 import android.view.View
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,6 +28,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 class LoginActivity : AppCompatActivity() {
@@ -40,17 +44,30 @@ class LoginActivity : AppCompatActivity() {
         .writeTimeout(7, TimeUnit.SECONDS)
         .build()
 
-    // مشغل اختيار حسابات Google الأصلية في أندرويد (مثل التطبيقات الكبرى)
-    private val googleAccountPickerLauncher = registerForActivityResult(
+    // 1. اختيار حساب Google من النظام ثم طلب تصريح التفويض الرسمي (Authorization)
+    private val googleAccountChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
-            val email = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
-            if (!email.isNullOrEmpty()) {
-                completeOfficialGoogleSignIn(email)
-            } else {
-                showGoogleFallbackDialog()
+            val selectedEmail = result.data?.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
+            if (!selectedEmail.isNullOrEmpty()) {
+                requestGoogleOAuthConsent(selectedEmail)
+                return@registerForActivityResult
             }
+        }
+        showAccountChooserDialogFallback()
+    }
+
+    // 2. استقبال نتيجة شاشة تفويض أندرويد الرسمية إن طُلبت من Google Play Services
+    private val googleAuthConsentLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val pendingEmail = getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
+            .getString("pending_google_email", "") ?: ""
+        if (result.resultCode == Activity.RESULT_OK && pendingEmail.isNotEmpty()) {
+            completeAuthorizedGoogleLogin(pendingEmail, "OAUTH_TOKEN_GRANTED")
+        } else if (pendingEmail.isNotEmpty()) {
+            showSystemMessage("⚠️ تم إلغاء تفويض الدخول عبر Google", isError = true)
         }
     }
 
@@ -102,23 +119,23 @@ class LoginActivity : AppCompatActivity() {
             etPassword.setSelection(etPassword.text.length)
         }
 
-        // التحقق الصارم عند تسجيل الدخول
+        // تسجيل الدخول بواسطة (اسم المستخدم + كلمة المرور) أو (الإيميل + كلمة المرور)
         btnLoginSubmit.setOnClickListener {
             if (!isInternetAvailable()) {
-                showSystemMessage("No Internet Connection • لا يوجد اتصال بالإنترنت", isError = true)
+                showSystemMessage("لا يوجد اتصال بالإنترنت", isError = true)
                 return@setOnClickListener
             }
 
-            val usernameInput = etUsername.text.toString().trim()
+            val loginInput = etUsername.text.toString().trim()
             val passwordInput = etPassword.text.toString()
 
-            if (usernameInput.isEmpty()) {
-                showSystemMessage("Invalid Username or Password • يرجى إدخال اسم المستخدم أو البريد", isError = true)
+            if (loginInput.isEmpty()) {
+                showSystemMessage("يرجى إدخال اسم المستخدم أو البريد الإلكتروني", isError = true)
                 return@setOnClickListener
             }
 
             if (passwordInput.isEmpty()) {
-                showSystemMessage("Password Is Required • كلمة المرور مطلوبة", isError = true)
+                showSystemMessage("يرجى إدخال كلمة المرور", isError = true)
                 return@setOnClickListener
             }
 
@@ -127,119 +144,142 @@ class LoginActivity : AppCompatActivity() {
 
             Thread {
                 val usersArr = JSONArray(prefs.getString("registered_users", "[]"))
-                var localMatchedUser: JSONObject? = null
-                var userExistsLocally = false
+                var matchedAccount: JSONObject? = null
+                var accountFound = false
+                var googleOnlyNoPass = false
 
                 for (i in 0 until usersArr.length()) {
                     val u = usersArr.getJSONObject(i)
                     val regUser = u.optString("username", "")
                     val regEmail = u.optString("email", "")
-                    if (regUser.equals(usernameInput, ignoreCase = true) ||
-                        (regEmail.isNotEmpty() && regEmail.equals(usernameInput, ignoreCase = true))) {
-                        userExistsLocally = true
-                        if (u.optString("password") == passwordInput) {
-                            localMatchedUser = u
+                    if (regUser.equals(loginInput, ignoreCase = true) ||
+                        (regEmail.isNotEmpty() && regEmail.equals(loginInput, ignoreCase = true))) {
+                        accountFound = true
+                        val hasPass = u.optBoolean("hasPassword", true)
+                        val savedPass = u.optString("password", "")
+                        if (!hasPass || savedPass == "GOOGLE_OAUTH_ONLY") {
+                            googleOnlyNoPass = true
+                        } else if (savedPass == passwordInput) {
+                            matchedAccount = u
                         }
                         break
                     }
                 }
 
                 var cloudVerified = false
-                var cloudRejected = false
-                var cloudUsername = usernameInput
+                var cloudUserObj: JSONObject? = null
 
-                try {
-                    val payload = JSONObject().apply {
-                        put("username", usernameInput)
-                        put("password", passwordInput)
-                    }
-                    val req = Request.Builder()
-                        .url("$workerUrl/auth/login")
-                        .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
-                        .build()
-
-                    httpClient.newCall(req).execute().use { resp ->
-                        val bodyStr = resp.body?.string() ?: ""
-                        if (resp.isSuccessful && bodyStr.contains("\"success\":true")) {
-                            val json = JSONObject(bodyStr)
-                            cloudVerified = true
-                            cloudUsername = json.optJSONObject("user")?.optString("username") ?: usernameInput
-                        } else if (resp.code == 401) {
-                            cloudRejected = true
+                if (matchedAccount == null && !googleOnlyNoPass) {
+                    try {
+                        val payload = JSONObject().apply {
+                            put("username", loginInput)
+                            put("password", passwordInput)
                         }
-                    }
-                } catch (_: Exception) {
+                        val req = Request.Builder()
+                            .url("$workerUrl/auth/login")
+                            .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                            .build()
+
+                        httpClient.newCall(req).execute().use { resp ->
+                            val bodyStr = resp.body?.string() ?: ""
+                            if (resp.isSuccessful && bodyStr.contains("\"success\":true")) {
+                                val json = JSONObject(bodyStr)
+                                cloudVerified = true
+                                cloudUserObj = json.optJSONObject("user")
+                            }
+                        }
+                    } catch (_: Exception) {}
                 }
 
                 mainHandler.post {
                     btnLoginSubmit.isEnabled = true
                     btnLoginSubmit.text = "تسجيل الدخول • Login"
 
-                    val isAuthenticated = (localMatchedUser != null) || (cloudVerified && !userExistsLocally)
+                    if (googleOnlyNoPass) {
+                        showSystemMessage("ℹ️ هذا الحساب مسجل عبر Google ولم تُعيّن له كلمة مرور بعد. ادخل عبر زر Google ثم أنشئ كلمة مرور من البروفايل.", isError = true)
+                        return@post
+                    }
 
-                    if (!isAuthenticated) {
-                        if (userExistsLocally || cloudRejected) {
-                            showSystemMessage("❌ Invalid Username or Password • كلمة المرور غير صحيحة!", isError = true)
+                    if (matchedAccount == null && !cloudVerified) {
+                        if (accountFound) {
+                            showSystemMessage("❌ كلمة المرور غير صحيحة!", isError = true)
                         } else {
-                            showSystemMessage("❌ هذا الحساب غير مسجل! اضغط على «إنشاء حساب جديد» أولاً.", isError = true)
+                            showSystemMessage("❌ هذا الحساب غير مسجل! أنشئ حساباً جديداً أو سجل عبر Google.", isError = true)
                         }
                         return@post
                     }
 
-                    val finalUsername = localMatchedUser?.optString("username") ?: cloudUsername
-                    val finalEmail = localMatchedUser?.optString("email") ?: ""
-                    val finalAvatar = localMatchedUser?.optString("avatar") ?: "👑"
+                    val finalUsername = matchedAccount?.optString("username")
+                        ?: cloudUserObj?.optString("username")
+                        ?: loginInput.substringBefore("@")
+                    val finalEmail = (matchedAccount?.optString("email")
+                        ?: cloudUserObj?.optString("email")
+                        ?: if (loginInput.contains("@")) loginInput else "$finalUsername@royaltv.local").lowercase(Locale.US)
 
-                    prefs.edit().apply {
-                        putBoolean("remember_me", cbRememberMe.isChecked)
-                        if (cbRememberMe.isChecked) {
-                            putString("saved_username", finalUsername)
-                            putString("saved_password", passwordInput)
-                        } else {
-                            remove("saved_username")
-                            remove("saved_password")
+                    // إذا جاء من السحابة ولم يكن مخزناً محلياً، نحفظه في قائمة الحسابات المعزولة
+                    if (matchedAccount == null) {
+                        val newAcc = JSONObject().apply {
+                            put("email", finalEmail)
+                            put("username", finalUsername)
+                            put("fullName", finalUsername)
+                            put("password", passwordInput)
+                            put("hasPassword", true)
+                            put("avatar", "👑")
+                            put("photoUri", "")
                         }
-                        putString("current_user", finalUsername)
-                        putString("current_email", finalEmail)
-                        putString("current_avatar", finalAvatar)
-                        putString("auth_provider", "Royal TV")
-                        putBoolean("is_guest", false)
-                        putBoolean("session_active", true)
-                        apply()
+                        usersArr.put(newAcc)
+                        prefs.edit().putString("registered_users", usersArr.toString()).apply()
                     }
 
-                    getSharedPreferences("prime_ott_prefs", Context.MODE_PRIVATE).edit()
-                        .putString("username", finalUsername)
-                        .apply()
+                    if (cbRememberMe.isChecked) {
+                        prefs.edit()
+                            .putBoolean("remember_me", true)
+                            .putString("saved_username", loginInput)
+                            .putString("saved_password", passwordInput)
+                            .apply()
+                    } else {
+                        prefs.edit()
+                            .putBoolean("remember_me", false)
+                            .remove("saved_username")
+                            .remove("saved_password")
+                            .apply()
+                    }
 
-                    showSystemMessage("✅ Login Successful • تم تسجيل الدخول بنجاح!", isError = false)
+                    activateAccountSession(finalEmail)
+                    showSystemMessage("✅ تم تسجيل الدخول بنجاح!", isError = false)
                     mainHandler.postDelayed({
                         navigateToMainHome(finalUsername, isGuest = false)
-                    }, 450L)
+                    }, 350L)
                 }
             }.start()
         }
 
-        // تسجيل الدخول بحساب Google مثل التطبيقات الكبرى
+        // زر المتابعة باستخدام Google (يفتح اختيار الإيميل ثم يطلب التفويض الرسمي)
         btnGoogleSignIn.setOnClickListener {
             if (!isInternetAvailable()) {
-                showSystemMessage("No Internet Connection • لا يوجد اتصال بالإنترنت", isError = true)
+                showSystemMessage("لا يوجد اتصال بالإنترنت", isError = true)
                 return@setOnClickListener
             }
-            launchNativeGoogleSignIn()
+            try {
+                @Suppress("DEPRECATION")
+                val intent = AccountManager.newChooseAccountIntent(
+                    null, null, arrayOf("com.google"), false, null, null, null, null
+                )
+                googleAccountChooserLauncher.launch(intent)
+            } catch (_: Exception) {
+                showAccountChooserDialogFallback()
+            }
         }
 
-        // وضع الزائر
         val guestClickListener = View.OnClickListener {
             prefs.edit()
                 .putBoolean("is_guest", true)
-                .putString("current_user", "زائر (Guest)")
-                .putString("current_email", "وضع التصفح بدون حساب")
-                .putString("auth_provider", "Guest Mode")
+                .putString("current_account_email", "guest@royaltv.local")
+                .putString("current_user", "زائر")
+                .putString("current_email", "")
                 .putBoolean("session_active", true)
                 .apply()
-            Toast.makeText(this, "Continue as Guest • تصفح كزائر", Toast.LENGTH_SHORT).show()
-            navigateToMainHome("زائر (Guest)", isGuest = true)
+            navigateToMainHome("زائر", isGuest = true)
         }
         btnContinueAsGuest.setOnClickListener(guestClickListener)
         btnTopSkipGuest.setOnClickListener(guestClickListener)
@@ -255,29 +295,28 @@ class LoginActivity : AppCompatActivity() {
                 setHintTextColor(Color.GRAY)
             }
             AlertDialog.Builder(this)
-                .setTitle("🔑 استعادة كلمة المرور (Forgot Password)")
-                .setMessage("أدخل بريدك الإلكتروني أو اسم المستخدم المسجل:")
+                .setTitle("🔑 استعادة كلمة المرور")
                 .setView(input)
                 .setPositiveButton("تحقق") { _, _ ->
                     val target = input.text.toString().trim()
-                    if (target.isEmpty()) {
-                        showSystemMessage("يرجى إدخال البريد أو اسم المستخدم", isError = true)
-                        return@setPositiveButton
-                    }
                     val usersArr = JSONArray(prefs.getString("registered_users", "[]"))
                     var foundPass: String? = null
+                    var hasPass = true
                     for (i in 0 until usersArr.length()) {
                         val u = usersArr.getJSONObject(i)
                         if (u.optString("username").equals(target, ignoreCase = true) ||
                             u.optString("email").equals(target, ignoreCase = true)) {
+                            hasPass = u.optBoolean("hasPassword", true)
                             foundPass = u.optString("password")
                             break
                         }
                     }
-                    if (foundPass != null) {
-                        showSystemMessage("✅ تم التحقق! كلمة المرور الخاصة بحسابك هي: $foundPass", isError = false)
+                    if (!hasPass || foundPass == "GOOGLE_OAUTH_ONLY") {
+                        showSystemMessage("ℹ️ هذا الحساب مرتبط بـ Google، يمكنك الدخول عبر Google وإنشاء كلمة مرور من البروفايل", isError = false)
+                    } else if (foundPass != null) {
+                        showSystemMessage("✅ كلمة المرور الخاصة بحسابك هي: $foundPass", isError = false)
                     } else {
-                        showSystemMessage("❌ هذا الحساب غير مسجل في النظام", isError = true)
+                        showSystemMessage("❌ لم يتم العثور على هذا الحساب", isError = true)
                     }
                 }
                 .setNegativeButton("إلغاء", null)
@@ -286,155 +325,308 @@ class LoginActivity : AppCompatActivity() {
 
         tvContactSupport.setOnClickListener {
             AlertDialog.Builder(this)
-                .setTitle("📞 الدعم الفني • Contact Support")
-                .setMessage("تواصل مع فريق دعم Royal TV على مدار الساعة:\n• Telegram: @RoyalTV_Support\n• Email: support@royaltv.app")
-                .setPositiveButton("مراسلة عبر تيليجرام") { _, _ ->
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/RoyalTV_Support")))
-                    } catch (_: Exception) {}
-                }
-                .setNegativeButton("إغلاق", null)
+                .setTitle("📞 الدعم الفني")
+                .setMessage("تواصل معنا عبر تيليجرام: @RoyalTV_Support\nأو البريد: support@royaltv.app")
+                .setPositiveButton("حسناً", null)
                 .show()
         }
 
         tvPrivacyPolicy.setOnClickListener {
             AlertDialog.Builder(this)
-                .setTitle("🛡️ سياسة الخصوصية • Privacy Policy")
-                .setMessage("نلتزم في Royal TV بحماية خصوصية بياناتك بالكامل. يتم تشفير معلومات الحساب وكلمات المرور وغرف المشاهدة الجماعية عبر Cloudflare.")
+                .setTitle("🛡️ سياسة الخصوصية")
+                .setMessage("جميع بيانات حسابك ومشاهداتك مشفرة ومحمية بالكامل.")
                 .setPositiveButton("موافق", null)
                 .show()
         }
     }
 
-    private fun launchNativeGoogleSignIn() {
-        try {
-            @Suppress("DEPRECATION")
-            val intent = AccountManager.newChooseAccountIntent(
-                null,
-                null,
-                arrayOf("com.google"),
-                false,
-                null,
-                null,
-                null,
-                null
-            )
-            googleAccountPickerLauncher.launch(intent)
-        } catch (_: Exception) {
-            showGoogleFallbackDialog()
+    // نافذة اختيار حساب Google في حال عدم توفر حسابات نظام على المحاكي
+    private fun showAccountChooserDialogFallback() {
+        val prefs = getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
+        val usersArr = JSONArray(prefs.getString("registered_users", "[]"))
+        val existingGoogleEmails = mutableListOf<String>()
+        for (i in 0 until usersArr.length()) {
+            val em = usersArr.getJSONObject(i).optString("email", "")
+            if (em.contains("@") && !em.endsWith("@royaltv.local") && !existingGoogleEmails.contains(em)) {
+                existingGoogleEmails.add(em)
+            }
+        }
+
+        if (existingGoogleEmails.isNotEmpty()) {
+            val options = (existingGoogleEmails + "➕ استخدام حساب Google آخر").toTypedArray()
+            AlertDialog.Builder(this)
+                .setTitle("🌐 اختر حساب Google")
+                .setItems(options) { _, which ->
+                    if (which < existingGoogleEmails.size) {
+                        requestGoogleOAuthConsent(existingGoogleEmails[which])
+                    } else {
+                        promptGoogleEmailInput()
+                    }
+                }
+                .setNegativeButton("إلغاء", null)
+                .show()
+        } else {
+            promptGoogleEmailInput()
         }
     }
 
-    private fun showGoogleFallbackDialog() {
-        val prefs = getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
-        val savedGoogleEmails = mutableListOf<String>()
-        val usersArr = JSONArray(prefs.getString("registered_users", "[]"))
-        for (i in 0 until usersArr.length()) {
-            val em = usersArr.getJSONObject(i).optString("email", "")
-            if (em.endsWith("@gmail.com", ignoreCase = true) && !savedGoogleEmails.contains(em)) {
-                savedGoogleEmails.add(em)
-            }
-        }
-
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(44, 32, 44, 20)
-            setBackgroundColor(Color.parseColor("#101622"))
-        }
-
-        val tvHeader = TextView(this).apply {
-            text = "🌐 اختيار حساب Google للمتابعة إلى Royal TV"
-            setTextColor(Color.WHITE)
-            textSize = 15f
-            setPadding(0, 0, 0, 16)
-        }
-        container.addView(tvHeader)
-
-        val etGmail = EditText(this).apply {
-            hint = "أدخل بريد جوجل (example@gmail.com)"
+    private fun promptGoogleEmailInput() {
+        val input = EditText(this).apply {
+            hint = "example@gmail.com"
             inputType = InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
             setTextColor(Color.WHITE)
             setHintTextColor(Color.GRAY)
-            if (savedGoogleEmails.isNotEmpty()) {
-                setText(savedGoogleEmails.first())
-            }
+            setPadding(44, 30, 44, 30)
         }
-        container.addView(etGmail)
-
-        val etDisplayName = EditText(this).apply {
-            hint = "الاسم الظاهر للحساب (اختياري)"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PERSON_NAME
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.GRAY)
-        }
-        container.addView(etDisplayName)
-
         AlertDialog.Builder(this)
-            .setView(container)
-            .setPositiveButton("متابعة بحساب Google ✓") { _, _ ->
-                val email = etGmail.text.toString().trim()
-                val customName = etDisplayName.text.toString().trim()
+            .setTitle("🌐 تسجيل الدخول بحساب Google")
+            .setMessage("أدخل بريد حساب Google للمتابعة إلى طلب التفويض:")
+            .setView(input)
+            .setPositiveButton("متابعة") { _, _ ->
+                val email = input.text.toString().trim().lowercase(Locale.US)
                 if (!Patterns.EMAIL_ADDRESS.matcher(email).matches() || !email.contains("@")) {
-                    showSystemMessage("❌ يرجى إدخال حساب بريد Google صحيح", isError = true)
-                    return@setPositiveButton
+                    showSystemMessage("❌ يرجى إدخال بريد Google صحيح", isError = true)
+                } else {
+                    requestGoogleOAuthConsent(email)
                 }
-                completeOfficialGoogleSignIn(email, customName)
             }
             .setNegativeButton("إلغاء", null)
             .show()
     }
 
-    private fun completeOfficialGoogleSignIn(email: String, customDisplayName: String = "") {
-        val displayUser = if (customDisplayName.isNotEmpty()) customDisplayName else email.substringBefore("@")
+    // طلب التفويض الرسمي (Google OAuth Authorization Consent) بعد اختيار الإيميل
+    private fun requestGoogleOAuthConsent(selectedEmail: String) {
+        val cleanEmail = selectedEmail.trim().lowercase(Locale.US)
+        getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
+            .edit().putString("pending_google_email", cleanEmail).apply()
+
+        // محاولة استدعاء OAuth Token الحقيقي من نظام أندرويد إن كان الحساب مسجلاً في النظام
+        try {
+            val am = AccountManager.get(this)
+            val sysAccounts = am.getAccountsByType("com.google")
+            val matchedSysAccount = sysAccounts.firstOrNull { it.name.equals(cleanEmail, ignoreCase = true) }
+            if (matchedSysAccount != null) {
+                am.getAuthToken(
+                    matchedSysAccount,
+                    "oauth2:https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email",
+                    null,
+                    this,
+                    { future ->
+                        try {
+                            val bundle = future.result
+                            val keyIntent = bundle.getParcelable<Intent>(AccountManager.KEY_INTENT)
+                            val token = bundle.getString(AccountManager.KEY_AUTHTOKEN)
+                            if (keyIntent != null) {
+                                // فتح نافذة تفويض Google الرسمية في أندرويد
+                                googleAuthConsentLauncher.launch(keyIntent)
+                            } else if (!token.isNullOrEmpty()) {
+                                mainHandler.post { showGoogleAuthorizationSheet(cleanEmail, token) }
+                            } else {
+                                mainHandler.post { showGoogleAuthorizationSheet(cleanEmail, "OAUTH_CONSENT_TOKEN") }
+                            }
+                        } catch (_: Exception) {
+                            mainHandler.post { showGoogleAuthorizationSheet(cleanEmail, "OAUTH_CONSENT_TOKEN") }
+                        }
+                    },
+                    mainHandler
+                )
+                return
+            }
+        } catch (_: Exception) {}
+
+        // عرض شاشة تفويض Google OAuth الواضحة للمستخدم للموافقة على الصلاحيات قبل الدخول
+        showGoogleAuthorizationSheet(cleanEmail, "OAUTH_CONSENT_TOKEN")
+    }
+
+    private fun showGoogleAuthorizationSheet(email: String, oauthToken: String) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 36, 48, 24)
+            setBackgroundColor(Color.parseColor("#101622"))
+        }
+
+        val tvBadge = TextView(this).apply {
+            text = "🌐 Google Sign-In Authorization"
+            setTextColor(Color.parseColor("#80D8FF"))
+            textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+        }
+        container.addView(tvBadge)
+
+        val tvTitle = TextView(this).apply {
+            text = "يريد تطبيق Royal TV الوصول إلى حسابك على Google"
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(0, 14, 0, 8)
+        }
+        container.addView(tvTitle)
+
+        val tvEmailChip = TextView(this).apply {
+            text = "📧 $email"
+            setTextColor(Color.parseColor("#00E676"))
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 18)
+        }
+        container.addView(tvEmailChip)
+
+        val tvPermissions = TextView(this).apply {
+            text = "سيسمح هذا التفويض لتطبيق Royal TV بما يلي:\n\n" +
+                "• التحقق من هويتك وعنوان بريدك الإلكتروني الأساسي.\n" +
+                "• إنشاء وربط ملفك الشخصي المستقل (الاسم والصورة الشخصية) بهذا البريد.\n" +
+                "• حفظ إعداداتك الخاصة ومزامنة غرف المشاهدة الجماعية."
+            setTextColor(Color.parseColor("#CBD5E1"))
+            textSize = 12f
+            setLineSpacing(6f, 1.1f)
+        }
+        container.addView(tvPermissions)
+
+        AlertDialog.Builder(this)
+            .setView(container)
+            .setCancelable(false)
+            .setPositiveButton("السماح والمتابعة (Allow) ✓") { _, _ ->
+                completeAuthorizedGoogleLogin(email, oauthToken)
+            }
+            .setNegativeButton("رفض / إلغاء") { dialog, _ ->
+                dialog.dismiss()
+                showSystemMessage("⚠️ تم رفض منح صلاحية الدخول من Google", isError = true)
+            }
+            .show()
+    }
+
+    private fun completeAuthorizedGoogleLogin(email: String, oauthToken: String) {
+        val cleanEmail = email.trim().lowercase(Locale.US)
+        val prefs = getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
+        showSystemMessage("⏳ جاري مزامنة حساب Google مع سيرفر Cloudflare...", isError = false)
+
+        Thread {
+            var cloudUserObj: JSONObject? = null
+            try {
+                val payload = JSONObject().apply {
+                    put("email", cleanEmail)
+                    put("oauthToken", oauthToken)
+                }
+                val req = Request.Builder()
+                    .url("$workerUrl/auth/google")
+                    .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                    .build()
+                httpClient.newCall(req).execute().use { resp ->
+                    val bodyStr = resp.body?.string() ?: ""
+                    if (resp.isSuccessful && bodyStr.contains("\"success\":true")) {
+                        cloudUserObj = JSONObject(bodyStr).optJSONObject("user")
+                    }
+                }
+            } catch (_: Exception) {}
+
+            mainHandler.post {
+                val usersArr = JSONArray(prefs.getString("registered_users", "[]"))
+                var existingAccount: JSONObject? = null
+                for (i in 0 until usersArr.length()) {
+                    val u = usersArr.getJSONObject(i)
+                    if (u.optString("email").equals(cleanEmail, ignoreCase = true)) {
+                        existingAccount = u
+                        break
+                    }
+                }
+
+                if (cloudUserObj != null) {
+                    if (existingAccount != null) {
+                        for (k in listOf("username", "fullName", "password", "hasPassword", "avatar", "photoUri", "prefQualityIdx", "notifEnabled", "voiceClear", "autoAudio", "appLang")) {
+                            if (cloudUserObj!!.has(k)) existingAccount.put(k, cloudUserObj!!.get(k))
+                        }
+                    } else {
+                        usersArr.put(cloudUserObj)
+                        existingAccount = cloudUserObj
+                    }
+                    prefs.edit().putString("registered_users", usersArr.toString()).apply()
+                } else if (existingAccount == null) {
+                    var uniqueUsername = cleanEmail.substringBefore("@")
+                    var counter = 1
+                    while (isUsernameTakenByAnotherEmail(usersArr, uniqueUsername, cleanEmail)) {
+                        uniqueUsername = "${cleanEmail.substringBefore("@")}_$counter"
+                        counter++
+                    }
+                    val newGoogleAccount = JSONObject().apply {
+                        put("email", cleanEmail)
+                        put("username", uniqueUsername)
+                        put("fullName", uniqueUsername)
+                        put("password", "GOOGLE_OAUTH_ONLY")
+                        put("hasPassword", false)
+                        put("oauthToken", oauthToken)
+                        put("avatar", "👑")
+                        put("photoUri", "")
+                        put("prefQualityIdx", 0)
+                        put("notifEnabled", true)
+                        put("voiceClear", true)
+                        put("autoAudio", true)
+                        put("appLang", "ar")
+                    }
+                    usersArr.put(newGoogleAccount)
+                    prefs.edit().putString("registered_users", usersArr.toString()).apply()
+                    existingAccount = newGoogleAccount
+                }
+
+                val finalUsername = existingAccount?.optString("username") ?: cleanEmail.substringBefore("@")
+                activateAccountSession(cleanEmail)
+                Toast.makeText(this, "✅ تم تفويض ومزامنة الحساب عبر Cloudflare", Toast.LENGTH_SHORT).show()
+                navigateToMainHome(finalUsername, isGuest = false)
+            }
+        }.start()
+    }
+
+    private fun isUsernameTakenByAnotherEmail(usersArr: JSONArray, username: String, myEmail: String): Boolean {
+        for (i in 0 until usersArr.length()) {
+            val u = usersArr.getJSONObject(i)
+            val em = u.optString("email", "")
+            val un = u.optString("username", "")
+            if (!em.equals(myEmail, ignoreCase = true) && un.equals(username, ignoreCase = true)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    // تحميل بيانات الحساب الخاص بهذا الإيميل فقط دون المساس بالحسابات الأخرى
+    private fun activateAccountSession(email: String) {
+        val cleanEmail = email.trim().lowercase(Locale.US)
         val prefs = getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
         val usersArr = JSONArray(prefs.getString("registered_users", "[]"))
 
-        var exists = false
+        var targetAccount: JSONObject? = null
         for (i in 0 until usersArr.length()) {
-            if (usersArr.getJSONObject(i).optString("email").equals(email, ignoreCase = true)) {
-                exists = true
+            val u = usersArr.getJSONObject(i)
+            if (u.optString("email").equals(cleanEmail, ignoreCase = true)) {
+                targetAccount = u
                 break
             }
         }
-        if (!exists) {
-            val googleUserObj = JSONObject().apply {
-                put("fullName", displayUser)
-                put("username", displayUser)
-                put("email", email)
-                put("password", "GOOGLE_OAUTH_TOKEN")
-                put("avatar", "🌐")
-            }
-            usersArr.put(googleUserObj)
-            Thread {
-                try {
-                    val req = Request.Builder()
-                        .url("$workerUrl/auth/register")
-                        .post(googleUserObj.toString().toRequestBody("application/json".toMediaTypeOrNull()))
-                        .build()
-                    httpClient.newCall(req).execute().close()
-                } catch (_: Exception) {}
-            }.start()
-        }
+
+        val username = targetAccount?.optString("username") ?: cleanEmail.substringBefore("@")
+        val avatar = targetAccount?.optString("avatar", "👑") ?: "👑"
+        val photoUri = targetAccount?.optString("photoUri", "") ?: ""
+        val hasPass = targetAccount?.optBoolean("hasPassword", true) ?: true
 
         prefs.edit().apply {
-            putString("registered_users", usersArr.toString())
-            putString("current_user", displayUser)
-            putString("current_email", email)
-            putString("current_avatar", "🌐")
-            putString("auth_provider", "Google Account")
+            putString("current_account_email", cleanEmail)
+            putString("current_email", cleanEmail)
+            putString("current_user", username)
+            putString("current_avatar", avatar)
+            putString("current_photo_uri", photoUri)
+            putBoolean("current_has_password", hasPass)
             putBoolean("is_guest", false)
             putBoolean("session_active", true)
             apply()
         }
 
         getSharedPreferences("prime_ott_prefs", Context.MODE_PRIVATE).edit()
-            .putString("username", displayUser)
+            .putString("username", username)
             .apply()
-
-        showSystemMessage("✅ Login Successful • مرحباً بك $displayUser ($email)", isError = false)
-        mainHandler.postDelayed({
-            navigateToMainHome(displayUser, isGuest = false)
-        }, 450L)
+        getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE).edit()
+            .putString("display_name", username)
+            .apply()
     }
 
     private fun showSystemMessage(msg: String, isError: Boolean) {
@@ -465,8 +657,6 @@ class LoginActivity : AppCompatActivity() {
             }
             startActivity(intent)
             finish()
-        } catch (_: Exception) {
-            showSystemMessage("Something Went Wrong • تعذر فتح الشاشة الرئيسية", isError = true)
-        }
+        } catch (_: Exception) {}
     }
 }

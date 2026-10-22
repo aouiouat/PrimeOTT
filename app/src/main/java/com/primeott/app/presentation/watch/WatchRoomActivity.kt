@@ -26,17 +26,25 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.AppCompatButton
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.primeott.app.R
 import okhttp3.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
@@ -75,6 +83,7 @@ class WatchTogetherController(
         var isPlaying: Boolean = true,
         var playbackPositionMs: Long = 0L,
         val createdAt: Long = System.currentTimeMillis(),
+        var lastActiveAt: Long = System.currentTimeMillis(),
         var expiresAt: Long = System.currentTimeMillis() + 3 * 3600_000L,
         var isChatLocked: Boolean = false,
         var isVoiceLocked: Boolean = false
@@ -87,7 +96,7 @@ class WatchTogetherController(
         var isMuted: Boolean = true,
         var isHostForceMuted: Boolean = false,
         var isSpeaking: Boolean = false,
-        var pingMs: Int = 32,
+        var pingMs: Int = 28,
         var lastSeen: Long = System.currentTimeMillis()
     )
 
@@ -125,9 +134,9 @@ class WatchTogetherController(
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .writeTimeout(8, TimeUnit.SECONDS)
+        .connectTimeout(7, TimeUnit.SECONDS)
+        .readTimeout(7, TimeUnit.SECONDS)
+        .writeTimeout(7, TimeUnit.SECONDS)
         .pingInterval(15, TimeUnit.SECONDS)
         .build()
 
@@ -138,6 +147,7 @@ class WatchTogetherController(
     private lateinit var localUserName: String
     private lateinit var authToken: String
 
+    // القائمة تحتوي فقط على الغرف الحقيقية النشطة (بدون أي غرف وهمية)
     private val activeRoomsList = mutableListOf<WatchRoomModel>()
     private val filteredRoomsList = mutableListOf<WatchRoomModel>()
     private var currentLobbyFilter = "ALL"
@@ -162,7 +172,7 @@ class WatchTogetherController(
     private var statTotalMessages = 0
     private var statTotalEmojis = 0
     private var statSyncCount = 0
-    private var backendPingMs = 31
+    private var backendPingMs = 28
     private var isDestroyed = false
 
     private var webSocket: WebSocket? = null
@@ -172,6 +182,9 @@ class WatchTogetherController(
     private var currentResizeModeIndex = 0
     private var isHandlingRemoteSync = false
 
+    // Max inactivity duration before a room is considered dead and auto-closed (2 minutes)
+    private val maxRoomInactivityMs = 120_000L
+
     private lateinit var layoutLobbyContainer: LinearLayout
     private lateinit var layoutActiveRoomContainer: LinearLayout
     private lateinit var tvBackendHealthLobby: TextView
@@ -179,7 +192,7 @@ class WatchTogetherController(
     private lateinit var etRoomSearch: EditText
     private lateinit var tvLobbyStatsSummary: TextView
     private lateinit var rvActiveRooms: RecyclerView
-    private lateinit var tvEmptyRoomsHint: TextView
+    private lateinit var tvEmptyRoomsHint: View
     private lateinit var chipFilterAll: TextView
     private lateinit var chipFilterPublic: TextView
     private lateinit var chipFilterPrivate: TextView
@@ -246,6 +259,7 @@ class WatchTogetherController(
 
     fun init() {
         initIdentityAndPreferences()
+        purgeLegacyFakeRoomsFromStorage()
         bindViews()
         setupRecyclerViews()
         setupLobbyListeners()
@@ -265,13 +279,15 @@ class WatchTogetherController(
         }
         localUserId = uid
 
+        val royalPrefs = hostContext.getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
         val appPrefs = hostContext.getSharedPreferences("prime_ott_prefs", Context.MODE_PRIVATE)
-        localUserName = appPrefs.getString("username", null)
+        localUserName = royalPrefs.getString("current_user", null)
+            ?: appPrefs.getString("username", null)
             ?: prefs.getString("display_name", null)
             ?: ("مشاهد_" + localUserId.takeLast(4))
 
         val savedWorker = appPrefs.getString("worker_url", null)
-        if (!savedWorker.isNullOrEmpty()) {
+        if (!savedWorker.isNullOrEmpty() && !savedWorker.contains("your-subdomain")) {
             workerBaseUrl = savedWorker.trimEnd('/')
             VoiceSyncHelper.baseUrl = workerBaseUrl
         }
@@ -279,6 +295,31 @@ class WatchTogetherController(
         authToken = sha256("$localUserId:$localUserName:PRIME_OTT_SECRET").take(32)
         val blockedSet = prefs.getStringSet("blocked_users", emptySet()) ?: emptySet()
         blockedUserIds.addAll(blockedSet)
+    }
+
+    // مسح أي غرف وهمية قديمة كانت محفوظة في الهاتف
+    private fun purgeLegacyFakeRoomsFromStorage() {
+        val prefs = hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
+        val savedJson = prefs.getString("active_rooms_registry", null) ?: return
+        val fakeIds = setOf("RM-LIVE-1", "RM-LIVE-2", "RM-VIP-3")
+        val fakeCodes = setOf("PRM101", "DZ2026", "VIP990")
+        try {
+            val arr = JSONArray(savedJson)
+            val cleanArr = JSONArray()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val rid = o.optString("roomId")
+                val rcode = o.optString("roomCode")
+                val count = o.optInt("onlineCount", 0)
+                val status = o.optString("status", "LIVE")
+                if (rid !in fakeIds && rcode !in fakeCodes && count > 0 && status != "CLOSED") {
+                    cleanArr.put(o)
+                }
+            }
+            prefs.edit().putString("active_rooms_registry", cleanArr.toString()).apply()
+        } catch (_: Exception) {
+            prefs.edit().remove("active_rooms_registry").apply()
+        }
     }
 
     private fun bindViews() {
@@ -370,40 +411,16 @@ class WatchTogetherController(
 
     private fun setupLobbyListeners() {
         rootView.findViewById<View>(R.id.btnBlockedUsersLobby).setOnClickListener { showBlockedUsersDialog() }
-
-        rootView.findViewById<View>(R.id.btnLogoutLobby)?.setOnClickListener {
-            AlertDialog.Builder(hostContext)
-                .setTitle("🚪 تسجيل الخروج • Logout")
-                .setMessage("هل أنت متأكد أنك تريد تسجيل الخروج من حسابك؟")
-                .setPositiveButton("تسجيل الخروج") { _, _ ->
-                    hostContext.getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE).edit()
-                        .putBoolean("session_active", false)
-                        .putBoolean("is_guest", false)
-                        .remove("current_user")
-                        .apply()
-                    Toast.makeText(hostContext, "تم تسجيل الخروج بنجاح", Toast.LENGTH_SHORT).show()
-                    try {
-                        val loginCls = Class.forName("com.primeott.app.presentation.auth.LoginActivity")
-                        val intent = Intent(hostContext, loginCls)
-                        intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                        hostContext.startActivity(intent)
-                        hostActivity?.finish()
-                    } catch (_: Exception) {}
-                }
-                .setNegativeButton("إلغاء", null)
-                .show()
-        }
-
         rootView.findViewById<View>(R.id.btnCreateRoomOpen).setOnClickListener { showCreateRoomDialog() }
         rootView.findViewById<View>(R.id.btnRefreshRooms).setOnClickListener {
-            Toast.makeText(hostContext, "جاري تحديث الغرف النشطة...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(hostContext, "🔄 جاري فحص وتحديث الغرف النشطة...", Toast.LENGTH_SHORT).show()
             fetchActiveRoomsDirectory()
         }
 
         rootView.findViewById<View>(R.id.btnJoinByCodeSubmit).setOnClickListener {
             val raw = etJoinByCodeInput.text.toString().trim()
             if (raw.isEmpty()) {
-                Toast.makeText(hostContext, "أدخل رمز الغرفة أو رابط الدعوة أولاً", Toast.LENGTH_SHORT).show()
+                Toast.makeText(hostContext, "🔑 أدخل رمز الغرفة أو رابط الدعوة أولاً", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             joinRoomByCodeOrLink(raw)
@@ -449,17 +466,24 @@ class WatchTogetherController(
         }
     }
 
+    private fun isRoomActiveAndValid(room: WatchRoomModel, now: Long = System.currentTimeMillis()): Boolean {
+        if (room.status == "CLOSED") return false
+        if (room.onlineCount <= 0) return false
+        if (room.expiresAt <= now) return false
+        if (now - room.lastActiveAt > maxRoomInactivityMs && room.roomId != currentRoom?.roomId) return false
+        return true
+    }
+
     private fun applyRoomSearchAndFilters() {
         val query = etRoomSearch.text.toString().trim().lowercase(Locale.getDefault())
         filteredRoomsList.clear()
         val now = System.currentTimeMillis()
+
+        // تصفية الغرف غير النشطة أولاً
+        activeRoomsList.removeAll { !isRoomActiveAndValid(it, now) }
+
         for (room in activeRoomsList) {
-            if (room.status == "CLOSED" || room.expiresAt <= now || room.onlineCount <= 0) continue
-            val matchesFilter = when (currentLobbyFilter) {
-                "PUBLIC" -> !room.isPrivate
-                "PRIVATE" -> room.isPrivate
-                else -> true
-            }
+            val matchesFilter = !room.isPrivate
             if (!matchesFilter) continue
             val matchesQuery = query.isEmpty() ||
                 room.roomName.lowercase(Locale.getDefault()).contains(query) ||
@@ -471,7 +495,7 @@ class WatchTogetherController(
         activeRoomsAdapter.notifyDataSetChanged()
         tvEmptyRoomsHint.visibility = if (filteredRoomsList.isEmpty()) View.VISIBLE else View.GONE
         val totalViewers = filteredRoomsList.sumOf { it.onlineCount }
-        tvLobbyStatsSummary.text = "الغرف النشطة الآن: ${filteredRoomsList.size} | إجمالي المشاهدين المتصلين: $totalViewers"
+        tvLobbyStatsSummary.text = "${filteredRoomsList.size} غرف نشطة • $totalViewers متصل"
     }
 
     private fun generateUniqueRoomId(): String =
@@ -486,8 +510,8 @@ class WatchTogetherController(
         val container = ScrollView(hostContext)
         val layout = LinearLayout(hostContext).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(40, 30, 40, 20)
-            setBackgroundColor(Color.parseColor("#121824"))
+            setPadding(44, 32, 44, 20)
+            setBackgroundColor(Color.parseColor("#111726"))
         }
         container.addView(layout)
 
@@ -525,61 +549,28 @@ class WatchTogetherController(
         }
         layout.addView(etPassword)
 
-        val cbRequireApproval = CheckBox(hostContext).apply {
-            text = "طلب موافقة المضيف قبل الدخول (Join Requests)"
-            setTextColor(Color.WHITE)
-        }
-        layout.addView(cbRequireApproval)
-
         rgPrivacy.setOnCheckedChangeListener { _, checkedId ->
             etPassword.visibility = if (checkedId == rbPrivate.id) View.VISIBLE else View.GONE
         }
 
-        val tvMaxLabel = TextView(hostContext).apply {
-            text = "الحد الأقصى للمشاركين: 25 مشاهد"
+        val tvHint = TextView(hostContext).apply {
+            text = "🎬 بعد فتح الغرفة، اختر الفيلم أو القناة التي تريد مشاهدتها من القائمة داخل الغرفة."
             setTextColor(Color.parseColor("#80D8FF"))
-            setPadding(0, 16, 0, 4)
+            textSize = 12f
+            setPadding(0, 16, 0, 8)
         }
-        layout.addView(tvMaxLabel)
-
-        val sbMax = SeekBar(hostContext).apply {
-            max = 98
-            progress = 23
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    val maxP = progress + 2
-                    tvMaxLabel.text = "الحد الأقصى للمشاركين: $maxP مشاهد"
-                }
-                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-            })
-        }
-        layout.addView(sbMax)
-
-        val mediaOptions = (allChannelsList + allSportsStreamsList)
-        val spinnerTitles = mediaOptions.map { "📺 ${it.title} (${it.subtitle})" }
-        val spMedia = Spinner(hostContext).apply {
-            adapter = ArrayAdapter(hostContext, android.R.layout.simple_spinner_dropdown_item, spinnerTitles)
-        }
-        val tvPickLabel = TextView(hostContext).apply {
-            text = "اختر القناة المباشرة للغرفة:"
-            setTextColor(Color.WHITE)
-            setPadding(0, 16, 0, 4)
-        }
-        layout.addView(tvPickLabel)
-        layout.addView(spMedia)
+        layout.addView(tvHint)
 
         AlertDialog.Builder(hostContext)
             .setTitle("➕ إنشاء غرفة مشاهدة جديدة")
             .setView(container)
-            .setPositiveButton("إنشاء وبدء البث") { _, _ ->
+            .setPositiveButton("فتح الغرفة الآن") { _, _ ->
                 val title = etName.text.toString().trim().ifEmpty { "غرفة $localUserName" }
                 val isPriv = rbPrivate.isChecked
                 val rawPass = etPassword.text.toString().trim()
-                val maxUsers = sbMax.progress + 2
-                val selectedMedia = mediaOptions.getOrNull(spMedia.selectedItemPosition)
-                    ?: MediaStreamOption("ch_1", "beIN Sports 1 HD", "بث مباشر", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8")
+                val now = System.currentTimeMillis()
 
+                // لا يتم تشغيل أي فيديو افتراضي؛ المشغل ينتظر حتى يختار المستخدم الفيلم أو القناة!
                 val newRoom = WatchRoomModel(
                     roomId = generateUniqueRoomId(),
                     roomCode = generateRoomCode(),
@@ -588,18 +579,21 @@ class WatchTogetherController(
                     hostName = localUserName,
                     isPrivate = isPriv,
                     passwordHash = if (isPriv && rawPass.isNotEmpty()) sha256(rawPass) else "",
-                    requireApproval = cbRequireApproval.isChecked,
-                    maxParticipants = maxUsers,
+                    requireApproval = false,
+                    maxParticipants = 25,
                     onlineCount = 1,
-                    status = "LIVE",
-                    streamUrl = selectedMedia.streamUrl,
-                    streamTitle = selectedMedia.title,
-                    category = selectedMedia.subtitle,
+                    status = "WAITING",
+                    streamUrl = "",
+                    streamTitle = "اختر فيلماً أو قناة للبدء",
+                    category = "بانتظار اختيار المحتوى",
                     isMatch = false,
-                    isPlaying = true,
-                    playbackPositionMs = 0L
+                    isPlaying = false,
+                    playbackPositionMs = 0L,
+                    createdAt = now,
+                    lastActiveAt = now
                 )
 
+                activeRoomsList.removeAll { it.hostId == localUserId }
                 activeRoomsList.add(0, newRoom)
                 saveRoomsToLocalRegistry()
                 publishRoomToBackend(newRoom)
@@ -619,37 +613,59 @@ class WatchTogetherController(
         extractedCode = extractedCode.replace("#", "").trim()
 
         val found = activeRoomsList.firstOrNull {
-            it.roomCode.equals(extractedCode, ignoreCase = true) ||
+            isRoomActiveAndValid(it) && (
+                it.roomCode.equals(extractedCode, ignoreCase = true) ||
                 it.roomId.equals(extractedCode, ignoreCase = true)
+            )
         }
 
         if (found != null) {
             attemptJoinRoom(found)
         } else {
-            val cloudRoom = WatchRoomModel(
-                roomId = "RM-$extractedCode",
-                roomCode = extractedCode.take(6).uppercase(Locale.US),
-                roomName = "غرفة مشتركة #$extractedCode",
-                hostId = "REMOTE_HOST",
-                hostName = "مضيف الغرفة",
-                isPrivate = false,
-                maxParticipants = 25,
-                onlineCount = 2,
-                streamUrl = allChannelsList.firstOrNull()?.streamUrl ?: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-                streamTitle = allChannelsList.firstOrNull()?.title ?: "بث مباشر مشترك"
-            )
-            activeRoomsList.add(0, cloudRoom)
-            attemptJoinRoom(cloudRoom)
+            Toast.makeText(hostContext, "🔍 جاري البحث عن الغرفة #$extractedCode في السيرفر...", Toast.LENGTH_SHORT).show()
+            Thread {
+                var matchedServerRoom: WatchRoomModel? = null
+                try {
+                    val req = Request.Builder().url("$workerBaseUrl/rooms/list").get().build()
+                    httpClient.newCall(req).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val obj = JSONObject(resp.body?.string() ?: "{}")
+                            val arr = obj.optJSONArray("rooms") ?: JSONArray()
+                            for (i in 0 until arr.length()) {
+                                val r = parseRoomJson(arr.getJSONObject(i))
+                                if (r != null && isRoomActiveAndValid(r) &&
+                                    (r.roomCode.equals(extractedCode, ignoreCase = true) || r.roomId.equals(extractedCode, ignoreCase = true))) {
+                                    matchedServerRoom = r
+                                    break
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                mainHandler.post {
+                    if (matchedServerRoom != null) {
+                        activeRoomsList.add(0, matchedServerRoom!!)
+                        applyRoomSearchAndFilters()
+                        attemptJoinRoom(matchedServerRoom!!)
+                    } else {
+                        Toast.makeText(hostContext, "❌ هذه الغرفة غير موجودة أو تم إغلاقها لعدم النشاط", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }.start()
         }
     }
 
     private fun attemptJoinRoom(room: WatchRoomModel) {
-        if (bannedUserIds.contains(localUserId)) {
-            Toast.makeText(hostContext, "🚫 تم حظرك من الدخول إلى هذه الغرفة", Toast.LENGTH_LONG).show()
+        if (!isRoomActiveAndValid(room)) {
+            activeRoomsList.removeAll { it.roomId == room.roomId }
+            saveRoomsToLocalRegistry()
+            applyRoomSearchAndFilters()
+            Toast.makeText(hostContext, "⛔ هذه الغرفة أُغلقت لأنها لم تعد نشطة", Toast.LENGTH_SHORT).show()
             return
         }
-        if (room.status == "CLOSED") {
-            Toast.makeText(hostContext, "⛔ هذه الغرفة مغلقة", Toast.LENGTH_SHORT).show()
+        if (bannedUserIds.contains(localUserId)) {
+            Toast.makeText(hostContext, "🚫 تم حظرك من الدخول إلى هذه الغرفة", Toast.LENGTH_LONG).show()
             return
         }
         if (room.onlineCount >= room.maxParticipants && room.hostId != localUserId) {
@@ -676,12 +692,11 @@ class WatchTogetherController(
             setTextColor(Color.WHITE)
         }
         AlertDialog.Builder(hostContext)
-            .setTitle("🔒 غرفة محمية بكلمة مرور")
-            .setMessage("الرجاء إدخال كلمة المرور للانضمام إلى «${room.roomName}»:")
+            .setTitle("🔒 غرفة خاصة محمية")
+            .setMessage("أدخل كلمة المرور للانضمام إلى «${room.roomName}»:")
             .setView(input)
-            .setPositiveButton("تحقق وانضمام") { _, _ ->
-                val enteredHash = sha256(input.text.toString().trim())
-                if (enteredHash == room.passwordHash) {
+            .setPositiveButton("انضمام") { _, _ ->
+                if (sha256(input.text.toString().trim()) == room.passwordHash) {
                     if (room.requireApproval) sendJoinRequestToHost(room)
                     else enterWatchRoom(room, isHost = false)
                 } else {
@@ -693,16 +708,14 @@ class WatchTogetherController(
     }
 
     private fun sendJoinRequestToHost(room: WatchRoomModel) {
-        Toast.makeText(hostContext, "🔔 تم إرسال طلب الانضمام للمضيف، بانتظار الموافقة...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(hostContext, "🔔 تم إرسال طلب الانضمام للمضيف...", Toast.LENGTH_SHORT).show()
         mainHandler.postDelayed({
-            if (!isDestroyed) {
-                Toast.makeText(hostContext, "✅ تمت الموافقة على طلب انضمامك!", Toast.LENGTH_SHORT).show()
-                enterWatchRoom(room, isHost = false)
-            }
-        }, 1500L)
+            if (!isDestroyed) enterWatchRoom(room, isHost = false)
+        }, 1200L)
     }
 
     fun enterWatchRoom(room: WatchRoomModel, isHost: Boolean) {
+        room.lastActiveAt = System.currentTimeMillis()
         currentRoom = room
         layoutLobbyContainer.visibility = View.GONE
         layoutActiveRoomContainer.visibility = View.VISIBLE
@@ -716,23 +729,28 @@ class WatchTogetherController(
             room.hostName = localUserName
             participantsMap[localUserId] = ParticipantModel(localUserId, localUserName, "HOST", isMuted = true, pingMs = backendPingMs)
         } else {
-            participantsMap[room.hostId] = ParticipantModel(room.hostId, room.hostName, "HOST", isMuted = false, pingMs = 28)
+            participantsMap[room.hostId] = ParticipantModel(room.hostId, room.hostName, "HOST", isMuted = false, pingMs = 25)
             participantsMap[localUserId] = ParticipantModel(localUserId, localUserName, "PARTICIPANT", isMuted = true, pingMs = backendPingMs)
         }
 
-        room.onlineCount = participantsMap.size.coerceAtLeast(room.onlineCount)
-        statPeakViewers = room.onlineCount.coerceAtLeast(1)
+        room.onlineCount = participantsMap.size.coerceAtLeast(1)
+        statPeakViewers = room.onlineCount
 
         loadCachedMessageHistory(room.roomId)
-        appendSystemChatAndLog("🎉 مرحباً بك في «${room.roomName}» | رمز الغرفة: #${room.roomCode}")
-        appendSystemChatAndLog("📺 البث الحالي: ${room.streamTitle}")
+        appendSystemChatAndLog("🎬 مرحباً بك في «${room.roomName}» | الرمز: #${room.roomCode}")
 
         updateRoomHeaderAndPermissionsUI()
-        startStreamPlayback(room.streamUrl, room.streamTitle, room.isPlaying, room.playbackPositionMs)
+        if (room.streamUrl.isNullOrEmpty()) {
+            exoPlayer?.stop()
+            exoPlayer?.clearMediaItems()
+            tvStreamStatusOverlay.text = "🎬 الرجاء اختيار فيلم أو قناة من القائمة بالأسفل"
+        } else {
+            startStreamPlayback(room.streamUrl, room.streamTitle, room.isPlaying, room.playbackPositionMs)
+        }
         connectRoomWebSocket(room.roomId)
         initVoiceEngineForRoom(room.roomId)
 
-        switchRoomInternalTab("CHAT")
+        switchRoomInternalTab("MEDIA")
         updateDetailedStatsUI()
     }
 
@@ -741,15 +759,15 @@ class WatchTogetherController(
         val isHost = room.hostId == localUserId
         val privacyIcon = if (room.isPrivate) "🔒" else "🌐"
 
-        tvRoomHeaderTitle.text = "$privacyIcon ${room.roomName} (👑 ${room.hostName})"
+        tvRoomHeaderTitle.text = "$privacyIcon ${room.roomName} • 👑 ${room.hostName}"
         tvRoomCodeBadge.text = "#${room.roomCode} 📋"
         tvOnlineCountBadge.text = "👥 ${participantsMap.size}/${room.maxParticipants}"
 
         tvRoomStatusBadge.text = when (room.status) {
-            "PAUSED" -> "⏸️ متوقف مؤقتاً"
-            "BUFFERING" -> "⏳ جاري التحميل"
+            "PAUSED" -> "⏸️ متوقف"
+            "BUFFERING" -> "⏳ مزامنة..."
             "CLOSED" -> "⛔ مغلقة"
-            else -> "🔴 مباشر"
+            else -> "🔴 LIVE"
         }
 
         btnHostControlsOpen.visibility = if (isHost) View.VISIBLE else View.GONE
@@ -758,14 +776,24 @@ class WatchTogetherController(
     }
 
     private fun initializeExoPlayer() {
-        exoPlayer = ExoPlayer.Builder(hostContext).build().also { player ->
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent("IPTVSmartersPlayer")
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15000)
+            .setReadTimeoutMs(15000)
+        val mediaSourceFactory = DefaultMediaSourceFactory(
+            DefaultDataSource.Factory(hostContext, httpDataSourceFactory)
+        )
+        exoPlayer = ExoPlayer.Builder(hostContext)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build().also { player ->
             watchPlayerView.player = player
             player.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     val room = currentRoom ?: return
                     when (playbackState) {
                         Player.STATE_BUFFERING -> {
-                            tvStreamStatusOverlay.text = "⏳ جاري مزامنة البث: ${room.streamTitle}"
+                            tvStreamStatusOverlay.text = "⏳ جاري مزامنة: ${room.streamTitle}"
                             if (room.hostId == localUserId) {
                                 room.status = "BUFFERING"
                                 broadcastRoomEvent("STREAM_STATUS", JSONObject().put("status", "BUFFERING"))
@@ -786,11 +814,12 @@ class WatchTogetherController(
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     val room = currentRoom ?: return
-                    btnSyncPlayPause.text = if (isPlaying) "⏸️ إيقاف مؤقت للغرفة" else "▶️ تشغيل متزامن للغرفة"
+                    btnSyncPlayPause.text = if (isPlaying) "⏸️ إيقاف مؤقت" else "▶️ تشغيل متزامن"
                     if (!isHandlingRemoteSync && room.hostId == localUserId) {
                         room.isPlaying = isPlaying
                         room.status = if (isPlaying) "LIVE" else "PAUSED"
                         room.playbackPositionMs = exoPlayer?.currentPosition ?: 0L
+                        room.lastActiveAt = System.currentTimeMillis()
                         broadcastPlaybackSync()
                         updateRoomHeaderAndPermissionsUI()
                     }
@@ -804,12 +833,21 @@ class WatchTogetherController(
     }
 
     private fun startStreamPlayback(url: String, title: String, playImmediately: Boolean, positionMs: Long = 0L) {
-        val safeUrl = url.ifEmpty { "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" }
+        val targetUrl = url.trim()
+        if (targetUrl.isEmpty() || targetUrl.contains("mux.dev") || targetUrl.contains("akamaized")) {
+            exoPlayer?.stop()
+            exoPlayer?.clearMediaItems()
+            tvStreamStatusOverlay.text = "🎬 الرجاء اختيار فيلم أو قناة من القائمة بالأسفل"
+            return
+        }
         tvStreamStatusOverlay.text = "📺 جاري تشغيل: $title"
         try {
             isHandlingRemoteSync = true
+            watchPlayerView.visibility = View.VISIBLE
             exoPlayer?.let { player ->
-                val mediaItem = MediaItem.fromUri(Uri.parse(safeUrl))
+                player.stop()
+                player.clearMediaItems()
+                val mediaItem = MediaItem.fromUri(Uri.parse(targetUrl))
                 player.setMediaItem(mediaItem)
                 player.prepare()
                 if (positionMs > 0) player.seekTo(positionMs)
@@ -817,27 +855,33 @@ class WatchTogetherController(
             }
         } catch (_: Exception) {
         } finally {
-            mainHandler.postDelayed({ isHandlingRemoteSync = false }, 400L)
+            mainHandler.postDelayed({ isHandlingRemoteSync = false }, 450L)
         }
     }
 
     private fun handlePlayerStreamError(error: PlaybackException) {
         val room = currentRoom ?: return
-        logRoomEvent("ERROR", "تعذر تحميل التدفق الأساسي (${error.errorCodeName})، جاري التحويل للتدفق الاحتياطي...")
         val currentUrl = room.streamUrl
+        if (currentUrl.isEmpty()) return
+
         val fallbackUrl = when {
-            currentUrl.endsWith(".m3u8", ignoreCase = true) -> currentUrl.replace(".m3u8", ".ts")
-            else -> "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+            currentUrl.endsWith(".mp4", ignoreCase = true) -> currentUrl.replaceAfterLast(".", "mkv")
+            currentUrl.endsWith(".mkv", ignoreCase = true) -> currentUrl.replaceAfterLast(".", "ts")
+            currentUrl.endsWith(".m3u8", ignoreCase = true) -> currentUrl.replaceAfterLast(".", "ts")
+            else -> ""
         }
-        if (fallbackUrl != currentUrl) {
+        if (fallbackUrl.isNotEmpty() && fallbackUrl != currentUrl) {
             room.streamUrl = fallbackUrl
-            startStreamPlayback(fallbackUrl, room.streamTitle, true, 0L)
+            startStreamPlayback(fallbackUrl, room.streamTitle, true, exoPlayer?.currentPosition ?: 0L)
+        } else {
+            tvStreamStatusOverlay.text = "⚠️ تعذر تشغيل المصدر (${error.errorCodeName}) - اختر بثاً آخر"
         }
     }
 
     private fun broadcastPlaybackSync() {
         val room = currentRoom ?: return
         val player = exoPlayer ?: return
+        room.lastActiveAt = System.currentTimeMillis()
         statSyncCount++
         val payload = JSONObject().apply {
             put("streamUrl", room.streamUrl)
@@ -852,6 +896,7 @@ class WatchTogetherController(
 
     private fun applyIncomingPlaybackSync(data: JSONObject) {
         val room = currentRoom ?: return
+        room.lastActiveAt = System.currentTimeMillis()
         if (room.hostId == localUserId) return
         val newUrl = data.optString("streamUrl", room.streamUrl)
         val newTitle = data.optString("streamTitle", room.streamTitle)
@@ -867,7 +912,7 @@ class WatchTogetherController(
                 room.streamUrl = newUrl
                 room.streamTitle = newTitle
                 startStreamPlayback(newUrl, newTitle, remotePlaying, remotePos)
-                appendSystemChatAndLog("📺 قام المضيف بتغيير القناة إلى: $newTitle")
+                appendSystemChatAndLog("📺 غيّر المضيف القناة إلى: $newTitle")
             } else {
                 exoPlayer?.let { player ->
                     if (player.isPlaying != remotePlaying) player.playWhenReady = remotePlaying
@@ -914,10 +959,16 @@ class WatchTogetherController(
             val room = currentRoom ?: return@setOnClickListener
             if (room.hostId == localUserId) {
                 broadcastPlaybackSync()
-                Toast.makeText(hostContext, "✅ تم إرسال نبضة مزامنة لجميع المشاهدين", Toast.LENGTH_SHORT).show()
+                Toast.makeText(hostContext, "✅ تمت مزامنة المشغل لدى الجميع", Toast.LENGTH_SHORT).show()
             } else {
-                startStreamPlayback(room.streamUrl, room.streamTitle, room.isPlaying, room.playbackPositionMs)
-                Toast.makeText(hostContext, "🔄 تمت إعادة مزامنة المشغل مع المضيف", Toast.LENGTH_SHORT).show()
+                if (room.streamUrl.isNullOrEmpty()) {
+            exoPlayer?.stop()
+            exoPlayer?.clearMediaItems()
+            tvStreamStatusOverlay.text = "🎬 الرجاء اختيار فيلم أو قناة من القائمة بالأسفل"
+        } else {
+            startStreamPlayback(room.streamUrl, room.streamTitle, room.isPlaying, room.playbackPositionMs)
+        }
+                Toast.makeText(hostContext, "🔄 تمت المزامنة مع المضيف", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -940,7 +991,7 @@ class WatchTogetherController(
                 2 -> 4
                 else -> 0
             }
-            Toast.makeText(hostContext, "📐 تم تغيير أبعاد شاشة البث", Toast.LENGTH_SHORT).show()
+            Toast.makeText(hostContext, "📐 تم تغيير أبعاد العرض", Toast.LENGTH_SHORT).show()
         }
 
         rootView.findViewById<View>(R.id.btnRoomStatsOpen).setOnClickListener { switchRoomInternalTab("LOGS") }
@@ -967,7 +1018,7 @@ class WatchTogetherController(
             rootView.findViewById<View>(viewId).setOnClickListener { sendEmojiReaction(emojiStr) }
         }
 
-        tabBtnChat.setOnClickListener { switchRoomInternalTab("CHAT") }
+        tabBtnChat.setOnClickListener { switchRoomInternalTab("MEDIA") }
         tabBtnParticipants.setOnClickListener { switchRoomInternalTab("PARTICIPANTS") }
         tabBtnMediaPicker.setOnClickListener { switchRoomInternalTab("MEDIA") }
         tabBtnLogsStats.setOnClickListener { switchRoomInternalTab("LOGS") }
@@ -977,7 +1028,7 @@ class WatchTogetherController(
         rootView.findViewById<View>(R.id.btnMuteAllParticipants).setOnClickListener {
             val room = currentRoom ?: return@setOnClickListener
             if (room.hostId != localUserId) {
-                Toast.makeText(hostContext, "هذه الميزة للمضيف فقط", Toast.LENGTH_SHORT).show()
+                Toast.makeText(hostContext, "للمضيف فقط", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             for ((uid, p) in participantsMap) {
@@ -988,7 +1039,7 @@ class WatchTogetherController(
             }
             participantsAdapter.notifyDataSetChanged()
             broadcastRoomEvent("MUTE_ALL", JSONObject())
-            appendSystemChatAndLog("🔇 قام المضيف بكتم الميكروفون لجميع المشاركين")
+            appendSystemChatAndLog("🔇 قام المضيف بكتم الميكروفون للجميع")
         }
 
         rootView.findViewById<View>(R.id.btnManageBansOpen).setOnClickListener { showBansAndJoinRequestsDialog() }
@@ -1013,8 +1064,9 @@ class WatchTogetherController(
             val room = currentRoom ?: return@setOnClickListener
             if (room.hostId != localUserId) return@setOnClickListener
             room.expiresAt += 3600_000L
+            room.lastActiveAt = System.currentTimeMillis()
             updateExpirationCountdownUI()
-            appendSystemChatAndLog("⏱️ قام المضيف بتمديد صلاحية الغرفة ساعة إضافية")
+            appendSystemChatAndLog("⏱️ تم تمديد وقت الغرفة ساعة إضافية")
         }
         rootView.findViewById<View>(R.id.btnClearEventLogs).setOnClickListener {
             eventLogs.clear()
@@ -1023,16 +1075,15 @@ class WatchTogetherController(
     }
 
     private fun switchRoomInternalTab(tab: String) {
+        panelTabMediaPicker.visibility = if (tab == "MEDIA") View.VISIBLE else View.GONE
         panelTabChat.visibility = if (tab == "CHAT") View.VISIBLE else View.GONE
         panelTabParticipants.visibility = if (tab == "PARTICIPANTS") View.VISIBLE else View.GONE
-        panelTabMediaPicker.visibility = if (tab == "MEDIA") View.VISIBLE else View.GONE
-        panelTabLogsStats.visibility = if (tab == "LOGS") View.VISIBLE else View.GONE
+        panelTabLogsStats.visibility = View.GONE
 
         val tabs = listOf(
-            tabBtnChat to "CHAT",
-            tabBtnParticipants to "PARTICIPANTS",
             tabBtnMediaPicker to "MEDIA",
-            tabBtnLogsStats to "LOGS"
+            tabBtnChat to "CHAT",
+            tabBtnParticipants to "PARTICIPANTS"
         )
         for ((btn, key) in tabs) {
             if (tab == key) {
@@ -1040,10 +1091,9 @@ class WatchTogetherController(
                 btn.setTextColor(Color.WHITE)
             } else {
                 btn.background = null
-                btn.setTextColor(Color.parseColor("#B0BEC5"))
+                btn.setTextColor(Color.parseColor("#9AA5B8"))
             }
         }
-        if (tab == "LOGS") updateDetailedStatsUI()
     }
 
     private fun checkRateLimit(timestamps: MutableList<Long>, maxEvents: Int, windowMs: Long): Boolean {
@@ -1057,7 +1107,7 @@ class WatchTogetherController(
     private fun sendChatMessage() {
         val room = currentRoom ?: return
         if (room.isChatLocked && room.hostId != localUserId) {
-            Toast.makeText(hostContext, "🔒 الدردشة مقفلة من قِبل المضيف", Toast.LENGTH_SHORT).show()
+            Toast.makeText(hostContext, "🔒 الدردشة مقفلة من المضيف", Toast.LENGTH_SHORT).show()
             return
         }
         val text = etChatMessageInput.text.toString().trim()
@@ -1067,6 +1117,7 @@ class WatchTogetherController(
             return
         }
         etChatMessageInput.setText("")
+        room.lastActiveAt = System.currentTimeMillis()
         val role = if (room.hostId == localUserId) "HOST" else (participantsMap[localUserId]?.role ?: "PARTICIPANT")
         val msg = ChatMessageModel("MSG-" + System.currentTimeMillis(), localUserId, localUserName, role, text)
         appendChatMessage(msg)
@@ -1101,6 +1152,7 @@ class WatchTogetherController(
 
     private fun sendEmojiReaction(emoji: String) {
         if (!checkRateLimit(emojiTimestamps, maxEvents = 8, windowMs = 5_000L)) return
+        currentRoom?.lastActiveAt = System.currentTimeMillis()
         spawnFloatingEmoji(emoji)
         statTotalEmojis++
         broadcastRoomEvent("EMOJI", JSONObject().put("emoji", emoji).put("senderName", localUserName))
@@ -1121,8 +1173,8 @@ class WatchTogetherController(
             bottomMargin = 14
         }
         emojiFloatingOverlay.addView(tv, params)
-        val animY = ObjectAnimator.ofFloat(tv, "translationY", 0f, -380f).apply { duration = 2000L }
-        val animAlpha = ObjectAnimator.ofFloat(tv, "alpha", 1f, 0f).apply { duration = 2000L }
+        val animY = ObjectAnimator.ofFloat(tv, "translationY", 0f, -380f).apply { duration = 1900L }
+        val animAlpha = ObjectAnimator.ofFloat(tv, "alpha", 1f, 0f).apply { duration = 1900L }
         animY.addListener(object : AnimatorListenerAdapter() {
             override fun onAnimationEnd(animation: Animator) { emojiFloatingOverlay.removeView(tv) }
         })
@@ -1140,7 +1192,7 @@ class WatchTogetherController(
         ) { isSpeaking, _ ->
             mainHandler.post {
                 participantsMap[localUserId]?.isSpeaking = isSpeaking
-                tvVoiceSpeakingIndicator.text = if (isSpeaking) "🗣️ يتحدث..." else "صوت نقي"
+                tvVoiceSpeakingIndicator.text = if (isSpeaking) "🟢 يتحدث..." else "صوت نقي"
             }
         }.also { vm ->
             vm.onOutgoingVoiceFrame = { pcmBytes ->
@@ -1156,12 +1208,12 @@ class WatchTogetherController(
     private fun toggleMicrophoneState() {
         val room = currentRoom ?: return
         if (room.isVoiceLocked && room.hostId != localUserId) {
-            Toast.makeText(hostContext, "🔒 الدردشة الصوتية مقفلة من المضيف", Toast.LENGTH_SHORT).show()
+            Toast.makeText(hostContext, "🔒 الصوت مقفل من المضيف", Toast.LENGTH_SHORT).show()
             return
         }
         val vm = voiceChatManager ?: return
         if (vm.isForceMutedByHost() && room.hostId != localUserId) {
-            Toast.makeText(hostContext, "🔇 قام المضيف بكتم الميكروفون الخاص بك", Toast.LENGTH_SHORT).show()
+            Toast.makeText(hostContext, "🔇 الميكروفون مكتوم من المضيف", Toast.LENGTH_SHORT).show()
             return
         }
         if (ContextCompat.checkSelfPermission(hostContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -1172,6 +1224,7 @@ class WatchTogetherController(
         val newMuted = !vm.isMuted()
         vm.setMuted(newMuted)
         participantsMap[localUserId]?.isMuted = newMuted
+        room.lastActiveAt = System.currentTimeMillis()
         updateMicButtonUI(newMuted)
         participantsAdapter.notifyDataSetChanged()
         broadcastRoomEvent("MIC_STATE", JSONObject().put("isMuted", newMuted))
@@ -1179,75 +1232,287 @@ class WatchTogetherController(
 
     private fun updateMicButtonUI(isMuted: Boolean) {
         if (isMuted) {
-            btnToggleMic.text = "🎤 الميكروفون: مكتوم"
+            btnToggleMic.text = "🎤 مكتوم"
             btnToggleMic.setTextColor(Color.parseColor("#FF8A80"))
         } else {
-            btnToggleMic.text = "🎙️ الميكروفون: متصل"
+            btnToggleMic.text = "🎙️ متصل"
             btnToggleMic.setTextColor(Color.parseColor("#00E676"))
         }
     }
 
-    private fun loadChannelsCatalog() {
-        allSportsStreamsList.clear()
-        allSportsStreamsList.addAll(
-            listOf(
-                MediaStreamOption("sp1", "beIN Sports 1 HD Premium", "القنوات الرياضية المباشرة", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"),
-                MediaStreamOption("sp2", "beIN Sports 2 HD Premium", "القنوات الرياضية المباشرة", "https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8"),
-                MediaStreamOption("sp3", "SSC Sports 1 HD", "الرياضة المباشرة", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"),
-                MediaStreamOption("sp4", "الجزائرية السادسة الشبابية HD", "القنوات الوطنية", "https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8")
-            )
-        )
+    private fun extractXtreamCredentials(): Triple<String, String, String> {
+        var host = ""
+        var user = ""
+        var pass = ""
 
-        allChannelsList.clear()
-        allChannelsList.addAll(allSportsStreamsList)
-        allChannelsList.add(MediaStreamOption("c5", "MBC Action HD", "أفلام وترفيه", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"))
+        // 1. القراءة المباشرة من SessionManager بجميع دواله وحقوله
+        try {
+            val smCls = Class.forName("com.primeott.app.data.local.SessionManager")
+            val ctor = smCls.getConstructor(Context::class.java)
+            val smObj = ctor.newInstance(hostContext)
+            for (m in smCls.methods) {
+                val mn = m.name.lowercase(Locale.US)
+                if (m.parameterCount == 0 && m.returnType == String::class.java) {
+                    val r = (m.invoke(smObj) as? String)?.trim() ?: ""
+                    if (r.isEmpty()) continue
+                    if ((mn.contains("server") || mn.contains("host") || mn.contains("dns") || mn.contains("portal") || mn.contains("xtream")) && r.startsWith("http") && !r.contains("workers.dev")) {
+                        host = r.trimEnd('/')
+                    } else if (mn.contains("user") && user.isEmpty()) {
+                        user = r
+                    } else if (mn.contains("pass") && pass.isEmpty()) {
+                        pass = r
+                    }
+                }
+            }
+            for (f in smCls.declaredFields) {
+                f.isAccessible = true
+                val v = f.get(smObj)
+                if (v is android.content.SharedPreferences) {
+                    for ((k, pv) in v.all) {
+                        val kl = k.lowercase(Locale.US)
+                        val vs = pv?.toString()?.trim() ?: ""
+                        if (vs.isEmpty()) continue
+                        if ((kl.contains("server") || kl.contains("host") || kl.contains("dns") || kl.contains("url")) && vs.startsWith("http") && !vs.contains("workers.dev")) {
+                            host = vs.trimEnd('/')
+                        } else if ((kl.contains("user")) && user.isEmpty() && vs != "زائر") {
+                            user = vs
+                        } else if ((kl.contains("pass")) && pass.isEmpty()) {
+                            pass = vs
+                        }
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+
+        // 2. فحص جميع ملفات SharedPreferences في التطبيق
+        val prefsDir = java.io.File(hostContext.applicationInfo.dataDir, "shared_prefs")
+        val prefFiles = prefsDir.listFiles()?.map { it.name.removeSuffix(".xml") }
+            ?: listOf("prime_ott_prefs", "session_prefs", "xtream_prefs", "user_prefs", "com.primeott.app_preferences")
+        for (pName in prefFiles) {
+            if (pName == "royal_auth_prefs" || pName == "watch_together_prefs") continue
+            val sp = hostContext.getSharedPreferences(pName, Context.MODE_PRIVATE)
+            for ((k, v) in sp.all) {
+                val kl = k.lowercase(Locale.US)
+                val vs = v?.toString()?.trim() ?: ""
+                if (vs.isEmpty()) continue
+                if ((kl.contains("server") || kl.contains("host") || kl.contains("portal") || kl.contains("base_url") || kl.contains("dns")) && vs.startsWith("http") && !vs.contains("workers.dev")) {
+                    if (host.isEmpty()) host = vs.trimEnd('/')
+                } else if ((kl.contains("user")) && user.isEmpty()) {
+                    user = vs
+                } else if ((kl.contains("pass")) && pass.isEmpty()) {
+                    pass = vs
+                }
+            }
+        }
+
+        if (host.isEmpty()) host = defaultXtreamHost
+        return Triple(host, user, pass)
+    }
+
+    // استخراج أي عنصر فيلم أو مسلسل أو قناة من أي كائن في OttRepository عبر الـ Reflection الذكي
+    private fun parseAnyRepoItemToMediaOption(
+        itemObj: Any?,
+        host: String,
+        user: String,
+        pass: String,
+        forceMovie: Boolean? = null
+    ): MediaStreamOption? {
+        if (itemObj == null) return null
+        if (itemObj is JSONObject) {
+            val sid = itemObj.optString("stream_id").ifEmpty { itemObj.optString("id").ifEmpty { itemObj.optString("series_id") } }
+            val title = itemObj.optString("name").ifEmpty { itemObj.optString("title") }
+            if (title.isEmpty()) return null
+            var url = itemObj.optString("stream_url").ifEmpty { itemObj.optString("url").ifEmpty { itemObj.optString("direct_source") } }
+            val ext = itemObj.optString("container_extension", "mp4").ifEmpty { "mp4" }
+            val typeStr = itemObj.optString("stream_type", itemObj.optString("type", "")).lowercase(Locale.US)
+            val isMov = forceMovie ?: (typeStr.contains("movie") || typeStr.contains("vod") || typeStr.contains("serie") || itemObj.has("container_extension"))
+            if (url.isEmpty() && sid.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
+                url = if (isMov) "$host/movie/$user/$pass/$sid.$ext" else "$host/live/$user/$pass/$sid.m3u8"
+            }
+            if (url.isEmpty()) return null
+            val sub = if (isMov) "🎬 فيلم / VOD" else "📺 بث مباشر"
+            return MediaStreamOption(sid.ifEmpty { title }, title, sub, url, "", isMatch = isMov)
+        }
+
+        try {
+            var idVal = ""
+            var titleVal = ""
+            var urlVal = ""
+            var extVal = "mp4"
+            var catVal = ""
+            var typeVal = ""
+
+            for (f in itemObj.javaClass.declaredFields) {
+                f.isAccessible = true
+                val fn = f.name.lowercase(Locale.US)
+                val fv = f.get(itemObj)?.toString()?.trim() ?: ""
+                if (fv.isEmpty() || fv == "null") continue
+
+                val isImage = fv.lowercase(Locale.US).let {
+                    it.endsWith(".jpg") || it.endsWith(".png") || it.endsWith(".webp") || it.endsWith(".jpeg") || it.contains("tmdb.org") || it.contains("/images/")
+                }
+
+                if ((fn == "name" || fn == "title" || fn.contains("streamname") || fn.contains("moviename")) && titleVal.isEmpty() && !fv.startsWith("http")) {
+                    titleVal = fv
+                } else if ((fn.contains("url") || fn.contains("stream") || fn.contains("link") || fn.contains("source")) && fv.startsWith("http") && !isImage) {
+                    urlVal = fv
+                } else if ((fn == "id" || fn == "streamid" || fn == "stream_id" || fn == "vodid" || fn == "movieid") && idVal.isEmpty()) {
+                    idVal = fv
+                } else if (fn.contains("ext") && fv.length <= 5) {
+                    extVal = fv.trimStart('.')
+                } else if ((fn.contains("category") || fn.contains("genre") || fn.contains("group")) && catVal.isEmpty() && !fv.startsWith("http")) {
+                    catVal = fv
+                } else if (fn.contains("type") && typeVal.isEmpty()) {
+                    typeVal = fv
+                }
+            }
+
+            if (titleVal.isEmpty()) return null
+            val isMov = forceMovie ?: (
+                typeVal.contains("movie", true) ||
+                typeVal.contains("vod", true) ||
+                typeVal.contains("serie", true) ||
+                urlVal.contains("/movie/", true) ||
+                urlVal.contains("/series/", true) ||
+                urlVal.endsWith(".mp4", true) ||
+                urlVal.endsWith(".mkv", true) ||
+                itemObj.javaClass.simpleName.contains("Vod", true) ||
+                itemObj.javaClass.simpleName.contains("Movie", true)
+            )
+
+            if (urlVal.isEmpty() && idVal.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
+                urlVal = if (isMov) "$host/movie/$user/$pass/$idVal.$extVal" else "$host/live/$user/$pass/$idVal.m3u8"
+            }
+            if (urlVal.isEmpty()) return null
+
+            val subLabel = if (catVal.isNotEmpty()) {
+                if (isMov) "🎬 $catVal" else "📺 $catVal"
+            } else {
+                if (isMov) "🎬 فيلم سينمائي (Movie)" else "📺 قناة بث مباشر"
+            }
+
+            return MediaStreamOption(
+                id = idVal.ifEmpty { titleVal },
+                title = titleVal,
+                subtitle = subLabel,
+                streamUrl = urlVal,
+                fallbackTsUrl = if (urlVal.endsWith(".m3u8")) urlVal.replace(".m3u8", ".ts") else "",
+                isMatch = isMov
+            )
+        } catch (_: Throwable) {
+            return null
+        }
+    }
+
+    private fun loadChannelsCatalog() {
+        isShowingSportsSubTab = true
         refreshMediaPickerList()
 
-        Thread {
+        CoroutineScope(Dispatchers.IO).launch {
+            val (host, user, pass) = extractXtreamCredentials()
+            val fetchedMovies = mutableListOf<MediaStreamOption>()
+            val fetchedChannels = mutableListOf<MediaStreamOption>()
+
+            // 1. Qraya mn l-Cache w SharedPreferences li rahom fihom les films deja chargées
             try {
-                val prefs = hostContext.getSharedPreferences("prime_ott_prefs", Context.MODE_PRIVATE)
-                val host = prefs.getString("server_url", defaultXtreamHost)?.trimEnd('/') ?: defaultXtreamHost
-                val user = prefs.getString("username", "") ?: ""
-                val pass = prefs.getString("password", "") ?: ""
-                if (user.isNotEmpty() && pass.isNotEmpty()) {
-                    val apiUrl = "$host/player_api.php?username=$user&password=$pass&action=get_live_streams"
-                    val req = Request.Builder().url(apiUrl).get().build()
-                    httpClient.newCall(req).execute().use { resp ->
-                        if (resp.isSuccessful) {
-                            val arr = JSONArray(resp.body?.string() ?: "[]")
-                            val fetched = mutableListOf<MediaStreamOption>()
-                            val limit = arr.length().coerceAtMost(80)
-                            for (i in 0 until limit) {
-                                val obj = arr.getJSONObject(i)
-                                val streamId = obj.optString("stream_id")
-                                val name = obj.optString("name", "قناة $streamId")
-                                val m3u8Url = "$host/live/$user/$pass/$streamId.m3u8"
-                                val tsUrl = "$host/live/$user/$pass/$streamId.ts"
-                                fetched.add(MediaStreamOption(streamId, name, "بث مباشر للسيرفر", m3u8Url, tsUrl))
-                            }
-                            if (fetched.isNotEmpty()) {
-                                mainHandler.post {
-                                    allChannelsList.addAll(0, fetched)
-                                    refreshMediaPickerList()
+                val prefsDir = java.io.File(hostContext.applicationInfo.dataDir, "shared_prefs")
+                val files = prefsDir.listFiles() ?: emptyArray()
+                for (pf in files) {
+                    val sp = hostContext.getSharedPreferences(pf.name.removeSuffix(".xml"), Context.MODE_PRIVATE)
+                    for ((k, v) in sp.all) {
+                        val s = v?.toString() ?: ""
+                        if (s.startsWith("[") && s.contains("stream_id")) {
+                            val arr = JSONArray(s)
+                            for (i in 0 until arr.length()) {
+                                val o = arr.optJSONObject(i) ?: continue
+                                val sid = o.optString("stream_id", o.optString("id"))
+                                val name = o.optString("name", o.optString("title"))
+                                val ext = o.optString("container_extension", "mp4").ifEmpty { "mp4" }
+                                val isVod = o.has("container_extension") || o.optString("stream_type") == "movie"
+                                if (name.isNotEmpty() && sid.isNotEmpty()) {
+                                    if (isVod) {
+                                        val mUrl = "$host/movie/$user/$pass/$sid.$ext"
+                                        fetchedMovies.add(MediaStreamOption(sid, name, "🎬 فيلم", mUrl, "", isMatch = true))
+                                    } else {
+                                        val cUrl = "$host/live/$user/$pass/$sid.m3u8"
+                                        fetchedChannels.add(MediaStreamOption(sid, name, "📺 بث مباشر", cUrl, "", isMatch = false))
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            } catch (_: Exception) {
+            } catch (_: Exception) {}
+
+            // 2. Ida kanou farghin, n-chargiw direct mn API ta3 l-server Xtream
+            if (fetchedMovies.isEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
+                try {
+                    val url = "$host/player_api.php?username=$user&password=$pass&action=get_vod_streams"
+                    val req = Request.Builder().url(url).build()
+                    httpClient.newCall(req).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val arr = JSONArray(resp.body?.string() ?: "[]")
+                            for (i in 0 until arr.length().coerceAtMost(300)) {
+                                val o = arr.getJSONObject(i)
+                                val sid = o.optString("stream_id")
+                                val name = o.optString("name")
+                                val ext = o.optString("container_extension", "mp4").ifEmpty { "mp4" }
+                                val mUrl = "$host/movie/$user/$pass/$sid.$ext"
+                                fetchedMovies.add(MediaStreamOption(sid, name, "🎬 فيلم", mUrl, "", isMatch = true))
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
             }
-        }.start()
+
+            if (fetchedChannels.isEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
+                try {
+                    val url = "$host/player_api.php?username=$user&password=$pass&action=get_live_streams"
+                    val req = Request.Builder().url(url).build()
+                    httpClient.newCall(req).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val arr = JSONArray(resp.body?.string() ?: "[]")
+                            for (i in 0 until arr.length().coerceAtMost(300)) {
+                                val o = arr.getJSONObject(i)
+                                val sid = o.optString("stream_id")
+                                val name = o.optString("name")
+                                val cUrl = "$host/live/$user/$pass/$sid.m3u8"
+                                fetchedChannels.add(MediaStreamOption(sid, name, "📺 بث مباشر", cUrl, "", isMatch = false))
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            withContext(Dispatchers.Main) {
+                if (!isDestroyed) {
+                    allSportsStreamsList.clear()
+                    allSportsStreamsList.addAll(fetchedMovies.distinctBy { it.title })
+
+                    allChannelsList.clear()
+                    allChannelsList.addAll(fetchedChannels.distinctBy { it.title })
+
+                    refreshMediaPickerList()
+                }
+            }
+        }
     }
 
     private fun refreshMediaPickerList() {
         val query = etSearchMediaInRoom.text.toString().trim().lowercase(Locale.getDefault())
         val source = if (isShowingSportsSubTab) allSportsStreamsList else allChannelsList
-        btnSubTabChannels.setBackgroundResource(if (!isShowingSportsSubTab) R.drawable.wt_bg_btn_primary else R.drawable.wt_bg_badge_dark)
+
         btnSubTabMatches.setBackgroundResource(if (isShowingSportsSubTab) R.drawable.wt_bg_btn_primary else R.drawable.wt_bg_badge_dark)
+        btnSubTabMatches.setTextColor(Color.WHITE)
+
+        btnSubTabChannels.setBackgroundResource(if (!isShowingSportsSubTab) R.drawable.wt_bg_btn_primary else R.drawable.wt_bg_badge_dark)
+        btnSubTabChannels.setTextColor(Color.WHITE)
 
         displayedMediaList.clear()
         for (item in source) {
-            if (query.isEmpty() || item.title.lowercase(Locale.getDefault()).contains(query)) {
+            if (query.isEmpty() ||
+                item.title.lowercase(Locale.getDefault()).contains(query) ||
+                item.subtitle.lowercase(Locale.getDefault()).contains(query)) {
                 displayedMediaList.add(item)
             }
         }
@@ -1266,9 +1531,10 @@ class WatchTogetherController(
         room.category = media.subtitle
         room.isPlaying = true
         room.status = "LIVE"
+        room.lastActiveAt = System.currentTimeMillis()
         startStreamPlayback(media.streamUrl, media.title, true, 0L)
         broadcastPlaybackSync()
-        appendSystemChatAndLog("📺 تم تغيير البث المباشر للغرفة إلى: ${media.title}")
+        appendSystemChatAndLog("📺 تم تغيير البث إلى: ${media.title}")
         updateRoomHeaderAndPermissionsUI()
     }
 
@@ -1284,7 +1550,7 @@ class WatchTogetherController(
         layout.addView(etTitle)
         layout.addView(etUrl)
         AlertDialog.Builder(hostContext)
-            .setTitle("🔗 تشغيل رابط بث مباشر")
+            .setTitle("🔗 تشغيل رابط بث خارجي")
             .setView(layout)
             .setPositiveButton("تشغيل ومزامنة") { _, _ ->
                 val url = etUrl.text.toString().trim()
@@ -1303,23 +1569,23 @@ class WatchTogetherController(
         val actions = mutableListOf<() -> Unit>()
 
         val isLocallyMuted = voiceChatManager?.isParticipantMutedLocally(target.userId) == true
-        options.add(if (isLocallyMuted) "🔊 إلغاء الكتم الصوتي المحلي" else "🔇 كتم صوت هذا المستخدم لدي")
+        options.add(if (isLocallyMuted) "🔊 إلغاء الكتم الصوتي المحلي" else "🔇 كتم صوت هذا العضو لدي")
         actions.add {
             voiceChatManager?.setParticipantMutedLocally(target.userId, !isLocallyMuted)
-            Toast.makeText(hostContext, "تم تحديث إعدادات الصوت", Toast.LENGTH_SHORT).show()
+            Toast.makeText(hostContext, "تم تحديث الصوت", Toast.LENGTH_SHORT).show()
         }
 
         if (isMeHost) {
-            options.add(if (target.isHostForceMuted) "🎙️ السماح للمستخدم بالتحدث (Unmute)" else "🔇 كتم ميكروفون المستخدم في الغرفة (Mute)")
+            options.add(if (target.isHostForceMuted) "🎙️ السماح للعضو بالتحدث" else "🔇 كتم ميكروفون العضو في الغرفة")
             actions.add {
                 target.isHostForceMuted = !target.isHostForceMuted
                 target.isMuted = target.isHostForceMuted
                 participantsAdapter.notifyDataSetChanged()
                 broadcastRoomEvent("HOST_MUTE_USER", JSONObject().put("targetId", target.userId).put("muted", target.isHostForceMuted))
-                appendSystemChatAndLog("🎤 قام المضيف بتحديث صلاحية الميكروفون لـ ${target.userName}")
+                appendSystemChatAndLog("🎤 تم تحديث صلاحية الميكروفون لـ ${target.userName}")
             }
 
-            options.add(if (target.role == "MODERATOR") "⬇️ إلغاء إشراف المستخدم" else "🛡️ ترقية إلى مشرف (Moderator)")
+            options.add(if (target.role == "MODERATOR") "⬇️ إلغاء الإشراف" else "🛡️ ترقية إلى مشرف (Moderator)")
             actions.add {
                 target.role = if (target.role == "MODERATOR") "PARTICIPANT" else "MODERATOR"
                 participantsAdapter.notifyDataSetChanged()
@@ -1342,7 +1608,7 @@ class WatchTogetherController(
                 participantsMap.remove(target.userId)
                 room.onlineCount = participantsMap.size
                 broadcastRoomEvent("KICK_USER", JSONObject().put("targetId", target.userId))
-                appendSystemChatAndLog("👢 تم طرد ${target.userName} من الغرفة")
+                appendSystemChatAndLog("👢 تم طرد ${target.userName}")
                 updateRoomHeaderAndPermissionsUI()
             }
 
@@ -1352,15 +1618,15 @@ class WatchTogetherController(
                 participantsMap.remove(target.userId)
                 room.onlineCount = participantsMap.size
                 broadcastRoomEvent("BAN_USER", JSONObject().put("targetId", target.userId))
-                appendSystemChatAndLog("🚫 تم حظر ${target.userName} من الغرفة")
+                appendSystemChatAndLog("🚫 تم حظر ${target.userName}")
                 updateRoomHeaderAndPermissionsUI()
             }
         }
 
-        options.add("⚠️ الإبلاغ عن المستخدم (Report)")
+        options.add("⚠️ الإبلاغ عن العضو (Report)")
         actions.add { showReportUserDialog(target.userId, target.userName) }
 
-        options.add("🚫 حظر المستخدم شخصياً (Block)")
+        options.add("🚫 حظر شخصي (Block)")
         actions.add { blockUserPersonally(target.userId, target.userName) }
 
         AlertDialog.Builder(hostContext)
@@ -1377,13 +1643,13 @@ class WatchTogetherController(
     }
 
     private fun showReportUserDialog(targetId: String, targetName: String) {
-        val reasons = arrayOf("إزعاج ورسائل متكررة (Spam)", "إساءة عبر الدردشة الصوتية", "محتوى غير لائق", "سلوك تخريبي")
+        val reasons = arrayOf("إزعاج ورسائل متكررة (Spam)", "إساءة صوتية", "محتوى غير لائق", "سلوك تخريبي")
         AlertDialog.Builder(hostContext)
             .setTitle("⚠️ الإبلاغ عن: $targetName")
             .setItems(reasons) { _, which ->
-                logRoomEvent("REPORT", "تم تقديم بلاغ ضد $targetName (${reasons[which]})")
+                logRoomEvent("REPORT", "بلاغ ضد $targetName (${reasons[which]})")
                 broadcastRoomEvent("REPORT_USER", JSONObject().put("targetId", targetId).put("reason", reasons[which]))
-                Toast.makeText(hostContext, "✅ تم إرسال البلاغ بنجاح", Toast.LENGTH_SHORT).show()
+                Toast.makeText(hostContext, "✅ تم إرسال البلاغ", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("إلغاء", null)
             .show()
@@ -1426,11 +1692,10 @@ class WatchTogetherController(
             if (room.isPrivate) "🌐 تحويل الغرفة إلى عامة" else "🔒 تحويل الغرفة إلى خاصة",
             if (room.requireApproval) "✅ إلغاء شرط الموافقة للانضمام" else "🛡️ تفعيل شرط موافقة المضيف للانضمام",
             "🔑 تعيين / تغيير كلمة مرور الغرفة",
-            "👥 تعديل الحد الأقصى للمشاركين (${room.maxParticipants})",
-            "🔔 اختبار طلب انضمام جديد (Approve / Reject)"
+            "👥 تعديل الحد الأقصى للمشاركين (${room.maxParticipants})"
         )
         AlertDialog.Builder(hostContext)
-            .setTitle("⚙️ مركز تحكم المضيف")
+            .setTitle("⚙️ إعدادات وتحكم المضيف")
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> {
@@ -1448,7 +1713,7 @@ class WatchTogetherController(
                     3 -> room.requireApproval = !room.requireApproval
                     4 -> promptSetNewRoomPassword(room)
                     5 -> promptChangeMaxParticipants(room)
-                    6 -> enqueueIncomingJoinRequest(JoinRequestModel("REQ-" + System.currentTimeMillis(), "USR-" + Random.nextInt(100, 999), "مشاهد_" + Random.nextInt(10, 99)))
+                    
                 }
             }
             .setNegativeButton("إغلاق", null)
@@ -1486,22 +1751,17 @@ class WatchTogetherController(
             .show()
     }
 
-    private fun enqueueIncomingJoinRequest(req: JoinRequestModel) {
-        pendingJoinRequests.add(req)
-        layoutJoinRequestBanner.visibility = View.VISIBLE
-        tvJoinRequestInfo.text = "🔔 يريد «${req.userName}» الانضمام للغرفة (${pendingJoinRequests.size})"
-    }
-
     private fun handleNextJoinRequest(approve: Boolean) {
         val req = if (pendingJoinRequests.isEmpty()) null else pendingJoinRequests.removeAt(0)
         if (req == null) return
         if (approve) {
             participantsMap[req.userId] = ParticipantModel(req.userId, req.userName, "PARTICIPANT")
             currentRoom?.onlineCount = participantsMap.size
+            currentRoom?.lastActiveAt = System.currentTimeMillis()
             statPeakViewers = statPeakViewers.coerceAtLeast(participantsMap.size)
-            appendSystemChatAndLog("✅ وافق المضيف على انضمام ${req.userName}")
+            appendSystemChatAndLog("✅ انضم ${req.userName} إلى الغرفة")
         } else {
-            appendSystemChatAndLog("❌ رفض المضيف طلب انضمام ${req.userName}")
+            appendSystemChatAndLog("❌ تم رفض طلب انضمام ${req.userName}")
         }
         layoutJoinRequestBanner.visibility = if (pendingJoinRequests.isEmpty()) View.GONE else View.VISIBLE
         updateRoomHeaderAndPermissionsUI()
@@ -1526,10 +1786,10 @@ class WatchTogetherController(
     private fun copyInviteCodeAndLink(shareSheet: Boolean) {
         val room = currentRoom ?: return
         val deepLink = "primeott://watch?room=${room.roomId}&code=${room.roomCode}"
-        val inviteText = "🎬 انضم لغرفة «${room.roomName}» لمشاهدة «${room.streamTitle}» على Prime OTT! رمز الغرفة: ${room.roomCode} | الرابط: $deepLink"
+        val inviteText = "🎬 انضم لغرفة «${room.roomName}» لمشاهدة «${room.streamTitle}»! رمز الغرفة: ${room.roomCode} | الرابط: $deepLink"
         val clipboard = hostContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("WatchTogetherInvite", inviteText))
-        Toast.makeText(hostContext, "📋 تم نسخ رمز الغرفة ورابط الدعوة (#${room.roomCode})", Toast.LENGTH_SHORT).show()
+        Toast.makeText(hostContext, "📋 تم نسخ الرمز (#${room.roomCode})", Toast.LENGTH_SHORT).show()
         if (shareSheet) {
             try {
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -1543,10 +1803,16 @@ class WatchTogetherController(
 
     fun confirmLeaveRoom() {
         val room = currentRoom ?: return
+        val willClose = participantsMap.size <= 1
+        val msg = if (willClose) {
+            "أنت المشاهد الوحيد حالياً؛ مغادرتك ستؤدي إلى إغلاق الغرفة تلقائياً لعدم وجود نشاط."
+        } else {
+            "هل تريد مغادرة غرفة «${room.roomName}»؟"
+        }
         AlertDialog.Builder(hostContext)
             .setTitle("🚪 مغادرة الغرفة")
-            .setMessage("هل تريد مغادرة غرفة «${room.roomName}»؟")
-            .setPositiveButton("مغادرة") { _, _ -> leaveCurrentRoom(closePermanently = false) }
+            .setMessage(msg)
+            .setPositiveButton("مغادرة") { _, _ -> leaveCurrentRoom(closePermanently = willClose) }
             .setNegativeButton("البقاء", null)
             .show()
     }
@@ -1556,24 +1822,30 @@ class WatchTogetherController(
         if (room.hostId != localUserId) return
         AlertDialog.Builder(hostContext)
             .setTitle("⛔ إغلاق الغرفة نهائياً")
-            .setMessage("سيتم إغلاق الغرفة لجميع المشاركين. هل أنت متأكد؟")
+            .setMessage("سيتم إغلاق الغرفة وحذفها من قائمة الغرف النشطة لجميع المستخدمين.")
             .setPositiveButton("إغلاق الغرفة") { _, _ -> leaveCurrentRoom(closePermanently = true) }
             .setNegativeButton("إلغاء", null)
             .show()
     }
 
+    // إغلاق وحذف الغرفة تلقائياً إذا أصبحت فارغة أو غير نشطة
     fun leaveCurrentRoom(closePermanently: Boolean) {
         val room = currentRoom
         if (room != null) {
-            if (closePermanently) {
+            participantsMap.remove(localUserId)
+            val remaining = participantsMap.size
+
+            if (closePermanently || remaining <= 0) {
                 room.status = "CLOSED"
                 room.onlineCount = 0
-                broadcastRoomEvent("ROOM_CLOSED", JSONObject().put("roomId", room.roomId))
+                broadcastRoomEvent("ROOM_CLOSED", JSONObject().put("roomId", room.roomId).put("status", "CLOSED"))
+                notifyBackendRoomClosed(room.roomId)
                 activeRoomsList.removeAll { it.roomId == room.roomId }
             } else {
-                participantsMap.remove(localUserId)
-                room.onlineCount = participantsMap.size
-                if (room.hostId == localUserId && participantsMap.isNotEmpty()) {
+                room.onlineCount = remaining
+                room.lastActiveAt = System.currentTimeMillis()
+                broadcastRoomEvent("USER_LEFT", JSONObject().put("userId", localUserId))
+                if (room.hostId == localUserId) {
                     val nextHost = participantsMap.values.first()
                     nextHost.role = "HOST"
                     room.hostId = nextHost.userId
@@ -1593,6 +1865,24 @@ class WatchTogetherController(
         applyRoomSearchAndFilters()
     }
 
+    private fun notifyBackendRoomClosed(roomId: String) {
+        Thread {
+            try {
+                val payload = JSONObject().apply {
+                    put("type", "ROOM_CLOSED")
+                    put("roomId", roomId)
+                    put("status", "CLOSED")
+                    put("onlineCount", 0)
+                }
+                val req = Request.Builder()
+                    .url("$workerBaseUrl/room/event")
+                    .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                    .build()
+                httpClient.newCall(req).execute().close()
+            } catch (_: Exception) {}
+        }.start()
+    }
+
     private fun connectRoomWebSocket(roomId: String) {
         try { webSocket?.cancel() } catch (_: Exception) {}
         val wsUrl = workerBaseUrl.replace("https://", "wss://").replace("http://", "ws://") +
@@ -1602,7 +1892,7 @@ class WatchTogetherController(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 reconnectAttempt = 0
                 mainHandler.post {
-                    logRoomEvent("WS", "تم تفعيل اتصال WebSocket المشفر اللحظي")
+                    logRoomEvent("WS", "تم الاتصال اللحظي بالغرفة")
                     broadcastRoomEvent("USER_JOINED", JSONObject().put("userId", localUserId).put("userName", localUserName))
                 }
             }
@@ -1625,11 +1915,13 @@ class WatchTogetherController(
 
     private fun broadcastRoomEvent(type: String, payload: JSONObject) {
         val room = currentRoom ?: return
+        room.lastActiveAt = System.currentTimeMillis()
         val envelope = JSONObject().apply {
             put("type", type)
             put("roomId", room.roomId)
             put("senderId", localUserId)
             put("senderName", localUserName)
+            put("onlineCount", participantsMap.size)
             put("ts", System.currentTimeMillis())
             put("data", payload)
         }
@@ -1655,6 +1947,8 @@ class WatchTogetherController(
             val senderName = env.optString("senderName", "مشاهد")
             val data = env.optJSONObject("data") ?: JSONObject()
             if (senderId == localUserId || blockedUserIds.contains(senderId)) return
+            currentRoom?.lastActiveAt = System.currentTimeMillis()
+
             when (type) {
                 "PLAYBACK_SYNC" -> applyIncomingPlaybackSync(data)
                 "CHAT_MSG" -> appendChatMessage(ChatMessageModel(data.optString("msgId"), senderId, senderName, data.optString("senderRole", "PARTICIPANT"), data.optString("text")))
@@ -1675,54 +1969,82 @@ class WatchTogetherController(
                 }
                 "USER_LEFT" -> {
                     participantsMap.remove(senderId)
-                    currentRoom?.onlineCount = participantsMap.size
+                    val rem = participantsMap.size
+                    currentRoom?.onlineCount = rem
                     appendSystemChatAndLog("🚪 غادر $senderName الغرفة")
-                    updateRoomHeaderAndPermissionsUI()
+                    if (rem <= 0) {
+                        leaveCurrentRoom(closePermanently = true)
+                    } else {
+                        updateRoomHeaderAndPermissionsUI()
+                    }
                 }
                 "KICK_USER" -> if (data.optString("targetId") == localUserId) leaveCurrentRoom(false)
                 "BAN_USER" -> if (data.optString("targetId") == localUserId) {
                     bannedUserIds.add(localUserId)
                     leaveCurrentRoom(false)
                 }
-                "ROOM_CLOSED" -> leaveCurrentRoom(false)
+                "ROOM_CLOSED" -> {
+                    Toast.makeText(hostContext, "⛔ تم إغلاق الغرفة", Toast.LENGTH_SHORT).show()
+                    leaveCurrentRoom(true)
+                }
             }
         } catch (_: Exception) {}
     }
 
     private fun performHeartbeatAndHealthCheck() {
         val startTs = System.currentTimeMillis()
+        val activeRm = currentRoom
+        if (activeRm != null) {
+            if (participantsMap.isEmpty()) {
+                leaveCurrentRoom(closePermanently = true)
+                return
+            }
+            activeRm.lastActiveAt = startTs
+            activeRm.onlineCount = participantsMap.size
+            saveRoomsToLocalRegistry()
+        }
+
         Thread {
-            var ping = Random.nextInt(24, 48)
+            var ping = Random.nextInt(22, 42)
             try {
                 val req = Request.Builder().url("$workerBaseUrl/health").get().build()
                 httpClient.newCall(req).execute().use {
-                    ping = (System.currentTimeMillis() - startTs).toInt().coerceIn(18, 350)
+                    ping = (System.currentTimeMillis() - startTs).toInt().coerceIn(18, 250)
                 }
             } catch (_: Exception) {}
             backendPingMs = ping
             mainHandler.post {
                 if (!isDestroyed) {
-                    tvBackendHealthLobby.text = "🟢 متصل • ${backendPingMs}ms"
+                    tvBackendHealthLobby.text = "🟢 ${backendPingMs}ms"
                     tvBackendHealthRoom.text = "🟢 ${backendPingMs}ms"
                 }
             }
         }.start()
     }
 
+    // إغلاق وحذف أي غرفة غير نشطة أو فارغة تلقائياً
     private fun cleanupExpiredAndEmptyRooms() {
         val now = System.currentTimeMillis()
-        val before = activeRoomsList.size
-        activeRoomsList.removeAll { it.status == "CLOSED" || it.expiresAt <= now || (it.onlineCount <= 0 && now - it.createdAt > 60_000L) }
-        if (activeRoomsList.size != before && currentRoom == null) {
+        val beforeCount = activeRoomsList.size
+
+        val staleRooms = activeRoomsList.filter { !isRoomActiveAndValid(it, now) }
+        for (stale in staleRooms) {
+            notifyBackendRoomClosed(stale.roomId)
+        }
+        activeRoomsList.removeAll { !isRoomActiveAndValid(it, now) }
+
+        if (activeRoomsList.size != beforeCount) {
             saveRoomsToLocalRegistry()
-            applyRoomSearchAndFilters()
+            if (currentRoom == null) {
+                applyRoomSearchAndFilters()
+            }
         }
     }
 
     private fun updateExpirationCountdownUI() {
         val room = currentRoom ?: return
         val rem = room.expiresAt - System.currentTimeMillis()
-        if (rem <= 0) {
+        if (rem <= 0 || participantsMap.isEmpty()) {
             leaveCurrentRoom(true)
             return
         }
@@ -1740,56 +2062,103 @@ class WatchTogetherController(
     private fun updateDetailedStatsUI() {
         val room = currentRoom ?: return
         val up = ((System.currentTimeMillis() - room.createdAt) / 60_000L).coerceAtLeast(1)
-        tvRoomDetailedStats.text = "📊 إحصائيات الغرفة: المعرّف ${room.roomId} (#${room.roomCode}) | المتصلون: ${participantsMap.size}/${room.maxParticipants} | الذروة: $statPeakViewers | الرسائل: $statTotalMessages | الإيموجي: $statTotalEmojis | المزامنة: $statSyncCount | الاستجابة: ${backendPingMs}ms | التشغيل: $up د"
+        tvRoomDetailedStats.text = "📊 الغرفة: #${room.roomCode} | المتصلون: ${participantsMap.size}/${room.maxParticipants} | الذروة: $statPeakViewers | الرسائل: $statTotalMessages | المزامنة: $statSyncCount | البينغ: ${backendPingMs}ms | مدة النشاط: $up د"
     }
 
+    private fun parseRoomJson(o: JSONObject): WatchRoomModel? {
+        val rid = o.optString("roomId")
+        val rcode = o.optString("roomCode")
+        if (rid.isEmpty() || rcode.isEmpty()) return null
+        // منع أي غرف وهمية قديمة
+        if (rid in setOf("RM-LIVE-1", "RM-LIVE-2", "RM-VIP-3") || rcode in setOf("PRM101", "DZ2026", "VIP990")) {
+            return null
+        }
+        val now = System.currentTimeMillis()
+        return WatchRoomModel(
+            roomId = rid,
+            roomCode = rcode,
+            roomName = o.optString("roomName", "غرفة مشاهدة"),
+            hostId = o.optString("hostId"),
+            hostName = o.optString("hostName", "مضيف"),
+            isPrivate = o.optBoolean("isPrivate", false),
+            passwordHash = o.optString("passwordHash", ""),
+            requireApproval = o.optBoolean("requireApproval", false),
+            maxParticipants = o.optInt("maxParticipants", 25),
+            onlineCount = o.optInt("onlineCount", 0),
+            status = o.optString("status", "LIVE"),
+            streamUrl = o.optString("streamUrl"),
+            streamTitle = o.optString("streamTitle", "بث مباشر"),
+            category = o.optString("category", "بث مباشر"),
+            createdAt = o.optLong("createdAt", now),
+            lastActiveAt = o.optLong("lastActiveAt", now),
+            expiresAt = o.optLong("expiresAt", now + 3600_000L)
+        )
+    }
+
+    // جلب الغرف الحقيقية والنشطة فقط (بدون إضافة أي غرف وهمية)
     private fun fetchActiveRoomsDirectory() {
         val prefs = hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
         val savedJson = prefs.getString("active_rooms_registry", null)
+        val now = System.currentTimeMillis()
         activeRoomsList.clear()
+
         if (!savedJson.isNullOrEmpty()) {
             try {
                 val arr = JSONArray(savedJson)
                 for (i in 0 until arr.length()) {
-                    val o = arr.getJSONObject(i)
-                    activeRoomsList.add(
-                        WatchRoomModel(
-                            roomId = o.optString("roomId"),
-                            roomCode = o.optString("roomCode"),
-                            roomName = o.optString("roomName"),
-                            hostId = o.optString("hostId"),
-                            hostName = o.optString("hostName"),
-                            isPrivate = o.optBoolean("isPrivate", false),
-                            passwordHash = o.optString("passwordHash", ""),
-                            requireApproval = o.optBoolean("requireApproval", false),
-                            maxParticipants = o.optInt("maxParticipants", 25),
-                            onlineCount = o.optInt("onlineCount", 1),
-                            status = o.optString("status", "LIVE"),
-                            streamUrl = o.optString("streamUrl"),
-                            streamTitle = o.optString("streamTitle"),
-                            category = o.optString("category"),
-                            expiresAt = o.optLong("expiresAt", System.currentTimeMillis() + 7200_000L)
-                        )
-                    )
+                    val parsed = parseRoomJson(arr.getJSONObject(i))
+                    if (parsed != null && isRoomActiveAndValid(parsed, now)) {
+                        activeRoomsList.add(parsed)
+                    }
                 }
             } catch (_: Exception) {}
         }
-        if (activeRoomsList.isEmpty()) {
-            activeRoomsList.addAll(
-                listOf(
-                    WatchRoomModel("RM-LIVE-1", "PRM101", "🔥 غرفة السهرة الرياضية المباشرة", "HOST_1", "أحمد", false, maxParticipants = 50, onlineCount = 14, streamUrl = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8", streamTitle = "beIN Sports 1 HD Premium"),
-                    WatchRoomModel("RM-LIVE-2", "DZ2026", "📺 غرفة القنوات المفتوحة والدردشة الصوتية", "HOST_2", "كريم", false, maxParticipants = 30, onlineCount = 9, streamUrl = "https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8", streamTitle = "الجزائرية السادسة HD"),
-                    WatchRoomModel("RM-VIP-3", "VIP990", "🔒 غرفة الأصدقاء الخاصة VIP", "HOST_3", "ياسين", true, requireApproval = true, maxParticipants = 12, onlineCount = 4, streamUrl = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8", streamTitle = "SSC Sports 1 HD")
-                )
-            )
-            saveRoomsToLocalRegistry()
-        }
+
+        saveRoomsToLocalRegistry()
         applyRoomSearchAndFilters()
+
+        // مزامنة الغرف الحقيقية النشطة من سيرفر Cloudflare
+        Thread {
+            try {
+                val req = Request.Builder().url("$workerBaseUrl/rooms/list").get().build()
+                httpClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string() ?: "{}"
+                        val obj = JSONObject(body)
+                        val arr = obj.optJSONArray("rooms") ?: JSONArray()
+                        val remoteActive = mutableListOf<WatchRoomModel>()
+                        val checkTs = System.currentTimeMillis()
+                        for (i in 0 until arr.length()) {
+                            val r = parseRoomJson(arr.getJSONObject(i))
+                            if (r != null && isRoomActiveAndValid(r, checkTs)) {
+                                remoteActive.add(r)
+                            }
+                        }
+                        mainHandler.post {
+                            if (!isDestroyed) {
+                                for (rem in remoteActive) {
+                                    val idx = activeRoomsList.indexOfFirst { it.roomId == rem.roomId }
+                                    if (idx >= 0) {
+                                        activeRoomsList[idx] = rem
+                                    } else {
+                                        activeRoomsList.add(rem)
+                                    }
+                                }
+                                cleanupExpiredAndEmptyRooms()
+                                applyRoomSearchAndFilters()
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }.start()
     }
 
     private fun saveRoomsToLocalRegistry() {
+        val now = System.currentTimeMillis()
         val arr = JSONArray()
         for (r in activeRoomsList) {
+            if (!isRoomActiveAndValid(r, now)) continue
             arr.put(JSONObject().apply {
                 put("roomId", r.roomId)
                 put("roomCode", r.roomCode)
@@ -1805,6 +2174,8 @@ class WatchTogetherController(
                 put("streamUrl", r.streamUrl)
                 put("streamTitle", r.streamTitle)
                 put("category", r.category)
+                put("createdAt", r.createdAt)
+                put("lastActiveAt", r.lastActiveAt)
                 put("expiresAt", r.expiresAt)
             })
         }
@@ -1821,6 +2192,13 @@ class WatchTogetherController(
                     put("roomName", room.roomName)
                     put("hostId", room.hostId)
                     put("hostName", room.hostName)
+                    put("isPrivate", room.isPrivate)
+                    put("maxParticipants", room.maxParticipants)
+                    put("onlineCount", room.onlineCount)
+                    put("status", room.status)
+                    put("streamUrl", room.streamUrl)
+                    put("streamTitle", room.streamTitle)
+                    put("lastActiveAt", room.lastActiveAt)
                 }
                 val req = Request.Builder()
                     .url("$workerBaseUrl/rooms/create")
@@ -1874,21 +2252,94 @@ class WatchTogetherController(
                 return
             }
         }
-        val passedUrl = intent.getStringExtra("stream_url") ?: intent.getStringExtra("STREAM_URL") ?: intent.getStringExtra("url")
-        val passedTitle = intent.getStringExtra("stream_title") ?: intent.getStringExtra("STREAM_TITLE") ?: intent.getStringExtra("channel_name") ?: "بث مباشر مشترك"
-        val passedCode = intent.getStringExtra("room_code") ?: intent.getStringExtra("room_id") ?: intent.getStringExtra("ROOM_ID")
-        if (!passedCode.isNullOrEmpty() && passedUrl.isNullOrEmpty()) {
-            joinRoomByCodeOrLink(passedCode)
-        } else if (!passedUrl.isNullOrEmpty()) {
-            val code = passedCode?.take(6)?.uppercase(Locale.US) ?: generateRoomCode()
-            val directRoom = WatchRoomModel(passedCode ?: generateUniqueRoomId(), code, "غرفة $passedTitle", localUserId, localUserName, false, maxParticipants = 25, onlineCount = 1, status = "LIVE", streamUrl = passedUrl, streamTitle = passedTitle)
+
+        var passedUrl = intent.getStringExtra("stream_url")
+            ?: intent.getStringExtra("STREAM_URL")
+            ?: intent.getStringExtra("url")
+            ?: intent.getStringExtra("video_url")
+            ?: intent.getStringExtra("movie_url")
+            ?: intent.getStringExtra("content_url")
+            ?: ""
+
+        val passedTitle = intent.getStringExtra("stream_title")
+            ?: intent.getStringExtra("STREAM_TITLE")
+            ?: intent.getStringExtra("channel_name")
+            ?: intent.getStringExtra("room_name")
+            ?: intent.getStringExtra("title")
+            ?: intent.getStringExtra("name")
+            ?: ""
+
+        val passedStreamId = intent.getStringExtra("stream_id")
+            ?: intent.getIntExtra("stream_id", 0).takeIf { it > 0 }?.toString()
+            ?: intent.getStringExtra("id")
+            ?: intent.getIntExtra("id", 0).takeIf { it > 0 }?.toString()
+            ?: ""
+
+        val passedExt = (intent.getStringExtra("container_extension")
+            ?: intent.getStringExtra("extension")
+            ?: "mp4").trimStart('.')
+
+        val passedCode = intent.getStringExtra("room_code")
+            ?: intent.getStringExtra("room_id")
+            ?: intent.getStringExtra("ROOM_ID")
+            ?: ""
+
+        val isDirectMovie = intent.getBooleanExtra("direct_movie_launch", false)
+        val isHostFlag = intent.getBooleanExtra("is_host", true)
+        val isPrivateFlag = intent.getBooleanExtra("is_private", false)
+
+        if (passedUrl.isEmpty() && passedStreamId.isNotEmpty()) {
+            val (host, user, pass) = extractXtreamCredentials()
+            if (user.isNotEmpty() && pass.isNotEmpty()) {
+                passedUrl = "$host/movie/$user/$pass/$passedStreamId.$passedExt"
+            }
+        }
+
+        if (passedUrl.isEmpty() && passedTitle.isNotEmpty()) {
+            val matched = (allSportsStreamsList + allChannelsList).firstOrNull {
+                it.title.contains(passedTitle, ignoreCase = true) || passedTitle.contains(it.title, ignoreCase = true)
+            }
+            if (matched != null) {
+                passedUrl = matched.streamUrl
+            }
+        }
+
+        if (isDirectMovie || passedUrl.isNotEmpty() || (passedTitle.isNotEmpty() && isHostFlag)) {
+            val code = if (passedCode.length >= 4) passedCode.take(6).uppercase(Locale.US) else generateRoomCode()
+            val titleToUse = passedTitle.ifEmpty { "فيلم مشترك" }
+            val now = System.currentTimeMillis()
+            val directRoom = WatchRoomModel(
+                roomId = generateUniqueRoomId(),
+                roomCode = code,
+                roomName = if (titleToUse.startsWith("غرفة")) titleToUse else "غرفة $titleToUse",
+                hostId = localUserId,
+                hostName = localUserName,
+                isPrivate = isPrivateFlag,
+                maxParticipants = 25,
+                onlineCount = 1,
+                status = "LIVE",
+                streamUrl = passedUrl,
+                streamTitle = titleToUse,
+                category = "أفلام وبث مشترك",
+                isPlaying = true,
+                createdAt = now,
+                lastActiveAt = now
+            )
+            activeRoomsList.removeAll { it.hostId == localUserId }
             activeRoomsList.add(0, directRoom)
+            saveRoomsToLocalRegistry()
+            publishRoomToBackend(directRoom)
             enterWatchRoom(directRoom, isHost = true)
+        } else if (passedCode.isNotEmpty()) {
+            joinRoomByCodeOrLink(passedCode)
         }
     }
 
     fun release() {
         isDestroyed = true
+        if (currentRoom != null) {
+            leaveCurrentRoom(closePermanently = participantsMap.size <= 1)
+        }
         mainHandler.removeCallbacksAndMessages(null)
         try { webSocket?.close(1000, "Destroy") } catch (_: Exception) {}
         voiceChatManager?.release()
@@ -1901,19 +2352,26 @@ class WatchTogetherController(
 
     inner class ActiveRoomsAdapter(private val items: List<WatchRoomModel>, private val onJoinClick: (WatchRoomModel) -> Unit) :
         RecyclerView.Adapter<ActiveRoomsAdapter.VH>() {
-        inner class VH(val root: LinearLayout, val tvTitle: TextView, val tvMeta: TextView, val tvStream: TextView, val btnJoin: Button) : RecyclerView.ViewHolder(root)
+        inner class VH(val root: LinearLayout, val tvTitle: TextView, val tvMeta: TextView, val tvStream: TextView, val btnJoin: AppCompatButton) : RecyclerView.ViewHolder(root)
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
             val card = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.VERTICAL
                 setBackgroundResource(R.drawable.wt_bg_card)
-                setPadding(26, 20, 26, 20)
-                layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 16 }
+                setPadding(28, 22, 28, 22)
+                layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 14 }
             }
             val tvTitle = TextView(parent.context).apply { setTextColor(Color.WHITE); textSize = 14f; setTypeface(typeface, Typeface.BOLD) }
-            val tvStream = TextView(parent.context).apply { setTextColor(Color.parseColor("#80D8FF")); textSize = 12f; setPadding(0, 6, 0, 6) }
+            val tvStream = TextView(parent.context).apply { setTextColor(Color.parseColor("#80D8FF")); textSize = 12f; setPadding(0, 6, 0, 8) }
             val bottomRow = LinearLayout(parent.context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-            val tvMeta = TextView(parent.context).apply { setTextColor(Color.parseColor("#B0BEC5")); textSize = 11f; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) }
-            val btnJoin = Button(parent.context).apply { setBackgroundResource(R.drawable.wt_bg_btn_primary); setTextColor(Color.WHITE); textSize = 11f; isAllCaps = false; setPadding(24, 0, 24, 0) }
+            val tvMeta = TextView(parent.context).apply { setTextColor(Color.parseColor("#9AA5B8")); textSize = 11f; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) }
+            val btnJoin = AppCompatButton(parent.context).apply {
+                setBackgroundResource(R.drawable.wt_bg_btn_primary)
+                setTextColor(Color.WHITE)
+                textSize = 11f
+                isAllCaps = false
+                setPadding(28, 0, 28, 0)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 76)
+            }
             bottomRow.addView(tvMeta); bottomRow.addView(btnJoin)
             card.addView(tvTitle); card.addView(tvStream); card.addView(bottomRow)
             return VH(card, tvTitle, tvMeta, tvStream, btnJoin)
@@ -1921,9 +2379,9 @@ class WatchTogetherController(
         override fun onBindViewHolder(holder: VH, position: Int) {
             val r = items[position]
             val lockBadge = if (r.isPrivate) "🔒 خاصة" else "🌐 عامة"
-            holder.tvTitle.text = "${r.roomName}  [$lockBadge • #${r.roomCode}]"
-            holder.tvStream.text = "📺 البث المباشر: ${r.streamTitle}"
-            holder.tvMeta.text = "👑 المضيف: ${r.hostName}  |  👥 ${r.onlineCount}/${r.maxParticipants} متصل"
+            holder.tvTitle.text = "${r.roomName}  •  #$lockBadge (${r.roomCode})"
+            holder.tvStream.text = "📺 ${r.streamTitle}"
+            holder.tvMeta.text = "👑 ${r.hostName}   •   🟢 ${r.onlineCount}/${r.maxParticipants} متصل الآن"
             holder.btnJoin.text = if (r.requireApproval && r.hostId != localUserId) "طلب انضمام" else "دخول الغرفة ⬅"
             holder.btnJoin.setOnClickListener { onJoinClick(r) }
             holder.root.setOnClickListener { onJoinClick(r) }
@@ -1936,7 +2394,7 @@ class WatchTogetherController(
         inner class VH(val tv: TextView) : RecyclerView.ViewHolder(tv)
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
             val tv = TextView(parent.context).apply {
-                setPadding(18, 10, 18, 10); textSize = 12f; setBackgroundResource(R.drawable.wt_bg_card)
+                setPadding(20, 12, 20, 12); textSize = 12f; setBackgroundResource(R.drawable.wt_bg_card)
                 layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 6 }
             }
             return VH(tv)
@@ -1962,7 +2420,7 @@ class WatchTogetherController(
         inner class VH(val tv: TextView) : RecyclerView.ViewHolder(tv)
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
             val tv = TextView(parent.context).apply {
-                setPadding(20, 14, 20, 14); textSize = 12f; setTextColor(Color.WHITE); setBackgroundResource(R.drawable.wt_bg_card)
+                setPadding(22, 14, 22, 14); textSize = 12f; setTextColor(Color.WHITE); setBackgroundResource(R.drawable.wt_bg_card)
                 layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 8 }
             }
             return VH(tv)
@@ -1970,28 +2428,94 @@ class WatchTogetherController(
         override fun onBindViewHolder(holder: VH, position: Int) {
             val p = getList()[position]
             val roleBadge = if (p.role == "HOST") "👑 مضيف" else if (p.role == "MODERATOR") "🛡️ مشرف" else "مشاهد"
-            val micBadge = if (p.isHostForceMuted) "🔇 مكتوم من المضيف" else if (p.isSpeaking) "🗣️ يتحدث..." else if (p.isMuted) "🎤 مكتوم" else "🎙️ متصل"
-            holder.tv.text = "${p.userName} ($roleBadge)  •  $micBadge  •  🟢 ${p.pingMs}ms  [إدارة ⚙️]"
+            val micBadge = if (p.isHostForceMuted) "🔇 مكتوم من المضيف" else if (p.isSpeaking) "🟢 يتحدث الآن..." else if (p.isMuted) "🎤 مكتوم" else "🎙️ متصل"
+            holder.tv.text = "${p.userName} ($roleBadge)   •   $micBadge   "
             holder.tv.setOnClickListener { onItemClick(p) }
         }
         override fun getItemCount(): Int = getList().size
     }
 
-    inner class MediaPickerAdapter(private val items: List<MediaStreamOption>, private val onSelect: (MediaStreamOption) -> Unit) :
-        RecyclerView.Adapter<MediaPickerAdapter.VH>() {
-        inner class VH(val tv: TextView) : RecyclerView.ViewHolder(tv)
+    inner class MediaPickerAdapter(
+        private val items: List<MediaStreamOption>,
+        private val onSelect: (MediaStreamOption) -> Unit
+    ) : RecyclerView.Adapter<MediaPickerAdapter.VH>() {
+
+        inner class VH(
+            val root: LinearLayout,
+            val tvIcon: TextView,
+            val tvTitle: TextView,
+            val tvSub: TextView,
+            val btnPlay: AppCompatButton
+        ) : RecyclerView.ViewHolder(root)
+
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-            val tv = TextView(parent.context).apply {
-                setPadding(20, 14, 20, 14); textSize = 12f; setTextColor(Color.WHITE); setBackgroundResource(R.drawable.wt_bg_card)
-                layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = 8 }
+            val row = LinearLayout(parent.context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setBackgroundResource(R.drawable.wt_bg_card)
+                setPadding(20, 16, 20, 16)
+                layoutParams = RecyclerView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = 10 }
             }
-            return VH(tv)
+
+            val tvIcon = TextView(parent.context).apply {
+                textSize = 20f
+                gravity = Gravity.CENTER
+                setBackgroundResource(R.drawable.wt_bg_badge_dark)
+                setPadding(18, 14, 18, 14)
+            }
+
+            val textCol = LinearLayout(parent.context).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = 16
+                    marginEnd = 12
+                }
+            }
+
+            val tvTitle = TextView(parent.context).apply {
+                setTextColor(Color.WHITE)
+                textSize = 13f
+                setTypeface(typeface, Typeface.BOLD)
+                maxLines = 1
+            }
+
+            val tvSub = TextView(parent.context).apply {
+                setTextColor(Color.parseColor("#80D8FF"))
+                textSize = 11f
+                setPadding(0, 4, 0, 0)
+            }
+
+            textCol.addView(tvTitle)
+            textCol.addView(tvSub)
+
+            val btnPlay = AppCompatButton(parent.context).apply {
+                setBackgroundResource(R.drawable.wt_bg_btn_primary)
+                setTextColor(Color.WHITE)
+                textSize = 11f
+                isAllCaps = false
+                text = "▶️ تشغيل"
+                setPadding(24, 0, 24, 0)
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 72)
+            }
+
+            row.addView(tvIcon)
+            row.addView(textCol)
+            row.addView(btnPlay)
+            return VH(row, tvIcon, tvTitle, tvSub, btnPlay)
         }
+
         override fun onBindViewHolder(holder: VH, position: Int) {
             val item = items[position]
-            holder.tv.text = "📺 ${item.title}  •  ${item.subtitle}   [تشغيل ومزامنة للغرفة ▶️]"
-            holder.tv.setOnClickListener { onSelect(item) }
+            holder.tvIcon.text = if (item.isMatch) "🎬" else "📺"
+            holder.tvTitle.text = item.title
+            holder.tvSub.text = item.subtitle
+            holder.btnPlay.setOnClickListener { onSelect(item) }
+            holder.root.setOnClickListener { onSelect(item) }
         }
+
         override fun getItemCount(): Int = items.size
     }
 
