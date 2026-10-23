@@ -1,53 +1,81 @@
 package com.primeott.app.presentation.watch
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ObjectAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
 import android.text.InputType
+import android.text.TextUtils
 import android.text.TextWatcher
-import android.util.Base64
+import android.util.LruCache
+import android.util.TypedValue
+import android.view.GestureDetector
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
+import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatButton
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackException
+import androidx.core.graphics.ColorUtils
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.isVisible
+import androidx.media3.common.C
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.primeott.app.R
+import com.primeott.app.data.remote.SessionManager
+import com.primeott.app.data.repository.OttRepository
+import com.primeott.app.data.repository.PrimeVodExtractor
+import com.primeott.app.domain.model.StreamSource
+import com.primeott.app.domain.model.SubtitleCue
+import com.primeott.app.domain.model.SubtitleTrack
+import com.primeott.app.presentation.detail.VectorIcons
+import com.primeott.app.presentation.player.PrimePlayerEngine
+import kotlinx.coroutines.*
 import okhttp3.*
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
@@ -55,8 +83,11 @@ import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.random.Random
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class WatchTogetherController(
     private val hostContext: Context,
     private val rootView: View,
@@ -65,28 +96,30 @@ class WatchTogetherController(
 ) {
 
     data class WatchRoomModel(
-        val roomId: String,
-        val roomCode: String,
+        var roomId: String,
+        var roomCode: String,
         var roomName: String,
         var hostId: String,
         var hostName: String,
         var isPrivate: Boolean = false,
         var passwordHash: String = "",
-        var requireApproval: Boolean = false,
         var maxParticipants: Int = 25,
         var onlineCount: Int = 1,
         var status: String = "LIVE",
+        var streamId: String = "",
         var streamUrl: String = "",
+        var streamReferer: String = "",
+        var streamOrigin: String = "",
+        var streamServerLabel: String = "REYZO 1",
+        var streamUserAgent: String = SessionManager.CUSTOM_USER_AGENT,
         var streamTitle: String = "بث مباشر",
         var category: String = "قنوات مباشرة",
-        var isMatch: Boolean = false,
+        var isMovie: Boolean = false,
         var isPlaying: Boolean = true,
         var playbackPositionMs: Long = 0L,
         val createdAt: Long = System.currentTimeMillis(),
-        var lastActiveAt: Long = System.currentTimeMillis(),
         var expiresAt: Long = System.currentTimeMillis() + 3 * 3600_000L,
-        var isChatLocked: Boolean = false,
-        var isVoiceLocked: Boolean = false
+        var isChatLocked: Boolean = false
     )
 
     data class ParticipantModel(
@@ -94,17 +127,7 @@ class WatchTogetherController(
         val userName: String,
         var role: String = "PARTICIPANT",
         var isMuted: Boolean = true,
-        var isHostForceMuted: Boolean = false,
-        var isSpeaking: Boolean = false,
-        var pingMs: Int = 28,
-        var lastSeen: Long = System.currentTimeMillis()
-    )
-
-    data class JoinRequestModel(
-        val requestId: String,
-        val userId: String,
-        val userName: String,
-        val timestamp: Long = System.currentTimeMillis()
+        var isSpeaking: Boolean = false
     )
 
     data class ChatMessageModel(
@@ -122,8 +145,11 @@ class WatchTogetherController(
         val title: String,
         val subtitle: String,
         val streamUrl: String,
-        val fallbackTsUrl: String = "",
-        val isMatch: Boolean = false
+        val posterUrl: String = "",
+        val rating: String = "7.5",
+        val year: String = "2026",
+        val referer: String = "",
+        val isMovie: Boolean = false
     )
 
     data class RoomEventLogItem(
@@ -132,62 +158,90 @@ class WatchTogetherController(
         val detail: String
     )
 
+    private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(7, TimeUnit.SECONDS)
-        .readTimeout(7, TimeUnit.SECONDS)
-        .writeTimeout(7, TimeUnit.SECONDS)
-        .pingInterval(15, TimeUnit.SECONDS)
-        .build()
+    private val httpClient = OttRepository.okHttpClient
 
-    private var workerBaseUrl = "https://prime-ott-panel.prime-ott-stream.workers.dev"
-    private var defaultXtreamHost = "http://kwick.cc:8080"
+    private val posterBitmapCache = object : LruCache<String, android.graphics.Bitmap>(60) {}
 
+    private var workerBaseUrl = SessionManager.CLOUDFLARE_API_URL
     private lateinit var localUserId: String
     private lateinit var localUserName: String
     private lateinit var authToken: String
 
-    // القائمة تحتوي فقط على الغرف الحقيقية النشطة (بدون أي غرف وهمية)
     private val activeRoomsList = mutableListOf<WatchRoomModel>()
     private val filteredRoomsList = mutableListOf<WatchRoomModel>()
     private var currentLobbyFilter = "ALL"
 
     var currentRoom: WatchRoomModel? = null
     private val participantsMap = ConcurrentHashMap<String, ParticipantModel>()
-    private val pendingJoinRequests = mutableListOf<JoinRequestModel>()
     private val chatHistory = mutableListOf<ChatMessageModel>()
     private val eventLogs = mutableListOf<RoomEventLogItem>()
-    private val bannedUserIds = ConcurrentHashMap.newKeySet<String>()
     private val blockedUserIds = ConcurrentHashMap.newKeySet<String>()
 
     private val allChannelsList = mutableListOf<MediaStreamOption>()
-    private val allSportsStreamsList = mutableListOf<MediaStreamOption>()
+    private val allMoviesList = mutableListOf<MediaStreamOption>()
     private val displayedMediaList = mutableListOf<MediaStreamOption>()
-    private var isShowingSportsSubTab = false
+    private var isShowingMoviesSubTab = false
 
-    private val chatTimestamps = mutableListOf<Long>()
-    private val emojiTimestamps = mutableListOf<Long>()
-
+    private var lastSyncedMessageId = 0L
     private var statPeakViewers = 1
     private var statTotalMessages = 0
-    private var statTotalEmojis = 0
     private var statSyncCount = 0
-    private var backendPingMs = 28
     private var isDestroyed = false
 
     private var webSocket: WebSocket? = null
-    private var reconnectAttempt = 0
-    private var exoPlayer: ExoPlayer? = null
     private var voiceChatManager: VoiceChatManager? = null
+
+    private lateinit var playerEngine: PrimePlayerEngine
+    private val currentProviderTargets = mutableListOf<StreamSource>()
+    private val resolvedDirectStreams = mutableListOf<StreamSource>()
+    private var currentProviderIndex = 0
+    private var selectedQualityHeight: Int? = null
+    private var isExtractingNewMovie = false
+    private var activeMovieTmdbId: String = ""
+    private var headlessSnifferWebView: WebView? = null
+    private var snifferExtractionJob: Job? = null
+    private var snifferTimeoutRunnable: Runnable? = null
     private var currentResizeModeIndex = 0
     private var isHandlingRemoteSync = false
 
-    // Max inactivity duration before a room is considered dead and auto-closed (2 minutes)
-    private val maxRoomInactivityMs = 120_000L
+    private var availableSubtitles: List<SubtitleTrack> = emptyList()
+    private var activeSubtitleCues: List<SubtitleCue> = emptyList()
+    private var selectedSubtitleId: String = ""
+    private var subtitleOffsetMs: Long = 0L
+    private var subtitleTextSizeSp: Float = 16f
+    private var subtitleTextColor: Int = Color.WHITE
+    private var subtitleBgAlpha: Int = 0
+    private var subtitleExtraLiftDp: Int = 0
+
+    private lateinit var playerFrameContainer: FrameLayout
+    private lateinit var appCustomControlsOverlay: FrameLayout
+    private lateinit var tvAppPlayerTitle: TextView
+    private lateinit var btnAppServerPill: TextView
+    private lateinit var btnAppQualityPill: TextView
+    private lateinit var btnAppSubtitlesCc: ImageView
+    private lateinit var btnAppPipIcon: ImageView
+    private lateinit var btnAppRewind15: FrameLayout
+    private lateinit var vAppRewindCircle: View
+    private lateinit var btnAppPlayPauseSlot: FrameLayout
+    private lateinit var vAppPlayPauseCircle: View
+    private lateinit var ivAppCenterPlayPause: ImageView
+    private lateinit var pbAppCenterBuffering: ProgressBar
+    private lateinit var btnAppForward15: FrameLayout
+    private lateinit var vAppForwardCircle: View
+    private lateinit var tvAppElapsed: TextView
+    private lateinit var sbAppRedSeekBar: SeekBar
+    private lateinit var tvAppDuration: TextView
+    private lateinit var btnAppFullscreenToggle: ImageView
+    private lateinit var tvAppSubtitleOverlay: TextView
+    private var isUserSeekingRedBar = false
+    private var progressTickJob: Job? = null
+    private var isFullscreenPlayer = false
+    private var originalPlayerHeightPx = 0
 
     private lateinit var layoutLobbyContainer: LinearLayout
     private lateinit var layoutActiveRoomContainer: LinearLayout
-    private lateinit var tvBackendHealthLobby: TextView
     private lateinit var etJoinByCodeInput: EditText
     private lateinit var etRoomSearch: EditText
     private lateinit var tvLobbyStatsSummary: TextView
@@ -201,16 +255,39 @@ class WatchTogetherController(
     private lateinit var tvRoomHeaderTitle: TextView
     private lateinit var tvRoomCodeBadge: TextView
     private lateinit var tvRoomStatusBadge: TextView
-    private lateinit var tvBackendHealthRoom: TextView
     private lateinit var tvOnlineCountBadge: TextView
     private lateinit var btnHostControlsOpen: TextView
     private lateinit var btnCloseRoomHost: TextView
-
     private lateinit var layoutJoinRequestBanner: LinearLayout
-    private lateinit var tvJoinRequestInfo: TextView
-    private lateinit var btnApproveJoinReq: Button
-    private lateinit var btnRejectJoinReq: Button
+    private fun applySubtitleStyleToOverlay() {
+        if (!this::tvAppSubtitleOverlay.isInitialized) return
+        tvAppSubtitleOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
+        tvAppSubtitleOverlay.setTextColor(subtitleTextColor)
+        if (subtitleBgAlpha <= 10) {
+            tvAppSubtitleOverlay.background = null
+            tvAppSubtitleOverlay.setShadowLayer(12f, 0f, 3.5f, Color.BLACK)
+        } else {
+            tvAppSubtitleOverlay.setShadowLayer(6f, 0f, 2f, Color.BLACK)
+            tvAppSubtitleOverlay.background = makeRoundedBg(
+                ColorUtils.setAlphaComponent(Color.parseColor("#0B0D13"), subtitleBgAlpha),
+                8f
+            )
+        }
+    }
 
+    private fun pulseCircleFeedback(circleView: View) {
+        circleView.animate().cancel()
+        circleView.alpha = 0.95f
+        circleView.scaleX = 0.78f
+        circleView.scaleY = 0.78f
+        circleView.animate()
+            .scaleX(1.08f)
+            .scaleY(1.08f)
+            .alpha(0f)
+            .setDuration(300L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+    }
     private lateinit var watchPlayerView: PlayerView
     private lateinit var emojiFloatingOverlay: FrameLayout
     private lateinit var tvStreamStatusOverlay: TextView
@@ -247,79 +324,53 @@ class WatchTogetherController(
     private lateinit var mediaPickerAdapter: MediaPickerAdapter
     private lateinit var eventLogsAdapter: EventLogsAdapter
 
-    private val heartbeatRunnable = object : Runnable {
+    private val autoHideControlsRunnable = Runnable {
+        if (playerEngine.isPlaying() && !isUserSeekingRedBar) {
+            hideAppPlayerControlsSmoothly()
+        }
+    }
+
+    private val syncAndHeartbeatRunnable = object : Runnable {
         override fun run() {
             if (isDestroyed) return
-            performHeartbeatAndHealthCheck()
-            cleanupExpiredAndEmptyRooms()
+            performCloudflareRoomSync()
             updateExpirationCountdownUI()
-            mainHandler.postDelayed(this, 5000L)
+            mainHandler.postDelayed(this, 4000L)
         }
     }
 
     fun init() {
         initIdentityAndPreferences()
-        purgeLegacyFakeRoomsFromStorage()
         bindViews()
+        eliminateBottomEmptySpace()
+        initializePrimePlayerEngine()
+        buildIdenticalAppPlayerOverlayUI()
         setupRecyclerViews()
         setupLobbyListeners()
         setupRoomListeners()
-        initializeExoPlayer()
-        loadChannelsCatalog()
-        fetchActiveRoomsDirectory()
-        mainHandler.post(heartbeatRunnable)
+        loadRealAppCatalog()
+        fetchActiveRoomsDirectory(cleanOldSelfRooms = true)
+        mainHandler.post(syncAndHeartbeatRunnable)
     }
 
     private fun initIdentityAndPreferences() {
-        val prefs = hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
-        var uid = prefs.getString("user_id", null)
-        if (uid.isNullOrEmpty()) {
-            uid = "USR-" + Random.nextInt(100000, 999999)
-            prefs.edit().putString("user_id", uid).apply()
+        localUserId = SessionManager.getDeviceId(hostContext)
+        localUserName = SessionManager.getUserName(hostContext).let {
+            if (it == "Prime User" || it.isBlank()) "مشاهد_${localUserId.takeLast(4)}" else it
         }
-        localUserId = uid
-
-        val royalPrefs = hostContext.getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
-        val appPrefs = hostContext.getSharedPreferences("prime_ott_prefs", Context.MODE_PRIVATE)
-        localUserName = royalPrefs.getString("current_user", null)
-            ?: appPrefs.getString("username", null)
-            ?: prefs.getString("display_name", null)
-            ?: ("مشاهد_" + localUserId.takeLast(4))
-
-        val savedWorker = appPrefs.getString("worker_url", null)
-        if (!savedWorker.isNullOrEmpty() && !savedWorker.contains("your-subdomain")) {
-            workerBaseUrl = savedWorker.trimEnd('/')
-            VoiceSyncHelper.baseUrl = workerBaseUrl
-        }
-
+        workerBaseUrl = SessionManager.CLOUDFLARE_API_URL
+        VoiceSyncHelper.baseUrl = workerBaseUrl
         authToken = sha256("$localUserId:$localUserName:PRIME_OTT_SECRET").take(32)
+
+        val prefs = hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
         val blockedSet = prefs.getStringSet("blocked_users", emptySet()) ?: emptySet()
         blockedUserIds.addAll(blockedSet)
-    }
 
-    // مسح أي غرف وهمية قديمة كانت محفوظة في الهاتف
-    private fun purgeLegacyFakeRoomsFromStorage() {
-        val prefs = hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
-        val savedJson = prefs.getString("active_rooms_registry", null) ?: return
-        val fakeIds = setOf("RM-LIVE-1", "RM-LIVE-2", "RM-VIP-3")
-        val fakeCodes = setOf("PRM101", "DZ2026", "VIP990")
-        try {
-            val arr = JSONArray(savedJson)
-            val cleanArr = JSONArray()
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                val rid = o.optString("roomId")
-                val rcode = o.optString("roomCode")
-                val count = o.optInt("onlineCount", 0)
-                val status = o.optString("status", "LIVE")
-                if (rid !in fakeIds && rcode !in fakeCodes && count > 0 && status != "CLOSED") {
-                    cleanArr.put(o)
-                }
-            }
-            prefs.edit().putString("active_rooms_registry", cleanArr.toString()).apply()
-        } catch (_: Exception) {
-            prefs.edit().remove("active_rooms_registry").apply()
-        }
+        val subPrefs = hostContext.getSharedPreferences("prime_sub_style_prefs", Context.MODE_PRIVATE)
+        subtitleTextSizeSp = subPrefs.getFloat("sub_size_sp", 16f).coerceIn(12f, 26f)
+        subtitleTextColor = subPrefs.getInt("sub_text_color", Color.WHITE)
+        subtitleBgAlpha = subPrefs.getInt("sub_bg_alpha", 0)
+        subtitleExtraLiftDp = subPrefs.getInt("sub_extra_lift_dp", 0).coerceIn(-10, 90)
     }
 
     private fun bindViews() {
@@ -330,7 +381,6 @@ class WatchTogetherController(
         btnLobbyBack.visibility = if (isStandaloneActivity) View.VISIBLE else View.GONE
         btnLobbyBack.setOnClickListener { hostActivity?.finish() }
 
-        tvBackendHealthLobby = rootView.findViewById(R.id.tvBackendHealthLobby)
         etJoinByCodeInput = rootView.findViewById(R.id.etJoinByCodeInput)
         etRoomSearch = rootView.findViewById(R.id.etRoomSearch)
         tvLobbyStatsSummary = rootView.findViewById(R.id.tvLobbyStatsSummary)
@@ -344,20 +394,21 @@ class WatchTogetherController(
         tvRoomHeaderTitle = rootView.findViewById(R.id.tvRoomHeaderTitle)
         tvRoomCodeBadge = rootView.findViewById(R.id.tvRoomCodeBadge)
         tvRoomStatusBadge = rootView.findViewById(R.id.tvRoomStatusBadge)
-        tvBackendHealthRoom = rootView.findViewById(R.id.tvBackendHealthRoom)
         tvOnlineCountBadge = rootView.findViewById(R.id.tvOnlineCountBadge)
         btnHostControlsOpen = rootView.findViewById(R.id.btnHostControlsOpen)
         btnCloseRoomHost = rootView.findViewById(R.id.btnCloseRoomHost)
-
         layoutJoinRequestBanner = rootView.findViewById(R.id.layoutJoinRequestBanner)
-        tvJoinRequestInfo = rootView.findViewById(R.id.tvJoinRequestInfo)
-        btnApproveJoinReq = rootView.findViewById(R.id.btnApproveJoinReq)
-        btnRejectJoinReq = rootView.findViewById(R.id.btnRejectJoinReq)
+        layoutJoinRequestBanner.visibility = View.GONE
 
         watchPlayerView = rootView.findViewById(R.id.watchPlayerView)
+        watchPlayerView.useController = false
+        playerFrameContainer = (watchPlayerView.parent as? FrameLayout) ?: FrameLayout(hostContext)
+
         emojiFloatingOverlay = rootView.findViewById(R.id.emojiFloatingOverlay)
         tvStreamStatusOverlay = rootView.findViewById(R.id.tvStreamStatusOverlay)
+        tvStreamStatusOverlay.visibility = View.GONE
         tvExpirationTimerBadge = rootView.findViewById(R.id.tvExpirationTimerBadge)
+        tvExpirationTimerBadge.visibility = View.GONE
 
         btnSyncPlayPause = rootView.findViewById(R.id.btnSyncPlayPause)
         btnToggleMic = rootView.findViewById(R.id.btnToggleMic)
@@ -381,8 +432,1029 @@ class WatchTogetherController(
         etSearchMediaInRoom = rootView.findViewById(R.id.etSearchMediaInRoom)
         btnSubTabChannels = rootView.findViewById(R.id.btnSubTabChannels)
         btnSubTabMatches = rootView.findViewById(R.id.btnSubTabMatches)
+
+        btnSubTabChannels.text = "📺 القنوات المباشرة"
+        btnSubTabMatches.text = "🎬 الأفلام"
+        rootView.findViewById<TextView>(R.id.btnPickMatchOpen)?.text = "🎬 الأفلام"
+
         tvRoomDetailedStats = rootView.findViewById(R.id.tvRoomDetailedStats)
         rvRoomEventLogs = rootView.findViewById(R.id.rvRoomEventLogs)
+    }
+
+    private fun initializePrimePlayerEngine() {
+        playerEngine = PrimePlayerEngine(
+            context = hostContext,
+            scope = controllerScope,
+            onSourceSwitched = { idx, src ->
+                mainHandler.post {
+                    currentProviderIndex = idx
+                    val srvLabel = src.label.ifBlank { "REYZO ${idx + 1}" }
+                    currentRoom?.streamServerLabel = srvLabel
+                    currentRoom?.streamUrl = src.url
+                    currentRoom?.streamReferer = src.referer
+                    currentRoom?.streamOrigin = src.origin
+                    if (this::btnAppServerPill.isInitialized) {
+                        btnAppServerPill.text = "  $srvLabel"
+                    }
+                }
+            },
+            onRealQualityDetected = { qualityLabel, _ ->
+                mainHandler.post {
+                    if (this::btnAppQualityPill.isInitialized && selectedQualityHeight == null) {
+                        btnAppQualityPill.text = "  $qualityLabel"
+                    }
+                }
+            },
+            onFirstFrameRendered = {
+                mainHandler.post {
+                    setAppPlayerBuffering(false)
+                    updateAppPlayPauseIcon(true)
+                    scheduleAutoHideControls()
+                }
+            },
+            onPlaybackExhausted = {
+                mainHandler.post {
+                    val nextIdx = currentProviderIndex + 1
+                    if (nextIdx < currentProviderTargets.size) {
+                        loadProviderInHeadlessSniffer(nextIdx)
+                    } else {
+                        setAppPlayerBuffering(false)
+                    }
+                }
+            }
+        )
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun buildIdenticalAppPlayerOverlayUI() {
+        tvAppSubtitleOverlay = TextView(hostContext).apply {
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(12), dp(4), dp(12), dp(4))
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            ).apply {
+                setMargins(dp(20), 0, dp(20), dp(16))
+            }
+        }
+        applySubtitleStyleToOverlay()
+        playerFrameContainer.addView(tvAppSubtitleOverlay)
+
+        appCustomControlsOverlay = FrameLayout(hostContext).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(Color.parseColor("#B3000000"), Color.parseColor("#33000000"), Color.parseColor("#CC000000"))
+            )
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        val topBarRow = LinearLayout(hostContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(6))
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP
+            )
+        }
+
+        tvAppPlayerTitle = TextView(hostContext).apply {
+            text = "Spider-Man: Brand New Day"
+            setTextColor(Color.WHITE)
+            textSize = 13.5f
+            setTypeface(typeface, Typeface.BOLD)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = dp(8)
+            }
+        }
+        topBarRow.addView(tvAppPlayerTitle)
+
+        val makeGlassChip = { radiusDp: Float ->
+            GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dpF(radiusDp)
+                setColor(Color.parseColor("#2EFFFFFF"))
+                setStroke(max(1, dpF(0.85f).toInt()), Color.parseColor("#4DFFFFFF"))
+            }
+        }
+
+        btnAppServerPill = TextView(hostContext).apply {
+            text = "  REYZO 1"
+            setTextColor(Color.WHITE)
+            textSize = 11.5f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER_VERTICAL
+            background = makeGlassChip(10f)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            val srvIcon = VectorIcons.createSmallServerStackIcon(hostContext, Color.WHITE).apply {
+                setBounds(0, 0, intrinsicWidth, intrinsicHeight)
+            }
+            setCompoundDrawables(srvIcon, null, null, null)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dp(32)
+            ).apply { marginEnd = dp(6) }
+            setOnClickListener {
+                resetAutoHideControls()
+                showAppServersPopup()
+            }
+        }
+        topBarRow.addView(btnAppServerPill)
+
+        btnAppQualityPill = TextView(hostContext).apply {
+            text = " 1080p"
+            setTextColor(Color.WHITE)
+            textSize = 11.5f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            background = makeGlassChip(10f)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                dp(32)
+            ).apply { marginEnd = dp(6) }
+            setOnClickListener {
+                resetAutoHideControls()
+                showAppQualityPopup()
+            }
+        }
+        topBarRow.addView(btnAppQualityPill)
+
+        btnAppSubtitlesCc = ImageView(hostContext).apply {
+            background = makeGlassChip(10f)
+            setPadding(dp(7), dp(7), dp(7), dp(7))
+            setImageDrawable(VectorIcons.createSubtitlesCcIcon(hostContext, Color.WHITE))
+            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginEnd = dp(6) }
+            setOnClickListener {
+                resetAutoHideControls()
+                showAppSubtitlesDialog()
+            }
+        }
+        topBarRow.addView(btnAppSubtitlesCc)
+
+        btnAppPipIcon = ImageView(hostContext).apply {
+            background = makeGlassChip(10f)
+            setPadding(dp(7), dp(7), dp(7), dp(7))
+            setImageDrawable(VectorIcons.createPipMiniPlayerIcon(hostContext, Color.WHITE))
+            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
+            setOnClickListener {
+                currentResizeModeIndex = (currentResizeModeIndex + 1) % 3
+                watchPlayerView.resizeMode = when (currentResizeModeIndex) {
+                    1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                    2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+                }
+                Toast.makeText(hostContext, "📐 تم تغيير أبعاد الشاشة", Toast.LENGTH_SHORT).show()
+            }
+        }
+        topBarRow.addView(btnAppPipIcon)
+        appCustomControlsOverlay.addView(topBarRow)
+
+        val centerRow = LinearLayout(hostContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
+        }
+
+        val makeRedTouchCircle = {
+            View(hostContext).apply {
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(ColorUtils.setAlphaComponent(Color.parseColor("#E50914"), 195))
+                }
+                alpha = 0f
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            }
+        }
+
+        btnAppRewind15 = FrameLayout(hostContext).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(52), dp(52)).apply { marginEnd = dp(28) }
+        }
+        vAppRewindCircle = makeRedTouchCircle()
+        val ivRewind = ImageView(hostContext).apply {
+            setImageDrawable(VectorIcons.createCircularSeekArrowIcon(hostContext, isForward = false))
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+        btnAppRewind15.addView(vAppRewindCircle)
+        btnAppRewind15.addView(ivRewind)
+        btnAppRewind15.setOnClickListener {
+            pulseCircleFeedback(vAppRewindCircle)
+            seekRoomPlayerByDeltaMs(-15_000L)
+        }
+        centerRow.addView(btnAppRewind15)
+
+        btnAppPlayPauseSlot = FrameLayout(hostContext).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(64), dp(64))
+        }
+        vAppPlayPauseCircle = makeRedTouchCircle()
+        ivAppCenterPlayPause = ImageView(hostContext).apply {
+            setImageDrawable(VectorIcons.createPlayPauseIcon(hostContext, isPlaying = true))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+        pbAppCenterBuffering = ProgressBar(hostContext).apply {
+            indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#E50914"))
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(dp(46), dp(46), Gravity.CENTER)
+        }
+        btnAppPlayPauseSlot.addView(vAppPlayPauseCircle)
+        btnAppPlayPauseSlot.addView(ivAppCenterPlayPause)
+        btnAppPlayPauseSlot.addView(pbAppCenterBuffering)
+        btnAppPlayPauseSlot.setOnClickListener {
+            pulseCircleFeedback(vAppPlayPauseCircle)
+            toggleSyncPlayPauseAction()
+        }
+        centerRow.addView(btnAppPlayPauseSlot)
+
+        btnAppForward15 = FrameLayout(hostContext).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(52), dp(52)).apply { marginStart = dp(28) }
+        }
+        vAppForwardCircle = makeRedTouchCircle()
+        val ivForward = ImageView(hostContext).apply {
+            setImageDrawable(VectorIcons.createCircularSeekArrowIcon(hostContext, isForward = true))
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+        btnAppForward15.addView(vAppForwardCircle)
+        btnAppForward15.addView(ivForward)
+        btnAppForward15.setOnClickListener {
+            pulseCircleFeedback(vAppForwardCircle)
+            seekRoomPlayerByDeltaMs(15_000L)
+        }
+        centerRow.addView(btnAppForward15)
+
+        appCustomControlsOverlay.addView(centerRow)
+
+        val bottomSeekRow = LinearLayout(hostContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(4), dp(12), dp(8))
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
+            )
+        }
+
+        tvAppElapsed = TextView(hostContext).apply {
+            text = "00:00"
+            setTextColor(Color.WHITE)
+            textSize = 11.5f
+            setTypeface(typeface, Typeface.BOLD)
+        }
+        bottomSeekRow.addView(tvAppElapsed)
+
+        sbAppRedSeekBar = SeekBar(hostContext).apply {
+            max = 1000
+            progress = 0
+            progressTintList = ColorStateList.valueOf(Color.parseColor("#E50914"))
+            thumbTintList = ColorStateList.valueOf(Color.parseColor("#E50914"))
+            secondaryProgressTintList = ColorStateList.valueOf(Color.parseColor("#66FFFFFF"))
+            progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#3DFFFFFF"))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(6)
+                marginEnd = dp(6)
+            }
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                    if (fromUser) {
+                        resetAutoHideControls()
+                        val dur = playerEngine.player?.duration ?: 0L
+                        if (dur > 0) {
+                            tvAppElapsed.text = formatTimeMs((dur * p) / 1000L)
+                        }
+                    }
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) {
+                    isUserSeekingRedBar = true
+                    appCustomControlsOverlay.removeCallbacks(autoHideControlsRunnable)
+                }
+                override fun onStopTrackingTouch(s: SeekBar?) {
+                    isUserSeekingRedBar = false
+                    val room = currentRoom
+                    val exo = playerEngine.player
+                    if (room != null && exo != null && exo.duration > 0) {
+                        if (room.hostId == localUserId) {
+                            val targetPos = (exo.duration * (s?.progress ?: 0)) / 1000L
+                            exo.seekTo(targetPos)
+                            room.playbackPositionMs = targetPos
+                            broadcastPlaybackSync()
+                        } else {
+                            Toast.makeText(hostContext, "⚠️ تقديم الفيديو متاح للمضيف فقط", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    resetAutoHideControls()
+                }
+            })
+        }
+        bottomSeekRow.addView(sbAppRedSeekBar)
+
+        tvAppDuration = TextView(hostContext).apply {
+            text = "00:00"
+            setTextColor(Color.parseColor("#D0D7E2"))
+            textSize = 11.5f
+            setTypeface(typeface, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(10) }
+        }
+        bottomSeekRow.addView(tvAppDuration)
+
+        btnAppFullscreenToggle = ImageView(hostContext).apply {
+            setImageDrawable(VectorIcons.createFullscreenIcon(hostContext, isFullscreen = false))
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            layoutParams = LinearLayout.LayoutParams(dp(26), dp(26))
+            setOnClickListener {
+                toggleAppPlayerFullscreen(!isFullscreenPlayer)
+            }
+        }
+        bottomSeekRow.addView(btnAppFullscreenToggle)
+
+        appCustomControlsOverlay.addView(bottomSeekRow)
+        playerFrameContainer.addView(appCustomControlsOverlay)
+
+        val gestureDetector = GestureDetector(hostContext, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (appCustomControlsOverlay.isVisible && appCustomControlsOverlay.alpha > 0.5f) {
+                    hideAppPlayerControlsSmoothly()
+                } else {
+                    showAppPlayerControlsWithFade()
+                }
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                val w = playerFrameContainer.width.coerceAtLeast(1)
+                if (e.x < w * 0.48f) {
+                    pulseCircleFeedback(vAppRewindCircle)
+                    seekRoomPlayerByDeltaMs(-15_000L)
+                } else {
+                    pulseCircleFeedback(vAppForwardCircle)
+                    seekRoomPlayerByDeltaMs(15_000L)
+                }
+                return true
+            }
+        })
+
+        val touchListener = View.OnTouchListener { _, ev ->
+            gestureDetector.onTouchEvent(ev)
+            true
+        }
+        watchPlayerView.setOnTouchListener(touchListener)
+        appCustomControlsOverlay.setOnTouchListener(touchListener)
+
+        startAppPlayerProgressAndSubtitleLoop()
+    }
+
+    private fun startAppPlayerProgressAndSubtitleLoop() {
+        progressTickJob?.cancel()
+        progressTickJob = controllerScope.launch {
+            while (isActive && !isDestroyed) {
+                delay(300)
+                val p = playerEngine.player ?: continue
+
+                updateAppPlayPauseIcon(p.isPlaying)
+                if (p.playbackState == Player.STATE_BUFFERING) {
+                    setAppPlayerBuffering(true)
+                } else if (p.playbackState == Player.STATE_READY) {
+                    setAppPlayerBuffering(false)
+                }
+
+                val pos = p.currentPosition.coerceAtLeast(0L)
+                val dur = p.duration
+
+                if (dur > 0 && !isUserSeekingRedBar) {
+                    sbAppRedSeekBar.progress = ((pos * 1000L) / dur).toInt().coerceIn(0, 1000)
+                    sbAppRedSeekBar.secondaryProgress = (p.bufferedPercentage * 10).coerceIn(0, 1000)
+                    tvAppElapsed.text = formatTimeMs(pos)
+                    tvAppDuration.text = formatTimeMs(dur)
+                }
+
+                if (selectedSubtitleId != "NONE" && activeSubtitleCues.isNotEmpty() && p.isPlaying) {
+                    val syncedPos = (pos - subtitleOffsetMs).coerceAtLeast(0L)
+                    val cue = activeSubtitleCues.firstOrNull { syncedPos in it.startMs..it.endMs }
+                    if (cue != null) {
+                        val cleanCueText = cleanAssAndHtmlTags(cue.text)
+                        if (tvAppSubtitleOverlay.text.toString() != cleanCueText) {
+                            tvAppSubtitleOverlay.text = cleanCueText
+                        }
+                        if (!tvAppSubtitleOverlay.isVisible) tvAppSubtitleOverlay.visibility = View.VISIBLE
+                    } else if (tvAppSubtitleOverlay.isVisible) {
+                        tvAppSubtitleOverlay.text = ""
+                        tvAppSubtitleOverlay.visibility = View.GONE
+                    }
+                } else if (selectedSubtitleId == "NONE" && tvAppSubtitleOverlay.isVisible) {
+                    tvAppSubtitleOverlay.visibility = View.GONE
+                }
+            }
+        }
+    }
+
+    private fun cleanAssAndHtmlTags(raw: String): String {
+        return raw
+            .replace(Regex("""\{[^}]*\}"""), "")
+            .replace(Regex("""[0-9a-zA-Z]*&H[0-9A-Fa-f]+&\\?[a-zA-Z0-9\\&]*\}?"""), "")
+            .replace(Regex("""<[^>]*>"""), "")
+            .replace("\\N", "\n")
+            .replace("\\n", "\n")
+            .trim()
+    }
+
+    private fun setAppPlayerBuffering(buffering: Boolean) {
+        if (!this::pbAppCenterBuffering.isInitialized) return
+        if (buffering) {
+            ivAppCenterPlayPause.visibility = View.INVISIBLE
+            pbAppCenterBuffering.visibility = View.VISIBLE
+        } else {
+            pbAppCenterBuffering.visibility = View.GONE
+            ivAppCenterPlayPause.visibility = View.VISIBLE
+        }
+    }
+
+    private fun updateAppPlayPauseIcon(isPlaying: Boolean) {
+        if (!this::ivAppCenterPlayPause.isInitialized) return
+        ivAppCenterPlayPause.setImageDrawable(
+            VectorIcons.createPlayPauseIcon(hostContext, isPlaying = isPlaying)
+        )
+        btnSyncPlayPause.text = if (isPlaying) "⏸️ إيقاف مؤقت" else "▶️ تشغيل متزامن"
+    }
+
+    private fun showAppPlayerControlsWithFade() {
+        appCustomControlsOverlay.removeCallbacks(autoHideControlsRunnable)
+        appCustomControlsOverlay.animate().cancel()
+        if (!appCustomControlsOverlay.isVisible) {
+            appCustomControlsOverlay.alpha = 0f
+            appCustomControlsOverlay.visibility = View.VISIBLE
+        }
+        appCustomControlsOverlay.animate()
+            .alpha(1f)
+            .setDuration(200L)
+            .start()
+        scheduleAutoHideControls()
+    }
+
+    private fun hideAppPlayerControlsSmoothly() {
+        appCustomControlsOverlay.removeCallbacks(autoHideControlsRunnable)
+        if (!appCustomControlsOverlay.isVisible) return
+        appCustomControlsOverlay.animate().cancel()
+        appCustomControlsOverlay.animate()
+            .alpha(0f)
+            .setDuration(200L)
+            .withEndAction {
+                appCustomControlsOverlay.visibility = View.GONE
+                appCustomControlsOverlay.alpha = 1f
+            }
+            .start()
+    }
+
+    private fun resetAutoHideControls() {
+        appCustomControlsOverlay.removeCallbacks(autoHideControlsRunnable)
+        if (!appCustomControlsOverlay.isVisible || appCustomControlsOverlay.alpha < 0.9f) {
+            showAppPlayerControlsWithFade()
+        } else {
+            scheduleAutoHideControls()
+        }
+    }
+
+    private fun scheduleAutoHideControls() {
+        appCustomControlsOverlay.removeCallbacks(autoHideControlsRunnable)
+        if (playerEngine.isPlaying() && !isUserSeekingRedBar) {
+            appCustomControlsOverlay.postDelayed(autoHideControlsRunnable, 3400L)
+        }
+    }
+
+    private fun seekRoomPlayerByDeltaMs(deltaMs: Long) {
+        val room = currentRoom ?: return
+        if (room.hostId != localUserId) {
+            Toast.makeText(hostContext, "⚠️ التحكم في الوقت متاح للمضيف فقط", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val exo = playerEngine.player ?: return
+        val dur = exo.duration
+        val target = (exo.currentPosition + deltaMs).coerceAtLeast(0L)
+        val newPos = if (dur > 0) min(target, dur) else target
+        exo.seekTo(newPos)
+        room.playbackPositionMs = newPos
+        if (dur > 0) {
+            sbAppRedSeekBar.progress = ((newPos * 1000L) / dur).toInt().coerceIn(0, 1000)
+            tvAppElapsed.text = formatTimeMs(newPos)
+        }
+        broadcastPlaybackSync()
+        resetAutoHideControls()
+    }
+
+    private fun toggleAppPlayerFullscreen(enterFullscreen: Boolean) {
+        val act = hostActivity ?: return
+        isFullscreenPlayer = enterFullscreen
+        btnAppFullscreenToggle.setImageDrawable(
+            VectorIcons.createFullscreenIcon(hostContext, isFullscreen = enterFullscreen)
+        )
+
+        val lp = playerFrameContainer.layoutParams
+        if (lp != null && originalPlayerHeightPx == 0 && lp.height > 0) {
+            originalPlayerHeightPx = lp.height
+        }
+
+        if (enterFullscreen) {
+            act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            WindowCompat.setDecorFitsSystemWindows(act.window, false)
+            WindowInsetsControllerCompat(act.window, rootView).hide(WindowInsetsCompat.Type.systemBars())
+            if (lp != null) {
+                lp.height = ViewGroup.LayoutParams.MATCH_PARENT
+                playerFrameContainer.layoutParams = lp
+            }
+        } else {
+            act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            WindowCompat.setDecorFitsSystemWindows(act.window, true)
+            WindowInsetsControllerCompat(act.window, rootView).show(WindowInsetsCompat.Type.systemBars())
+            if (lp != null) {
+                lp.height = if (originalPlayerHeightPx > 0) originalPlayerHeightPx else dp(225)
+                playerFrameContainer.layoutParams = lp
+            }
+        }
+    }
+
+    private fun showAppServersPopup() {
+        val providers = if (currentProviderTargets.isNotEmpty()) {
+            currentProviderTargets
+        } else {
+            playerEngine.getSources()
+        }
+        if (providers.isEmpty()) {
+            Toast.makeText(hostContext, "السيرفر الحالي شغال", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val dialog = Dialog(hostContext)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val widthPx = dp(275)
+        val card = LinearLayout(hostContext).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeRoundedBg(Color.parseColor("#EE10131A"), 18f, Color.parseColor("#33FFFFFF"), 1f)
+            setPadding(dp(18), dp(16), dp(18), dp(14))
+            layoutParams = ViewGroup.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+
+        val header = TextView(hostContext).apply {
+            text = "Servers"
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(4), 0, dp(4), dp(10))
+        }
+        card.addView(header)
+
+        val scroll = ScrollView(hostContext)
+        val listCol = LinearLayout(hostContext).apply { orientation = LinearLayout.VERTICAL }
+        scroll.addView(listCol)
+        card.addView(scroll)
+
+        providers.forEachIndexed { idx, srv ->
+            val isSel = idx == currentProviderIndex
+            val row = LinearLayout(hostContext).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = if (isSel) makeRoundedBg(Color.parseColor("#26FFFFFF"), 10f, Color.parseColor("#55FFFFFF"), 1f) else null
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                setOnClickListener {
+                    dialog.dismiss()
+                    switchServerInRoom(idx, srv)
+                }
+            }
+            val nameTv = TextView(hostContext).apply {
+                text = srv.label.ifBlank { "REYZO ${idx + 1}" }
+                setTextColor(if (isSel) Color.WHITE else Color.parseColor("#CBD5E1"))
+                textSize = 13.5f
+                setTypeface(typeface, Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            row.addView(nameTv)
+            if (isSel) {
+                val ivCheck = ImageView(hostContext).apply {
+                    setImageDrawable(VectorIcons.createCheckMarkIcon(hostContext, Color.WHITE))
+                    layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
+                }
+                row.addView(ivCheck)
+            }
+            listCol.addView(row)
+        }
+
+        dialog.setContentView(card)
+        dialog.show()
+        dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun switchServerInRoom(index: Int, target: StreamSource) {
+        val room = currentRoom ?: return
+        if (room.hostId != localUserId) {
+            Toast.makeText(hostContext, "⚠️ تغيير السيرفر متاح للمضيف فقط", Toast.LENGTH_SHORT).show()
+            return
+        }
+        currentProviderIndex = index
+        selectedQualityHeight = null
+        btnAppServerPill.text = "  ${target.label.ifBlank { "REYZO ${index + 1}" }}"
+        setAppPlayerBuffering(true)
+
+        if (target.isDirectStream || isLikelyDirectStreamUrl(target.url)) {
+            playStreamSourceInEngine(target, room.streamTitle, seekMs = playerEngine.player?.currentPosition ?: 0L)
+            broadcastPlaybackSync()
+        } else {
+            loadProviderInHeadlessSniffer(index)
+        }
+    }
+
+    private fun showAppQualityPopup() {
+        val dialog = Dialog(hostContext)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val widthPx = dp(260)
+        val card = LinearLayout(hostContext).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeRoundedBg(Color.parseColor("#EE10131A"), 18f, Color.parseColor("#33FFFFFF"), 1f)
+            setPadding(dp(18), dp(16), dp(18), dp(14))
+            layoutParams = ViewGroup.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+
+        val header = TextView(hostContext).apply {
+            text = "Quality"
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(dp(4), 0, dp(4), dp(10))
+        }
+        card.addView(header)
+
+        val realQualities = playerEngine.getAvailableQualityTracks()
+        val detectedBadge = playerEngine.getCurrentDetectedQualityLabel()
+
+        val isAutoSelected = selectedQualityHeight == null
+        val autoRow = TextView(hostContext).apply {
+            text = "Auto ($detectedBadge)"
+            setTextColor(if (isAutoSelected) Color.WHITE else Color.parseColor("#CBD5E1"))
+            textSize = 13.5f
+            setTypeface(typeface, Typeface.BOLD)
+            background = if (isAutoSelected) makeRoundedBg(Color.parseColor("#26FFFFFF"), 10f, Color.parseColor("#55FFFFFF"), 1f) else null
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setOnClickListener {
+                selectedQualityHeight = null
+                playerEngine.selectVideoQualityHeight(null)
+                btnAppQualityPill.text = "  $detectedBadge"
+                dialog.dismiss()
+            }
+        }
+        card.addView(autoRow)
+
+        realQualities.forEach { qTrack ->
+            val qLabel = when {
+                qTrack.height >= 2160 -> "4K Ultra HD (2160p)"
+                qTrack.height >= 1080 -> "Full HD (1080p)"
+                qTrack.height >= 720 -> "HD (720p)"
+                qTrack.height >= 480 -> "SD (480p)"
+                else -> "${qTrack.height}p"
+            }
+            val isSel = selectedQualityHeight == qTrack.height
+            val row = TextView(hostContext).apply {
+                text = qLabel
+                setTextColor(if (isSel) Color.WHITE else Color.parseColor("#CBD5E1"))
+                textSize = 13.5f
+                setTypeface(typeface, Typeface.BOLD)
+                background = if (isSel) makeRoundedBg(Color.parseColor("#26FFFFFF"), 10f, Color.parseColor("#55FFFFFF"), 1f) else null
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                setOnClickListener {
+                    selectedQualityHeight = qTrack.height
+                    playerEngine.selectVideoQualityHeight(qTrack.height)
+                    btnAppQualityPill.text = "  ${qTrack.height}p"
+                    dialog.dismiss()
+                }
+            }
+            card.addView(row)
+        }
+
+        dialog.setContentView(card)
+        dialog.show()
+        dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun showAppSubtitlesDialog() {
+        val dialog = Dialog(hostContext)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        val screenW = hostContext.resources.displayMetrics.widthPixels
+        val dialogWidthPx = min((screenW * 0.88f).toInt(), dp(360))
+
+        val root = LayoutInflater.from(hostContext)
+            .inflate(R.layout.dialog_subtitles_sheet, null, false) as LinearLayout
+        root.background = makeRoundedBg(Color.parseColor("#F0101218"), 20f, Color.parseColor("#33FFFFFF"), 1f)
+
+        val tabSwitchBox = root.findViewById<LinearLayout>(R.id.tabSwitchBox)
+        tabSwitchBox.background = makeRoundedBg(Color.parseColor("#14FFFFFF"), 12f, Color.parseColor("#22FFFFFF"), 1f)
+
+        val tabTracksBtn = root.findViewById<TextView>(R.id.tabTracksBtn)
+        val tabSettingsBtn = root.findViewById<TextView>(R.id.tabSettingsBtn)
+        val btnClosePopup = root.findViewById<TextView>(R.id.btnClosePopup)
+        val tracksPanel = root.findViewById<LinearLayout>(R.id.tracksPanel)
+        val settingsPanel = root.findViewById<LinearLayout>(R.id.settingsPanel)
+
+        val btnDisableSubs = root.findViewById<TextView>(R.id.btnDisableSubs)
+        val btnUploadSrt = root.findViewById<TextView>(R.id.btnUploadSrt)
+        val btnRefreshSubs = root.findViewById<TextView>(R.id.btnRefreshSubs)
+        val filterRow = root.findViewById<LinearLayout>(R.id.filterRow)
+        val tracksContainer = root.findViewById<LinearLayout>(R.id.tracksContainer)
+
+        tabTracksBtn.background = makeRoundedBg(Color.WHITE, 10f)
+        btnClosePopup.background = makeRoundedBg(Color.parseColor("#1FFFFFFF"), 16f)
+        btnClosePopup.setOnClickListener { dialog.dismiss() }
+        btnUploadSrt.visibility = View.GONE
+
+        val isOff = selectedSubtitleId == "NONE"
+        btnDisableSubs.setTextColor(if (isOff) Color.parseColor("#0E1015") else Color.WHITE)
+        btnDisableSubs.background = makeRoundedBg(
+            if (isOff) Color.WHITE else Color.parseColor("#1AFFFFFF"),
+            10f,
+            Color.parseColor("#33FFFFFF"),
+            0.8f
+        )
+        btnDisableSubs.setOnClickListener {
+            selectedSubtitleId = "NONE"
+            tvAppSubtitleOverlay.visibility = View.GONE
+            dialog.dismiss()
+        }
+
+        tabTracksBtn.setOnClickListener {
+            tracksPanel.visibility = View.VISIBLE
+            settingsPanel.visibility = View.GONE
+            tabTracksBtn.background = makeRoundedBg(Color.WHITE, 10f)
+            tabTracksBtn.setTextColor(Color.parseColor("#0E1015"))
+            tabSettingsBtn.background = null
+            tabSettingsBtn.setTextColor(Color.parseColor("#B0BAC9"))
+        }
+        tabSettingsBtn.setOnClickListener {
+            tracksPanel.visibility = View.GONE
+            settingsPanel.visibility = View.VISIBLE
+            tabSettingsBtn.background = makeRoundedBg(Color.WHITE, 10f)
+            tabSettingsBtn.setTextColor(Color.parseColor("#0E1015"))
+            tabTracksBtn.background = null
+            tabTracksBtn.setTextColor(Color.parseColor("#B0BAC9"))
+        }
+
+        fun renderTracksList() {
+            filterRow.removeAllViews()
+            tracksContainer.removeAllViews()
+            if (availableSubtitles.isEmpty()) {
+                val emptyTv = TextView(hostContext).apply {
+                    text = "لا توجد ترجمات خارجية متاحة حالياً"
+                    setTextColor(Color.parseColor("#94A3B8"))
+                    textSize = 12.5f
+                    gravity = Gravity.CENTER
+                    setPadding(dp(12), dp(24), dp(12), dp(24))
+                }
+                tracksContainer.addView(emptyTv)
+            } else {
+                availableSubtitles.forEach { track ->
+                    val isSelected = track.id == selectedSubtitleId
+                    val itemLayout = LinearLayout(hostContext).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        background = if (isSelected) makeRoundedBg(Color.parseColor("#26FFFFFF"), 10f, Color.parseColor("#55FFFFFF"), 1f) else null
+                        setPadding(dp(14), dp(10), dp(14), dp(10))
+                        setOnClickListener {
+                            selectedSubtitleId = track.id
+                            subtitleOffsetMs = 0L
+                            controllerScope.launch {
+                                val parsed = withContext(Dispatchers.IO) {
+                                    downloadAndParseSubtitleDirect(track.url)
+                                }
+                                if (parsed.isNotEmpty()) {
+                                    activeSubtitleCues = parsed
+                                    tvAppSubtitleOverlay.visibility = View.VISIBLE
+                                }
+                            }
+                            dialog.dismiss()
+                        }
+                    }
+                    val langTv = TextView(hostContext).apply {
+                        text = track.languageLabel.ifBlank { track.languageCode }
+                        setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#D0D7E2"))
+                        textSize = 13.5f
+                        setTypeface(typeface, Typeface.BOLD)
+                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    }
+                    itemLayout.addView(langTv)
+                    tracksContainer.addView(itemLayout)
+                }
+            }
+        }
+
+        btnRefreshSubs.setOnClickListener {
+            val tmdbId = activeMovieTmdbId.ifEmpty { currentRoom?.streamId ?: "" }
+            if (tmdbId.isNotEmpty()) {
+                controllerScope.launch {
+                    val subs = withContext(Dispatchers.IO) {
+                        fetchSubtitlesDirectFromApi(tmdbId)
+                    }
+                    availableSubtitles = subs
+                    renderTracksList()
+                }
+            }
+        }
+
+        renderTracksList()
+        if (availableSubtitles.isEmpty()) {
+            btnRefreshSubs.performClick()
+        }
+
+        dialog.setContentView(root)
+        dialog.show()
+        dialog.window?.setLayout(dialogWidthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+    }
+
+    private fun fetchSubtitlesDirectFromApi(cleanTmdbId: String): List<SubtitleTrack> {
+        val list = mutableListOf<SubtitleTrack>()
+        try {
+            val apiUrl = "${SessionManager.CLOUDFLARE_API_URL}/api/v2/subtitles?tmdb_id=$cleanTmdbId&type=movie"
+            val req = Request.Builder().url(apiUrl).header("User-Agent", SessionManager.CUSTOM_USER_AGENT).build()
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use
+                val bodyStr = resp.body?.string()?.trim() ?: return@use
+                val arr = if (bodyStr.startsWith("[")) {
+                    org.json.JSONArray(bodyStr)
+                } else {
+                    JSONObject(bodyStr).optJSONArray("subtitles") ?: org.json.JSONArray()
+                }
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val subUrl = o.optString("url", "")
+                    if (subUrl.isBlank()) continue
+                    val langCode = o.optString("language", o.optString("lang", "ar"))
+                    val langLabel = o.optString("display", o.optString("label", langCode))
+                    list.add(
+                        SubtitleTrack(
+                            id = o.optString("id", "sub_$i"),
+                            languageCode = langCode,
+                            languageLabel = langLabel,
+                            releaseName = o.optString("release", ""),
+                            url = subUrl
+                        )
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+        return list
+    }
+
+    private fun downloadAndParseSubtitleDirect(url: String): List<SubtitleCue> {
+        val cues = mutableListOf<SubtitleCue>()
+        try {
+            val req = Request.Builder().url(url).header("User-Agent", SessionManager.CUSTOM_USER_AGENT).build()
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val text = resp.body?.string() ?: return emptyList()
+                val lines = text.lines()
+                var i = 0
+                val timeRegex = Regex("""(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{2}:\d{2}[,.]\d{3})""")
+                while (i < lines.size) {
+                    val line = lines[i].trim()
+                    val match = timeRegex.find(line)
+                    if (match != null) {
+                        val startMs = parseSubTimeMs(match.groupValues[1])
+                        val endMs = parseSubTimeMs(match.groupValues[2])
+                        i++
+                        val sb = StringBuilder()
+                        while (i < lines.size && lines[i].trim().isNotEmpty()) {
+                            if (sb.isNotEmpty()) sb.append("\n")
+                            sb.append(lines[i].trim())
+                            i++
+                        }
+                        if (sb.isNotEmpty() && endMs > startMs) {
+                            cues.add(SubtitleCue(startMs, endMs, cleanAssAndHtmlTags(sb.toString())))
+                        }
+                    } else {
+                        i++
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return cues
+    }
+
+    private fun parseSubTimeMs(raw: String): Long {
+        val norm = raw.trim().replace(',', '.')
+        val parts = norm.split(":")
+        return try {
+            if (parts.size == 3) {
+                val h = parts[0].toLong()
+                val m = parts[1].toLong()
+                val secParts = parts[2].split(".")
+                val s = secParts[0].toLong()
+                val ms = secParts.getOrNull(1)?.padEnd(3, '0')?.take(3)?.toLong() ?: 0L
+                (h * 3600_000L) + (m * 60_000L) + (s * 1000L) + ms
+            } else if (parts.size == 2) {
+                val m = parts[0].toLong()
+                val secParts = parts[1].split(".")
+                val s = secParts[0].toLong()
+                val ms = secParts.getOrNull(1)?.padEnd(3, '0')?.take(3)?.toLong() ?: 0L
+                (m * 60_000L) + (s * 1000L) + ms
+            } else 0L
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    private fun loadSubtitlesForMovieAutomatically(tmdbId: String) {
+        val cleanId = tmdbId.replace("tmdb_movie_", "").replace("tmdb_tv_", "").replace("tmdb_", "").trim()
+        if (cleanId.isEmpty() || cleanId == "0") return
+        activeMovieTmdbId = cleanId
+
+        controllerScope.launch {
+            val subs: List<SubtitleTrack> = withContext(Dispatchers.IO) {
+                fetchSubtitlesDirectFromApi(cleanId)
+            }
+            availableSubtitles = subs
+            val preferredArabic = subs.firstOrNull { track ->
+                track.languageCode.startsWith("ar", ignoreCase = true) ||
+                track.languageLabel.contains("Arab", ignoreCase = true) ||
+                track.languageLabel.contains("عرب", ignoreCase = true)
+            } ?: subs.firstOrNull()
+
+            if (preferredArabic != null) {
+                val cues: List<SubtitleCue> = withContext(Dispatchers.IO) {
+                    downloadAndParseSubtitleDirect(preferredArabic.url)
+                }
+                if (cues.isNotEmpty()) {
+                    selectedSubtitleId = preferredArabic.id
+                    activeSubtitleCues = cues
+                    tvAppSubtitleOverlay.visibility = View.VISIBLE
+                }
+            }
+        }
+    }
+
+    private fun eliminateBottomEmptySpace() {
+        val bottomPad = if (isStandaloneActivity) dp(6) else dp(56)
+        rootView.setPadding(rootView.paddingLeft, rootView.paddingTop, rootView.paddingRight, 0)
+        layoutActiveRoomContainer.setPadding(
+            layoutActiveRoomContainer.paddingLeft,
+            layoutActiveRoomContainer.paddingTop,
+            layoutActiveRoomContainer.paddingRight,
+            bottomPad
+        )
+        (layoutActiveRoomContainer.layoutParams as? ViewGroup.MarginLayoutParams)?.bottomMargin = 0
+
+        val panels = listOf(panelTabChat, panelTabMediaPicker, panelTabParticipants, panelTabLogsStats)
+        for (p in panels) {
+            p.setPadding(p.paddingLeft, p.paddingTop, p.paddingRight, dp(4))
+            (p.layoutParams as? LinearLayout.LayoutParams)?.apply {
+                height = 0
+                weight = 1f
+                bottomMargin = 0
+            }
+        }
+        (panelTabChat.parent as? View)?.let { parentContainer ->
+            parentContainer.setPadding(parentContainer.paddingLeft, parentContainer.paddingTop, parentContainer.paddingRight, 0)
+            (parentContainer.layoutParams as? LinearLayout.LayoutParams)?.apply {
+                height = 0
+                weight = 1f
+                bottomMargin = 0
+            }
+        }
+        (rvChatMessages.layoutParams as? LinearLayout.LayoutParams)?.apply {
+            height = 0
+            weight = 1f
+            bottomMargin = dp(4)
+        }
     }
 
     private fun setupRecyclerViews() {
@@ -401,7 +1473,7 @@ class WatchTogetherController(
         rvParticipantsList.adapter = participantsAdapter
 
         mediaPickerAdapter = MediaPickerAdapter(displayedMediaList) { mediaOption -> selectMediaForRoom(mediaOption) }
-        rvMediaPickerList.layoutManager = LinearLayoutManager(hostContext)
+        updateMediaPickerLayoutManager()
         rvMediaPickerList.adapter = mediaPickerAdapter
 
         eventLogsAdapter = EventLogsAdapter(eventLogs)
@@ -409,18 +1481,227 @@ class WatchTogetherController(
         rvRoomEventLogs.adapter = eventLogsAdapter
     }
 
+    private fun updateMediaPickerLayoutManager() {
+        if (isShowingMoviesSubTab) {
+            val currentLm = rvMediaPickerList.layoutManager
+            if (currentLm !is GridLayoutManager || currentLm.spanCount != 3) {
+                rvMediaPickerList.layoutManager = GridLayoutManager(hostContext, 3)
+            }
+        } else {
+            val currentLm = rvMediaPickerList.layoutManager
+            if (currentLm is GridLayoutManager || currentLm == null) {
+                rvMediaPickerList.layoutManager = LinearLayoutManager(hostContext)
+            }
+        }
+    }
+
+    private fun showMoviesGridModalDialog() {
+        val dialog = Dialog(hostContext, android.R.style.Theme_Black_NoTitleBar)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+
+        val screenHeight = hostContext.resources.displayMetrics.heightPixels
+
+        val modalRoot = LinearLayout(hostContext).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(18), dp(16), dp(14))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#10131C"))
+                cornerRadius = dp(22).toFloat()
+                setStroke(dp(1), Color.parseColor("#2A3042"))
+            }
+        }
+
+        val headerRow = LinearLayout(hostContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, dp(12))
+        }
+        val tvHeader = TextView(hostContext).apply {
+            text = "Search Movies"
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            setTypeface(typeface, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val btnSwitchToChannels = TextView(hostContext).apply {
+            text = "📺 القنوات"
+            setTextColor(Color.WHITE)
+            textSize = 12f
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#262B3A"))
+                cornerRadius = dp(12).toFloat()
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(10) }
+            setOnClickListener {
+                dialog.dismiss()
+                isShowingMoviesSubTab = false
+                refreshMediaPickerList()
+                switchRoomInternalTab("MEDIA")
+            }
+        }
+        val btnClose = TextView(hostContext).apply {
+            text = "✕"
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.parseColor("#262B3A"))
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(38), dp(38))
+            setOnClickListener { dialog.dismiss() }
+        }
+        headerRow.addView(tvHeader)
+        headerRow.addView(btnSwitchToChannels)
+        headerRow.addView(btnClose)
+        modalRoot.addView(headerRow)
+
+        val etSearchModal = EditText(hostContext).apply {
+            hint = "🔍  ابحث عن أي فيلم..."
+            setHintTextColor(Color.parseColor("#8C96A8"))
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setSingleLine(true)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#181C28"))
+                cornerRadius = dp(14).toFloat()
+                setStroke(dp(1), Color.parseColor("#32394E"))
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(12) }
+        }
+        modalRoot.addView(etSearchModal)
+
+        val modalMoviesList = mutableListOf<MediaStreamOption>().apply { addAll(allMoviesList) }
+        lateinit var modalAdapter: MediaPickerAdapter
+        modalAdapter = MediaPickerAdapter(modalMoviesList) { chosen ->
+            dialog.dismiss()
+            selectMediaForRoom(chosen)
+        }
+
+        val rvModalGrid = RecyclerView(hostContext).apply {
+            layoutManager = GridLayoutManager(hostContext, 3)
+            adapter = modalAdapter
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                (screenHeight * 0.68).toInt()
+            )
+        }
+        modalRoot.addView(rvModalGrid)
+
+        val footerRow = LinearLayout(hostContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(12), 0, 0)
+        }
+        val btnCancel = Button(hostContext).apply {
+            text = "Cancel"
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#212634"))
+                cornerRadius = dp(14).toFloat()
+            }
+            layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginEnd = dp(8) }
+            setOnClickListener { dialog.dismiss() }
+        }
+        val btnSearch = Button(hostContext).apply {
+            text = "Search"
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setTypeface(typeface, Typeface.BOLD)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#E50914"))
+                cornerRadius = dp(14).toFloat()
+            }
+            layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f).apply { marginStart = dp(8) }
+        }
+        footerRow.addView(btnCancel)
+        footerRow.addView(btnSearch)
+        modalRoot.addView(footerRow)
+
+        var searchJob: Job? = null
+        val triggerModalSearch = { queryRaw: String ->
+            val q = queryRaw.trim()
+            searchJob?.cancel()
+            if (q.isEmpty()) {
+                modalMoviesList.clear()
+                modalMoviesList.addAll(allMoviesList)
+                modalAdapter.notifyDataSetChanged()
+            } else {
+                val localFiltered = allMoviesList.filter { it.title.contains(q, ignoreCase = true) }
+                modalMoviesList.clear()
+                modalMoviesList.addAll(localFiltered)
+                modalAdapter.notifyDataSetChanged()
+
+                if (q.length >= 2) {
+                    searchJob = controllerScope.launch {
+                        delay(220)
+                        val tmdbRes = withContext(Dispatchers.IO) {
+                            OttRepository.searchTmdbCatalog(q, "MOVIES")
+                        }
+                        if (tmdbRes.isNotEmpty()) {
+                            modalMoviesList.clear()
+                            for (vod in tmdbRes) {
+                                modalMoviesList.add(
+                                    MediaStreamOption(
+                                        id = vod.id,
+                                        title = vod.title,
+                                        subtitle = "🎬 فيلم (${vod.year}) • ⭐ ${vod.rating}",
+                                        streamUrl = "",
+                                        posterUrl = vod.posterUrl,
+                                        rating = vod.rating.ifBlank { "7.5" },
+                                        year = vod.year,
+                                        isMovie = true
+                                    )
+                                )
+                            }
+                            modalAdapter.notifyDataSetChanged()
+                        }
+                    }
+                }
+            }
+        }
+
+        etSearchModal.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                triggerModalSearch(s?.toString() ?: "")
+            }
+            override fun afterTextChanged(s: Editable?) {}
+        })
+
+        btnSearch.setOnClickListener { triggerModalSearch(etSearchModal.text?.toString() ?: "") }
+
+        dialog.setContentView(modalRoot)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            val width = (hostContext.resources.displayMetrics.widthPixels * 0.96).toInt()
+            setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
+        }
+        dialog.show()
+    }
+
     private fun setupLobbyListeners() {
         rootView.findViewById<View>(R.id.btnBlockedUsersLobby).setOnClickListener { showBlockedUsersDialog() }
         rootView.findViewById<View>(R.id.btnCreateRoomOpen).setOnClickListener { showCreateRoomDialog() }
         rootView.findViewById<View>(R.id.btnRefreshRooms).setOnClickListener {
-            Toast.makeText(hostContext, "🔄 جاري فحص وتحديث الغرف النشطة...", Toast.LENGTH_SHORT).show()
-            fetchActiveRoomsDirectory()
+            Toast.makeText(hostContext, "🔄 جاري تحديث الغرف النشطة...", Toast.LENGTH_SHORT).show()
+            fetchActiveRoomsDirectory(cleanOldSelfRooms = false)
         }
 
         rootView.findViewById<View>(R.id.btnJoinByCodeSubmit).setOnClickListener {
             val raw = etJoinByCodeInput.text.toString().trim()
             if (raw.isEmpty()) {
-                Toast.makeText(hostContext, "🔑 أدخل رمز الغرفة أو رابط الدعوة أولاً", Toast.LENGTH_SHORT).show()
+                Toast.makeText(hostContext, "🔑 أدخل رمز الغرفة أولاً", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             joinRoomByCodeOrLink(raw)
@@ -466,30 +1747,25 @@ class WatchTogetherController(
         }
     }
 
-    private fun isRoomActiveAndValid(room: WatchRoomModel, now: Long = System.currentTimeMillis()): Boolean {
-        if (room.status == "CLOSED") return false
-        if (room.onlineCount <= 0) return false
-        if (room.expiresAt <= now) return false
-        if (now - room.lastActiveAt > maxRoomInactivityMs && room.roomId != currentRoom?.roomId) return false
-        return true
-    }
-
     private fun applyRoomSearchAndFilters() {
         val query = etRoomSearch.text.toString().trim().lowercase(Locale.getDefault())
         filteredRoomsList.clear()
-        val now = System.currentTimeMillis()
-
-        // تصفية الغرف غير النشطة أولاً
-        activeRoomsList.removeAll { !isRoomActiveAndValid(it, now) }
 
         for (room in activeRoomsList) {
-            val matchesFilter = !room.isPrivate
+            val matchesFilter = when (currentLobbyFilter) {
+                "PUBLIC" -> !room.isPrivate
+                "PRIVATE" -> room.isPrivate
+                "CHANNELS" -> !room.isMovie
+                else -> true
+            }
             if (!matchesFilter) continue
+
             val matchesQuery = query.isEmpty() ||
                 room.roomName.lowercase(Locale.getDefault()).contains(query) ||
                 room.hostName.lowercase(Locale.getDefault()).contains(query) ||
                 room.streamTitle.lowercase(Locale.getDefault()).contains(query) ||
                 room.roomCode.lowercase(Locale.getDefault()).contains(query)
+
             if (matchesQuery) filteredRoomsList.add(room)
         }
         activeRoomsAdapter.notifyDataSetChanged()
@@ -497,9 +1773,6 @@ class WatchTogetherController(
         val totalViewers = filteredRoomsList.sumOf { it.onlineCount }
         tvLobbyStatsSummary.text = "${filteredRoomsList.size} غرف نشطة • $totalViewers متصل"
     }
-
-    private fun generateUniqueRoomId(): String =
-        "RM-" + System.currentTimeMillis().toString(36).uppercase(Locale.US) + "-" + Random.nextInt(100, 999)
 
     private fun generateRoomCode(): String {
         val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -553,14 +1826,6 @@ class WatchTogetherController(
             etPassword.visibility = if (checkedId == rbPrivate.id) View.VISIBLE else View.GONE
         }
 
-        val tvHint = TextView(hostContext).apply {
-            text = "🎬 بعد فتح الغرفة، اختر الفيلم أو القناة التي تريد مشاهدتها من القائمة داخل الغرفة."
-            setTextColor(Color.parseColor("#80D8FF"))
-            textSize = 12f
-            setPadding(0, 16, 0, 8)
-        }
-        layout.addView(tvHint)
-
         AlertDialog.Builder(hostContext)
             .setTitle("➕ إنشاء غرفة مشاهدة جديدة")
             .setView(container)
@@ -568,42 +1833,47 @@ class WatchTogetherController(
                 val title = etName.text.toString().trim().ifEmpty { "غرفة $localUserName" }
                 val isPriv = rbPrivate.isChecked
                 val rawPass = etPassword.text.toString().trim()
-                val now = System.currentTimeMillis()
 
-                // لا يتم تشغيل أي فيديو افتراضي؛ المشغل ينتظر حتى يختار المستخدم الفيلم أو القناة!
-                val newRoom = WatchRoomModel(
-                    roomId = generateUniqueRoomId(),
-                    roomCode = generateRoomCode(),
-                    roomName = title,
-                    hostId = localUserId,
-                    hostName = localUserName,
-                    isPrivate = isPriv,
-                    passwordHash = if (isPriv && rawPass.isNotEmpty()) sha256(rawPass) else "",
-                    requireApproval = false,
-                    maxParticipants = 25,
-                    onlineCount = 1,
-                    status = "WAITING",
-                    streamUrl = "",
-                    streamTitle = "اختر فيلماً أو قناة للبدء",
-                    category = "بانتظار اختيار المحتوى",
-                    isMatch = false,
-                    isPlaying = false,
-                    playbackPositionMs = 0L,
-                    createdAt = now,
-                    lastActiveAt = now
-                )
+                controllerScope.launch {
+                    val (ok, serverCode) = OttRepository.createWatchRoom(
+                        deviceId = localUserId,
+                        userName = localUserName,
+                        roomName = title,
+                        roomIcon = "🎬",
+                        isPrivate = isPriv,
+                        password = rawPass,
+                        allowGuestsControl = true,
+                        contentType = "VOD",
+                        streamId = "0",
+                        contentTitle = "اختر فيلماً أو قناة للبدء",
+                        contentPoster = "",
+                        streamUrl = ""
+                    )
 
-                activeRoomsList.removeAll { it.hostId == localUserId }
-                activeRoomsList.add(0, newRoom)
-                saveRoomsToLocalRegistry()
-                publishRoomToBackend(newRoom)
-                enterWatchRoom(newRoom, isHost = true)
+                    val finalCode = if (ok && serverCode.isNotEmpty()) serverCode else generateRoomCode()
+                    val newRoom = WatchRoomModel(
+                        roomId = finalCode,
+                        roomCode = finalCode,
+                        roomName = title,
+                        hostId = localUserId,
+                        hostName = localUserName,
+                        isPrivate = isPriv,
+                        passwordHash = if (isPriv && rawPass.isNotEmpty()) sha256(rawPass) else "",
+                        onlineCount = 1,
+                        status = "LIVE",
+                        streamUrl = "",
+                        streamTitle = "اختر فيلماً أو قناة للبدء",
+                        isPlaying = false
+                    )
+                    enterWatchRoom(newRoom, isHost = true)
+                    showMoviesGridModalDialog()
+                }
             }
             .setNegativeButton("إلغاء", null)
             .show()
     }
 
-    fun joinRoomByCodeOrLink(input: String) {
+    fun joinRoomByCodeOrLink(input: String, password: String = "") {
         var extractedCode = input.uppercase(Locale.US)
         if (input.contains("code=")) {
             extractedCode = Uri.parse(input).getQueryParameter("code")?.uppercase(Locale.US) ?: extractedCode
@@ -612,80 +1882,46 @@ class WatchTogetherController(
         }
         extractedCode = extractedCode.replace("#", "").trim()
 
-        val found = activeRoomsList.firstOrNull {
-            isRoomActiveAndValid(it) && (
-                it.roomCode.equals(extractedCode, ignoreCase = true) ||
-                it.roomId.equals(extractedCode, ignoreCase = true)
+        Toast.makeText(hostContext, "🔍 جاري الاتصال بالغرفة #$extractedCode...", Toast.LENGTH_SHORT).show()
+
+        controllerScope.launch {
+            val res = OttRepository.joinWatchRoom(
+                codeOrId = extractedCode,
+                deviceId = localUserId,
+                userName = localUserName,
+                password = password
             )
-        }
-
-        if (found != null) {
-            attemptJoinRoom(found)
-        } else {
-            Toast.makeText(hostContext, "🔍 جاري البحث عن الغرفة #$extractedCode في السيرفر...", Toast.LENGTH_SHORT).show()
-            Thread {
-                var matchedServerRoom: WatchRoomModel? = null
-                try {
-                    val req = Request.Builder().url("$workerBaseUrl/rooms/list").get().build()
-                    httpClient.newCall(req).execute().use { resp ->
-                        if (resp.isSuccessful) {
-                            val obj = JSONObject(resp.body?.string() ?: "{}")
-                            val arr = obj.optJSONArray("rooms") ?: JSONArray()
-                            for (i in 0 until arr.length()) {
-                                val r = parseRoomJson(arr.getJSONObject(i))
-                                if (r != null && isRoomActiveAndValid(r) &&
-                                    (r.roomCode.equals(extractedCode, ignoreCase = true) || r.roomId.equals(extractedCode, ignoreCase = true))) {
-                                    matchedServerRoom = r
-                                    break
-                                }
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-
-                mainHandler.post {
-                    if (matchedServerRoom != null) {
-                        activeRoomsList.add(0, matchedServerRoom!!)
-                        applyRoomSearchAndFilters()
-                        attemptJoinRoom(matchedServerRoom!!)
-                    } else {
-                        Toast.makeText(hostContext, "❌ هذه الغرفة غير موجودة أو تم إغلاقها لعدم النشاط", Toast.LENGTH_LONG).show()
-                    }
-                }
-            }.start()
+            if (res.status == "success" && res.room != null) {
+                val r = res.room
+                val (parsedUrl, parsedRef) = unpackUrlAndReferer(r.streamUrl)
+                val model = WatchRoomModel(
+                    roomId = r.roomId.ifEmpty { r.roomCode },
+                    roomCode = r.roomCode.ifEmpty { extractedCode },
+                    roomName = r.roomName,
+                    hostId = if (r.isHost) localUserId else "HOST_${r.roomCode}",
+                    hostName = r.hostName,
+                    isPrivate = r.isPrivate,
+                    onlineCount = res.participants.size.coerceAtLeast(1),
+                    status = if (r.isPlaying) "LIVE" else "PAUSED",
+                    streamId = r.streamId,
+                    streamUrl = parsedUrl,
+                    streamReferer = parsedRef,
+                    streamTitle = r.contentTitle.ifEmpty { "بث مشترك" },
+                    isMovie = r.contentType == "VOD",
+                    isPlaying = r.isPlaying,
+                    playbackPositionMs = r.playbackPositionMs
+                )
+                enterWatchRoom(model, isHost = r.isHost)
+                applyServerSyncResult(res)
+            } else if (res.requirePassword) {
+                promptServerRoomPassword(extractedCode)
+            } else {
+                Toast.makeText(hostContext, "❌ لم يتم العثور على الغرفة", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
-    private fun attemptJoinRoom(room: WatchRoomModel) {
-        if (!isRoomActiveAndValid(room)) {
-            activeRoomsList.removeAll { it.roomId == room.roomId }
-            saveRoomsToLocalRegistry()
-            applyRoomSearchAndFilters()
-            Toast.makeText(hostContext, "⛔ هذه الغرفة أُغلقت لأنها لم تعد نشطة", Toast.LENGTH_SHORT).show()
-            return
-        }
-        if (bannedUserIds.contains(localUserId)) {
-            Toast.makeText(hostContext, "🚫 تم حظرك من الدخول إلى هذه الغرفة", Toast.LENGTH_LONG).show()
-            return
-        }
-        if (room.onlineCount >= room.maxParticipants && room.hostId != localUserId) {
-            Toast.makeText(hostContext, "⚠️ الغرفة ممتلئة (${room.onlineCount}/${room.maxParticipants})", Toast.LENGTH_LONG).show()
-            return
-        }
-        if (room.hostId == localUserId) {
-            enterWatchRoom(room, isHost = true)
-            return
-        }
-        if (room.isPrivate && room.passwordHash.isNotEmpty()) {
-            promptRoomPassword(room)
-        } else if (room.requireApproval) {
-            sendJoinRequestToHost(room)
-        } else {
-            enterWatchRoom(room, isHost = false)
-        }
-    }
-
-    private fun promptRoomPassword(room: WatchRoomModel) {
+    private fun promptServerRoomPassword(roomCode: String) {
         val input = EditText(hostContext).apply {
             hint = "أدخل كلمة مرور الغرفة..."
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -693,65 +1929,90 @@ class WatchTogetherController(
         }
         AlertDialog.Builder(hostContext)
             .setTitle("🔒 غرفة خاصة محمية")
-            .setMessage("أدخل كلمة المرور للانضمام إلى «${room.roomName}»:")
             .setView(input)
             .setPositiveButton("انضمام") { _, _ ->
-                if (sha256(input.text.toString().trim()) == room.passwordHash) {
-                    if (room.requireApproval) sendJoinRequestToHost(room)
-                    else enterWatchRoom(room, isHost = false)
-                } else {
-                    Toast.makeText(hostContext, "❌ كلمة المرور غير صحيحة!", Toast.LENGTH_LONG).show()
-                }
+                joinRoomByCodeOrLink(roomCode, input.text.toString().trim())
             }
             .setNegativeButton("إلغاء", null)
             .show()
     }
 
-    private fun sendJoinRequestToHost(room: WatchRoomModel) {
-        Toast.makeText(hostContext, "🔔 تم إرسال طلب الانضمام للمضيف...", Toast.LENGTH_SHORT).show()
-        mainHandler.postDelayed({
-            if (!isDestroyed) enterWatchRoom(room, isHost = false)
-        }, 1200L)
+    private fun attemptJoinRoom(room: WatchRoomModel) {
+        joinRoomByCodeOrLink(room.roomCode)
     }
 
     fun enterWatchRoom(room: WatchRoomModel, isHost: Boolean) {
-        room.lastActiveAt = System.currentTimeMillis()
         currentRoom = room
+        lastSyncedMessageId = 0L
         layoutLobbyContainer.visibility = View.GONE
         layoutActiveRoomContainer.visibility = View.VISIBLE
+        eliminateBottomEmptySpace()
 
         chatHistory.clear()
+        chatAdapter.notifyDataSetChanged()
         eventLogs.clear()
         participantsMap.clear()
 
         if (isHost) {
             room.hostId = localUserId
             room.hostName = localUserName
-            participantsMap[localUserId] = ParticipantModel(localUserId, localUserName, "HOST", isMuted = true, pingMs = backendPingMs)
+            participantsMap[localUserId] = ParticipantModel(localUserId, localUserName, "HOST", isMuted = true)
         } else {
-            participantsMap[room.hostId] = ParticipantModel(room.hostId, room.hostName, "HOST", isMuted = false, pingMs = 25)
-            participantsMap[localUserId] = ParticipantModel(localUserId, localUserName, "PARTICIPANT", isMuted = true, pingMs = backendPingMs)
+            participantsMap[room.hostId] = ParticipantModel(room.hostId, room.hostName, "HOST", isMuted = true)
+            participantsMap[localUserId] = ParticipantModel(localUserId, localUserName, "PARTICIPANT", isMuted = true)
         }
 
-        room.onlineCount = participantsMap.size.coerceAtLeast(1)
-        statPeakViewers = room.onlineCount
-
-        loadCachedMessageHistory(room.roomId)
         appendSystemChatAndLog("🎬 مرحباً بك في «${room.roomName}» | الرمز: #${room.roomCode}")
-
         updateRoomHeaderAndPermissionsUI()
-        if (room.streamUrl.isNullOrEmpty()) {
-            exoPlayer?.stop()
-            exoPlayer?.clearMediaItems()
-            tvStreamStatusOverlay.text = "🎬 الرجاء اختيار فيلم أو قناة من القائمة بالأسفل"
-        } else {
-            startStreamPlayback(room.streamUrl, room.streamTitle, room.isPlaying, room.playbackPositionMs)
-        }
-        connectRoomWebSocket(room.roomId)
-        initVoiceEngineForRoom(room.roomId)
+        switchRoomInternalTab("CHAT")
 
-        switchRoomInternalTab("MEDIA")
+        tvAppPlayerTitle.text = room.streamTitle
+
+        if (room.streamUrl.isNotBlank()) {
+            val initialSource = StreamSource(
+                label = room.streamServerLabel.ifBlank { "REYZO 1" },
+                url = room.streamUrl,
+                referer = room.streamReferer,
+                origin = room.streamOrigin.ifBlank { extractOriginFromUrl(room.streamReferer.ifBlank { room.streamUrl }) },
+                userAgent = room.streamUserAgent,
+                isDirectStream = true
+            )
+            playStreamSourceInEngine(initialSource, room.streamTitle, room.playbackPositionMs)
+            if (room.streamId.isNotBlank()) {
+                loadSubtitlesForMovieAutomatically(room.streamId)
+                fetchBackupServersInBackground(room.streamId, room.streamTitle)
+            }
+        } else {
+            playerEngine.pauseAndReleaseSocket()
+            setAppPlayerBuffering(false)
+        }
+
+        connectRoomWebSocket(room.roomCode)
+        initVoiceEngineForRoom(room.roomCode)
         updateDetailedStatsUI()
+    }
+
+    private fun fetchBackupServersInBackground(tmdbId: String, title: String) {
+        val cleanId = tmdbId.replace("tmdb_movie_", "").replace("tmdb_tv_", "").replace("tmdb_", "").trim()
+        if (cleanId.isEmpty() || cleanId == "0") return
+        controllerScope.launch {
+            val servers = withContext(Dispatchers.IO) {
+                PrimeVodExtractor.fetchPanelConfiguredServers(
+                    tmdbId = cleanId,
+                    imdbId = "",
+                    title = title,
+                    isSeries = false,
+                    season = 1,
+                    episode = 1
+                )
+            }
+            if (servers.isNotEmpty()) {
+                currentProviderTargets.clear()
+                currentProviderTargets.addAll(servers)
+                val firstName = servers.first().label.ifBlank { "REYZO 1" }
+                btnAppServerPill.text = "  $firstName"
+            }
+        }
     }
 
     private fun updateRoomHeaderAndPermissionsUI() {
@@ -766,7 +2027,6 @@ class WatchTogetherController(
         tvRoomStatusBadge.text = when (room.status) {
             "PAUSED" -> "⏸️ متوقف"
             "BUFFERING" -> "⏳ مزامنة..."
-            "CLOSED" -> "⛔ مغلقة"
             else -> "🔴 LIVE"
         }
 
@@ -775,156 +2035,494 @@ class WatchTogetherController(
         participantsAdapter.notifyDataSetChanged()
     }
 
-    private fun initializeExoPlayer() {
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("IPTVSmartersPlayer")
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15000)
-            .setReadTimeoutMs(15000)
-        val mediaSourceFactory = DefaultMediaSourceFactory(
-            DefaultDataSource.Factory(hostContext, httpDataSourceFactory)
+    private fun playStreamSourceInEngine(source: StreamSource, title: String, seekMs: Long = 0L) {
+        val (cleanUrl, embeddedRef) = unpackUrlAndReferer(source.url.trim())
+        if (cleanUrl.isEmpty()) return
+
+        val finalRef = source.referer.ifBlank { embeddedRef.ifBlank { extractOriginFromUrl(cleanUrl) } }
+        val finalOrigin = source.origin.ifBlank { extractOriginFromUrl(finalRef).ifBlank { extractOriginFromUrl(cleanUrl) } }
+
+        val readySource = source.copy(
+            url = cleanUrl,
+            referer = finalRef,
+            origin = finalOrigin,
+            userAgent = source.userAgent.ifBlank { SessionManager.CUSTOM_USER_AGENT },
+            isDirectStream = true
         )
-        exoPlayer = ExoPlayer.Builder(hostContext)
-            .setMediaSourceFactory(mediaSourceFactory)
-            .build().also { player ->
-            watchPlayerView.player = player
-            player.addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    val room = currentRoom ?: return
-                    when (playbackState) {
-                        Player.STATE_BUFFERING -> {
-                            tvStreamStatusOverlay.text = "⏳ جاري مزامنة: ${room.streamTitle}"
-                            if (room.hostId == localUserId) {
-                                room.status = "BUFFERING"
-                                broadcastRoomEvent("STREAM_STATUS", JSONObject().put("status", "BUFFERING"))
-                            }
-                        }
-                        Player.STATE_READY -> {
-                            tvStreamStatusOverlay.text = "📺 ${room.streamTitle} • متزامن ✓"
-                            if (room.hostId == localUserId) {
-                                room.status = if (player.isPlaying) "LIVE" else "PAUSED"
-                            }
-                            updateRoomHeaderAndPermissionsUI()
-                        }
-                        Player.STATE_ENDED -> {
-                            tvStreamStatusOverlay.text = "انتهى البث المباشر"
-                        }
-                    }
-                }
 
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    val room = currentRoom ?: return
-                    btnSyncPlayPause.text = if (isPlaying) "⏸️ إيقاف مؤقت" else "▶️ تشغيل متزامن"
-                    if (!isHandlingRemoteSync && room.hostId == localUserId) {
-                        room.isPlaying = isPlaying
-                        room.status = if (isPlaying) "LIVE" else "PAUSED"
-                        room.playbackPositionMs = exoPlayer?.currentPosition ?: 0L
-                        room.lastActiveAt = System.currentTimeMillis()
-                        broadcastPlaybackSync()
-                        updateRoomHeaderAndPermissionsUI()
-                    }
-                }
+        tvAppPlayerTitle.text = title
+        btnAppServerPill.text = "  ${readySource.label.ifBlank { "REYZO 1" }}"
+        setAppPlayerBuffering(true)
+        showAppPlayerControlsWithFade()
 
-                override fun onPlayerError(error: PlaybackException) {
-                    handlePlayerStreamError(error)
-                }
-            })
+        val allToPlay = mutableListOf(readySource)
+        resolvedDirectStreams.forEach { s ->
+            if (s.url != readySource.url) allToPlay.add(s)
+        }
+
+        playerEngine.playSources(
+            playerView = watchPlayerView,
+            sources = allToPlay,
+            startIndex = 0,
+            startPositionMs = seekMs
+        )
+    }
+
+    private fun extractOriginFromUrl(url: String): String {
+        return try {
+            val uri = Uri.parse(url)
+            if (uri.scheme != null && uri.host != null) "${uri.scheme}://${uri.host}" else ""
+        } catch (_: Exception) {
+            ""
         }
     }
 
-    private fun startStreamPlayback(url: String, title: String, playImmediately: Boolean, positionMs: Long = 0L) {
-        val targetUrl = url.trim()
-        if (targetUrl.isEmpty() || targetUrl.contains("mux.dev") || targetUrl.contains("akamaized")) {
-            exoPlayer?.stop()
-            exoPlayer?.clearMediaItems()
-            tvStreamStatusOverlay.text = "🎬 الرجاء اختيار فيلم أو قناة من القائمة بالأسفل"
+    private fun packUrlAndReferer(url: String, referer: String): String {
+        val clean = url.substringBefore("|Referer=")
+        return if (referer.isNotBlank()) "$clean|Referer=$referer" else clean
+    }
+
+    private fun unpackUrlAndReferer(raw: String): Pair<String, String> {
+        if (raw.contains("|Referer=")) {
+            val parts = raw.split("|Referer=", limit = 2)
+            return Pair(parts[0].trim(), parts.getOrNull(1)?.trim() ?: "")
+        }
+        return Pair(raw.trim(), "")
+    }
+
+    private fun loadRealAppCatalog() {
+        controllerScope.launch {
+            val homeCatalog = withContext(Dispatchers.IO) {
+                OttRepository.fetchHomeSections()
+            }
+
+            allMoviesList.clear()
+            val moviesCombined = (
+                homeCatalog.trendingToday +
+                homeCatalog.popularMovies +
+                homeCatalog.topRatedMovies +
+                homeCatalog.actionMovies
+            ).filter { !it.isSeries }.distinctBy { it.id }
+
+            for (vod in moviesCombined) {
+                allMoviesList.add(
+                    MediaStreamOption(
+                        id = vod.id,
+                        title = vod.title,
+                        subtitle = "🎬 فيلم (${vod.year}) • ⭐ ${vod.rating}",
+                        streamUrl = "",
+                        posterUrl = vod.posterUrl,
+                        rating = vod.rating.ifBlank { "7.5" },
+                        year = vod.year,
+                        isMovie = true
+                    )
+                )
+            }
+            refreshMediaPickerList()
+
+            val channels = withContext(Dispatchers.IO) {
+                OttRepository.fetchChannelsByCategory("ALL")
+            }
+            allChannelsList.clear()
+            for (ch in channels) {
+                val url = ch.streamUrls.firstOrNull() ?: ch.namedSources.firstOrNull()?.url ?: continue
+                allChannelsList.add(
+                    MediaStreamOption(
+                        id = ch.id,
+                        title = ch.name,
+                        subtitle = "📺 قناة بث مباشر",
+                        streamUrl = url,
+                        isMovie = false
+                    )
+                )
+            }
+            refreshMediaPickerList()
+        }
+    }
+
+    private var inlineSearchJob: Job? = null
+
+    private fun refreshMediaPickerList() {
+        updateMediaPickerLayoutManager()
+        val query = etSearchMediaInRoom.text.toString().trim()
+        val lowerQuery = query.lowercase(Locale.getDefault())
+        val source = if (isShowingMoviesSubTab) allMoviesList else allChannelsList
+
+        btnSubTabMatches.setBackgroundResource(if (isShowingMoviesSubTab) R.drawable.wt_bg_btn_primary else R.drawable.wt_bg_badge_dark)
+        btnSubTabMatches.setTextColor(Color.WHITE)
+
+        btnSubTabChannels.setBackgroundResource(if (!isShowingMoviesSubTab) R.drawable.wt_bg_btn_primary else R.drawable.wt_bg_badge_dark)
+        btnSubTabChannels.setTextColor(Color.WHITE)
+
+        displayedMediaList.clear()
+        for (item in source) {
+            if (lowerQuery.isEmpty() ||
+                item.title.lowercase(Locale.getDefault()).contains(lowerQuery) ||
+                item.subtitle.lowercase(Locale.getDefault()).contains(lowerQuery)
+            ) {
+                displayedMediaList.add(item)
+            }
+        }
+        mediaPickerAdapter.notifyDataSetChanged()
+
+        if (isShowingMoviesSubTab && query.length >= 2) {
+            inlineSearchJob?.cancel()
+            inlineSearchJob = controllerScope.launch {
+                delay(240)
+                val results = withContext(Dispatchers.IO) {
+                    OttRepository.searchTmdbCatalog(query, "MOVIES")
+                }
+                if (etSearchMediaInRoom.text.toString().trim().equals(query, true) && results.isNotEmpty()) {
+                    displayedMediaList.clear()
+                    for (vod in results) {
+                        displayedMediaList.add(
+                            MediaStreamOption(
+                                id = vod.id,
+                                title = vod.title,
+                                subtitle = "🎬 فيلم (${vod.year}) • ⭐ ${vod.rating}",
+                                streamUrl = "",
+                                posterUrl = vod.posterUrl,
+                                rating = vod.rating.ifBlank { "7.5" },
+                                year = vod.year,
+                                isMovie = true
+                            )
+                        )
+                    }
+                    mediaPickerAdapter.notifyDataSetChanged()
+                }
+            }
+        }
+    }
+
+    private fun selectMediaForRoom(media: MediaStreamOption) {
+        val room = currentRoom ?: return
+        val role = participantsMap[localUserId]?.role ?: "PARTICIPANT"
+        if (room.hostId != localUserId && role != "MODERATOR") {
+            Toast.makeText(hostContext, "⚠️ تغيير المحتوى متاح للمضيف فقط", Toast.LENGTH_SHORT).show()
             return
         }
-        tvStreamStatusOverlay.text = "📺 جاري تشغيل: $title"
-        try {
-            isHandlingRemoteSync = true
-            watchPlayerView.visibility = View.VISIBLE
-            exoPlayer?.let { player ->
-                player.stop()
-                player.clearMediaItems()
-                val mediaItem = MediaItem.fromUri(Uri.parse(targetUrl))
-                player.setMediaItem(mediaItem)
-                player.prepare()
-                if (positionMs > 0) player.seekTo(positionMs)
-                player.playWhenReady = playImmediately
-            }
-        } catch (_: Exception) {
-        } finally {
-            mainHandler.postDelayed({ isHandlingRemoteSync = false }, 450L)
-        }
-    }
 
-    private fun handlePlayerStreamError(error: PlaybackException) {
-        val room = currentRoom ?: return
-        val currentUrl = room.streamUrl
-        if (currentUrl.isEmpty()) return
+        switchRoomInternalTab("CHAT")
 
-        val fallbackUrl = when {
-            currentUrl.endsWith(".mp4", ignoreCase = true) -> currentUrl.replaceAfterLast(".", "mkv")
-            currentUrl.endsWith(".mkv", ignoreCase = true) -> currentUrl.replaceAfterLast(".", "ts")
-            currentUrl.endsWith(".m3u8", ignoreCase = true) -> currentUrl.replaceAfterLast(".", "ts")
-            else -> ""
-        }
-        if (fallbackUrl.isNotEmpty() && fallbackUrl != currentUrl) {
-            room.streamUrl = fallbackUrl
-            startStreamPlayback(fallbackUrl, room.streamTitle, true, exoPlayer?.currentPosition ?: 0L)
+        playerEngine.pauseAndReleaseSocket()
+        tvAppPlayerTitle.text = media.title
+        tvAppElapsed.text = "00:00"
+        tvAppDuration.text = "00:00"
+        sbAppRedSeekBar.progress = 0
+        tvAppSubtitleOverlay.text = ""
+        tvAppSubtitleOverlay.visibility = View.GONE
+        activeSubtitleCues = emptyList()
+        availableSubtitles = emptyList()
+        setAppPlayerBuffering(true)
+        showAppPlayerControlsWithFade()
+
+        room.streamTitle = media.title
+        room.streamId = media.id
+        room.streamUrl = ""
+        room.playbackPositionMs = 0L
+
+        if (media.isMovie && media.streamUrl.isEmpty()) {
+            extractAndPlayMovieIdenticalToApp(media)
         } else {
-            tvStreamStatusOverlay.text = "⚠️ تعذر تشغيل المصدر (${error.errorCodeName}) - اختر بثاً آخر"
+            isExtractingNewMovie = false
+            val chSource = StreamSource(
+                label = "LIVE TV",
+                url = media.streamUrl,
+                referer = media.referer,
+                isDirectStream = true
+            )
+            applyResolvedStreamSourceToRoom(chSource, media.title, isMovie = false)
         }
     }
 
-    private fun broadcastPlaybackSync() {
-        val room = currentRoom ?: return
-        val player = exoPlayer ?: return
-        room.lastActiveAt = System.currentTimeMillis()
-        statSyncCount++
-        val payload = JSONObject().apply {
-            put("streamUrl", room.streamUrl)
-            put("streamTitle", room.streamTitle)
-            put("isPlaying", player.isPlaying)
-            put("positionMs", player.currentPosition)
-            put("status", room.status)
-        }
-        broadcastRoomEvent("PLAYBACK_SYNC", payload)
-        updateDetailedStatsUI()
+    private fun isLikelyDirectStreamUrl(rawUrl: String): Boolean {
+        val u = rawUrl.lowercase(Locale.US)
+        if (u.contains(".js") || u.contains(".css") || u.contains(".png") ||
+            u.contains(".jpg") || u.contains(".webp") || u.contains(".svg") ||
+            u.contains(".woff") || u.contains("doubleclick") || u.contains("googlesyndication")
+        ) return false
+
+        return u.contains(".m3u8") ||
+            u.contains(".mp4") ||
+            u.contains("/playlist/") ||
+            u.contains("/hls/") ||
+            u.contains("master.txt") ||
+            u.contains("mime=video")
     }
 
-    private fun applyIncomingPlaybackSync(data: JSONObject) {
-        val room = currentRoom ?: return
-        room.lastActiveAt = System.currentTimeMillis()
-        if (room.hostId == localUserId) return
-        val newUrl = data.optString("streamUrl", room.streamUrl)
-        val newTitle = data.optString("streamTitle", room.streamTitle)
-        val remotePlaying = data.optBoolean("isPlaying", true)
-        val remotePos = data.optLong("positionMs", 0L)
-        val remoteStatus = data.optString("status", "LIVE")
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun extractAndPlayMovieIdenticalToApp(media: MediaStreamOption) {
+        isExtractingNewMovie = true
+        snifferExtractionJob?.cancel()
+        cleanupHeadlessSniffer()
+        currentProviderTargets.clear()
+        resolvedDirectStreams.clear()
+        currentProviderIndex = 0
 
-        isHandlingRemoteSync = true
-        try {
-            room.status = remoteStatus
-            room.isPlaying = remotePlaying
-            if (newUrl.isNotEmpty() && newUrl != room.streamUrl) {
-                room.streamUrl = newUrl
-                room.streamTitle = newTitle
-                startStreamPlayback(newUrl, newTitle, remotePlaying, remotePos)
-                appendSystemChatAndLog("📺 غيّر المضيف القناة إلى: $newTitle")
+        val cleanTmdbId = media.id
+            .replace("tmdb_movie_", "")
+            .replace("tmdb_tv_", "")
+            .replace("tmdb_", "")
+            .trim()
+
+        loadSubtitlesForMovieAutomatically(cleanTmdbId)
+
+        var hasDispatchedFastest = false
+
+        snifferExtractionJob = controllerScope.launch {
+            val configured = PrimeVodExtractor.fetchPanelConfiguredServers(
+                tmdbId = cleanTmdbId,
+                imdbId = "",
+                title = media.title,
+                isSeries = false,
+                season = 1,
+                episode = 1,
+                onFastestDirectReady = { fastestStream ->
+                    mainHandler.post {
+                        if (!isDestroyed && !hasDispatchedFastest) {
+                            hasDispatchedFastest = true
+                            resolvedDirectStreams.add(fastestStream)
+                            applyResolvedStreamSourceToRoom(fastestStream, media.title, isMovie = true)
+                        }
+                    }
+                }
+            )
+
+            currentProviderTargets.clear()
+            currentProviderTargets.addAll(configured)
+
+            if (configured.isNotEmpty()) {
+                btnAppServerPill.text = "  ${configured.first().label.ifBlank { "REYZO 1" }}"
+            }
+
+            if (hasDispatchedFastest) {
+                val backupDirects = configured.filter { it.isDirectStream }
+                playerEngine.appendBackupSourcesSilently(backupDirects)
+                return@launch
+            }
+
+            val firstDirectIdx = configured.indexOfFirst { it.isDirectStream && it.url.isNotBlank() }
+            if (firstDirectIdx != -1) {
+                currentProviderIndex = firstDirectIdx
+                val directSrv = configured[firstDirectIdx]
+                resolvedDirectStreams.add(directSrv)
+                applyResolvedStreamSourceToRoom(directSrv, media.title, isMovie = true)
+                return@launch
+            }
+
+            if (configured.isNotEmpty()) {
+                loadProviderInHeadlessSniffer(0)
             } else {
-                exoPlayer?.let { player ->
-                    if (player.isPlaying != remotePlaying) player.playWhenReady = remotePlaying
-                    if (remotePos > 0 && abs(player.currentPosition - remotePos) > 2500L) player.seekTo(remotePos)
+                isExtractingNewMovie = false
+                setAppPlayerBuffering(false)
+                Toast.makeText(hostContext, "⚠️ لا توجد سيرفرات مفعلة لهذا الفيلم حالياً", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
+    private fun loadProviderInHeadlessSniffer(index: Int) {
+        if (isDestroyed || currentProviderTargets.isEmpty()) return
+        currentProviderIndex = index.coerceIn(0, currentProviderTargets.lastIndex)
+        val target = currentProviderTargets[currentProviderIndex]
+
+        btnAppServerPill.text = "  ${target.label.ifBlank { "REYZO ${currentProviderIndex + 1}" }}"
+        setAppPlayerBuffering(true)
+
+        if (target.isDirectStream || isLikelyDirectStreamUrl(target.url)) {
+            resolvedDirectStreams.add(target)
+            applyResolvedStreamSourceToRoom(target, currentRoom?.streamTitle ?: "", isMovie = true)
+            return
+        }
+
+        cleanupHeadlessSniffer()
+
+        var streamCapturedForThisTarget = false
+        val wv = WebView(hostContext)
+        headlessSnifferWebView = wv
+
+        if (rootView is ViewGroup) {
+            val hiddenParams = FrameLayout.LayoutParams(dp(320), dp(180)).apply {
+                gravity = Gravity.TOP or Gravity.START
+            }
+            wv.alpha = 0.01f
+            rootView.addView(wv, 0, hiddenParams)
+        }
+
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
+
+        wv.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            databaseEnabled = true
+            mediaPlaybackRequiresUserGesture = false
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            userAgentString = target.userAgent.ifBlank {
+                "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+            }
+        }
+
+        val onStreamSniffed = { rawUrl: String, refererHeader: String ->
+            if (!streamCapturedForThisTarget && !isDestroyed && isLikelyDirectStreamUrl(rawUrl)) {
+                streamCapturedForThisTarget = true
+                val originHost = extractOriginFromUrl(refererHeader.ifBlank { target.url })
+                val capturedSource = StreamSource(
+                    label = target.label.ifBlank { "REYZO ${currentProviderIndex + 1}" },
+                    url = rawUrl,
+                    referer = refererHeader.ifBlank { target.url },
+                    origin = originHost,
+                    userAgent = wv.settings.userAgentString ?: SessionManager.CUSTOM_USER_AGENT,
+                    isDirectStream = true
+                )
+                mainHandler.post {
+                    cleanupHeadlessSniffer()
+                    resolvedDirectStreams.add(0, capturedSource)
+                    applyResolvedStreamSourceToRoom(capturedSource, currentRoom?.streamTitle ?: "", isMovie = true)
                 }
             }
-            statSyncCount++
-            updateRoomHeaderAndPermissionsUI()
-            updateDetailedStatsUI()
-        } finally {
-            mainHandler.postDelayed({ isHandlingRemoteSync = false }, 350L)
         }
+
+        wv.addJavascriptInterface(object {
+            @JavascriptInterface
+            fun processVideo(url: String) {
+                onStreamSniffed(url, target.url)
+            }
+        }, "ateb")
+
+        val hookJs = """
+            (function() {
+                try {
+                    const origOpen = XMLHttpRequest.prototype.open;
+                    XMLHttpRequest.prototype.open = function(method, url) {
+                        if (typeof url === 'string' && (url.includes('.m3u8') || url.includes('.mp4') || url.includes('/playlist/'))) {
+                            window.ateb.processVideo(url);
+                        }
+                        return origOpen.apply(this, arguments);
+                    };
+                    const origFetch = window.fetch;
+                    window.fetch = function(input) {
+                        const u = (typeof input === 'string') ? input : (input && input.url ? input.url : '');
+                        if (u && (u.includes('.m3u8') || u.includes('.mp4') || u.includes('/playlist/'))) {
+                            window.ateb.processVideo(u);
+                        }
+                        return origFetch.apply(this, arguments);
+                    };
+                    var btns = document.querySelectorAll('.play, .vjs-big-play-button, .jw-icon-display, button, [aria-label*="Play"], #play, .play-btn, #player');
+                    for (var i = 0; i < btns.length; i++) { btns[i].click(); }
+                    var vids = document.querySelectorAll('video');
+                    for (var j = 0; j < vids.length; j++) {
+                        vids[j].muted = true;
+                        vids[j].play();
+                        if (vids[j].src && vids[j].src.startsWith('http')) {
+                            window.ateb.processVideo(vids[j].src);
+                        }
+                    }
+                    if (document.body) document.body.click();
+                } catch(e) {}
+            })();
+        """.trimIndent()
+
+        wv.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                if (!streamCapturedForThisTarget && !isDestroyed) {
+                    view?.evaluateJavascript(hookJs, null)
+                    mainHandler.postDelayed({ if (!streamCapturedForThisTarget && !isDestroyed) view?.evaluateJavascript(hookJs, null) }, 1200L)
+                    mainHandler.postDelayed({ if (!streamCapturedForThisTarget && !isDestroyed) view?.evaluateJavascript(hookJs, null) }, 2600L)
+                }
+            }
+
+            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                val reqUrl = request?.url?.toString() ?: return null
+                if (!streamCapturedForThisTarget && isLikelyDirectStreamUrl(reqUrl)) {
+                    val reqRef = request.requestHeaders["Referer"] ?: target.url
+                    onStreamSniffed(reqUrl, reqRef)
+                }
+                return super.shouldInterceptRequest(view, request)
+            }
+        }
+
+        val headers = HashMap<String, String>()
+        if (target.referer.isNotEmpty()) {
+            headers["Referer"] = target.referer
+        } else {
+            headers["Referer"] = extractOriginFromUrl(target.url)
+        }
+        wv.loadUrl(target.url, headers)
+
+        snifferTimeoutRunnable = Runnable {
+            if (!streamCapturedForThisTarget && !isDestroyed) {
+                if (currentProviderIndex + 1 < currentProviderTargets.size) {
+                    loadProviderInHeadlessSniffer(currentProviderIndex + 1)
+                } else {
+                    isExtractingNewMovie = false
+                    setAppPlayerBuffering(false)
+                }
+            }
+        }
+        mainHandler.postDelayed(snifferTimeoutRunnable!!, 7000L)
+    }
+
+    private fun cleanupHeadlessSniffer() {
+        snifferTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        snifferTimeoutRunnable = null
+        try {
+            headlessSnifferWebView?.let { wv ->
+                wv.stopLoading()
+                (wv.parent as? ViewGroup)?.removeView(wv)
+                wv.destroy()
+            }
+        } catch (_: Exception) {}
+        headlessSnifferWebView = null
+    }
+
+    private fun applyResolvedStreamSourceToRoom(
+        source: StreamSource,
+        title: String,
+        isMovie: Boolean
+    ) {
+        val room = currentRoom ?: return
+        isExtractingNewMovie = false
+        room.streamUrl = source.url
+        room.streamReferer = source.referer
+        room.streamOrigin = source.origin
+        room.streamServerLabel = source.label.ifBlank { "REYZO 1" }
+        room.streamUserAgent = source.userAgent.ifBlank { SessionManager.CUSTOM_USER_AGENT }
+        room.streamTitle = title
+        room.isMovie = isMovie
+        room.isPlaying = true
+        room.playbackPositionMs = 0L
+        room.status = "LIVE"
+
+        switchRoomInternalTab("CHAT")
+        playStreamSourceInEngine(source, title, seekMs = 0L)
+        broadcastPlaybackSync()
+        appendSystemChatAndLog("🎬 تم تشغيل: $title (${room.streamServerLabel})")
+        updateRoomHeaderAndPermissionsUI()
+    }
+
+    private fun toggleSyncPlayPauseAction() {
+        val room = currentRoom ?: return
+        if (room.hostId != localUserId) {
+            Toast.makeText(hostContext, "⚠️ التحكم في البث متاح للمضيف فقط", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val exo = playerEngine.player ?: return
+        if (exo.isPlaying) {
+            playerEngine.pause()
+            room.isPlaying = false
+            room.status = "PAUSED"
+            updateAppPlayPauseIcon(false)
+        } else {
+            playerEngine.resume()
+            room.isPlaying = true
+            room.status = "LIVE"
+            updateAppPlayPauseIcon(true)
+        }
+        room.playbackPositionMs = exo.currentPosition
+        broadcastPlaybackSync()
+        updateRoomHeaderAndPermissionsUI()
     }
 
     private fun setupRoomListeners() {
@@ -935,25 +2533,7 @@ class WatchTogetherController(
         rootView.findViewById<View>(R.id.btnInviteShare).setOnClickListener { copyInviteCodeAndLink(shareSheet = true) }
         tvOnlineCountBadge.setOnClickListener { switchRoomInternalTab("PARTICIPANTS") }
 
-        btnApproveJoinReq.setOnClickListener { handleNextJoinRequest(approve = true) }
-        btnRejectJoinReq.setOnClickListener { handleNextJoinRequest(approve = false) }
-
-        btnSyncPlayPause.setOnClickListener {
-            val room = currentRoom ?: return@setOnClickListener
-            val myRole = participantsMap[localUserId]?.role ?: "PARTICIPANT"
-            if (room.hostId != localUserId && myRole != "MODERATOR") {
-                Toast.makeText(hostContext, "⚠️ التحكم في البث متاح للمضيف والمشرفين فقط", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            exoPlayer?.let { player ->
-                val targetState = !player.isPlaying
-                player.playWhenReady = targetState
-                room.isPlaying = targetState
-                room.status = if (targetState) "LIVE" else "PAUSED"
-                broadcastPlaybackSync()
-                updateRoomHeaderAndPermissionsUI()
-            }
-        }
+        btnSyncPlayPause.setOnClickListener { toggleSyncPlayPauseAction() }
 
         rootView.findViewById<View>(R.id.btnForceSyncNow).setOnClickListener {
             val room = currentRoom ?: return@setOnClickListener
@@ -961,35 +2541,34 @@ class WatchTogetherController(
                 broadcastPlaybackSync()
                 Toast.makeText(hostContext, "✅ تمت مزامنة المشغل لدى الجميع", Toast.LENGTH_SHORT).show()
             } else {
-                if (room.streamUrl.isNullOrEmpty()) {
-            exoPlayer?.stop()
-            exoPlayer?.clearMediaItems()
-            tvStreamStatusOverlay.text = "🎬 الرجاء اختيار فيلم أو قناة من القائمة بالأسفل"
-        } else {
-            startStreamPlayback(room.streamUrl, room.streamTitle, room.isPlaying, room.playbackPositionMs)
-        }
+                val src = StreamSource(
+                    label = room.streamServerLabel,
+                    url = room.streamUrl,
+                    referer = room.streamReferer,
+                    origin = room.streamOrigin,
+                    isDirectStream = true
+                )
+                playStreamSourceInEngine(src, room.streamTitle, room.playbackPositionMs)
                 Toast.makeText(hostContext, "🔄 تمت المزامنة مع المضيف", Toast.LENGTH_SHORT).show()
             }
         }
 
         rootView.findViewById<View>(R.id.btnPickChannelOpen).setOnClickListener {
-            isShowingSportsSubTab = false
+            isShowingMoviesSubTab = false
             refreshMediaPickerList()
             switchRoomInternalTab("MEDIA")
         }
 
         rootView.findViewById<View>(R.id.btnPickMatchOpen).setOnClickListener {
-            isShowingSportsSubTab = true
-            refreshMediaPickerList()
-            switchRoomInternalTab("MEDIA")
+            showMoviesGridModalDialog()
         }
 
         rootView.findViewById<View>(R.id.btnAspectRatioToggle).setOnClickListener {
             currentResizeModeIndex = (currentResizeModeIndex + 1) % 3
             watchPlayerView.resizeMode = when (currentResizeModeIndex) {
-                1 -> 3
-                2 -> 4
-                else -> 0
+                1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+                2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
             }
             Toast.makeText(hostContext, "📐 تم تغيير أبعاد العرض", Toast.LENGTH_SHORT).show()
         }
@@ -1009,8 +2588,8 @@ class WatchTogetherController(
             R.id.btnEmojiHeart to "❤️",
             R.id.btnEmojiLaugh to "😂",
             R.id.btnEmojiClap to "👏",
-            R.id.btnEmojiSoccer to "⚽",
-            R.id.btnEmojiGoal to "🥅",
+            R.id.btnEmojiSoccer to "🍿",
+            R.id.btnEmojiGoal to "🎬",
             R.id.btnEmojiShock to "😱",
             R.id.btnEmojiParty to "🎉"
         )
@@ -1018,39 +2597,29 @@ class WatchTogetherController(
             rootView.findViewById<View>(viewId).setOnClickListener { sendEmojiReaction(emojiStr) }
         }
 
-        tabBtnChat.setOnClickListener { switchRoomInternalTab("MEDIA") }
+        tabBtnChat.setOnClickListener { switchRoomInternalTab("CHAT") }
         tabBtnParticipants.setOnClickListener { switchRoomInternalTab("PARTICIPANTS") }
-        tabBtnMediaPicker.setOnClickListener { switchRoomInternalTab("MEDIA") }
+        tabBtnMediaPicker.setOnClickListener { showMoviesGridModalDialog() }
         tabBtnLogsStats.setOnClickListener { switchRoomInternalTab("LOGS") }
 
         rootView.findViewById<View>(R.id.btnSendChatMessage).setOnClickListener { sendChatMessage() }
 
         rootView.findViewById<View>(R.id.btnMuteAllParticipants).setOnClickListener {
             val room = currentRoom ?: return@setOnClickListener
-            if (room.hostId != localUserId) {
-                Toast.makeText(hostContext, "للمضيف فقط", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
+            if (room.hostId != localUserId) return@setOnClickListener
+            controllerScope.launch {
+                OttRepository.manageWatchRoom(room.roomId, localUserId, "MUTE_ALL")
             }
-            for ((uid, p) in participantsMap) {
-                if (uid != localUserId) {
-                    p.isHostForceMuted = true
-                    p.isMuted = true
-                }
-            }
-            participantsAdapter.notifyDataSetChanged()
             broadcastRoomEvent("MUTE_ALL", JSONObject())
             appendSystemChatAndLog("🔇 قام المضيف بكتم الميكروفون للجميع")
         }
 
-        rootView.findViewById<View>(R.id.btnManageBansOpen).setOnClickListener { showBansAndJoinRequestsDialog() }
-
         btnSubTabChannels.setOnClickListener {
-            isShowingSportsSubTab = false
+            isShowingMoviesSubTab = false
             refreshMediaPickerList()
         }
         btnSubTabMatches.setOnClickListener {
-            isShowingSportsSubTab = true
-            refreshMediaPickerList()
+            showMoviesGridModalDialog()
         }
         rootView.findViewById<View>(R.id.btnCustomStreamUrl).setOnClickListener { promptCustomStreamUrlDialog() }
 
@@ -1064,7 +2633,6 @@ class WatchTogetherController(
             val room = currentRoom ?: return@setOnClickListener
             if (room.hostId != localUserId) return@setOnClickListener
             room.expiresAt += 3600_000L
-            room.lastActiveAt = System.currentTimeMillis()
             updateExpirationCountdownUI()
             appendSystemChatAndLog("⏱️ تم تمديد وقت الغرفة ساعة إضافية")
         }
@@ -1078,12 +2646,13 @@ class WatchTogetherController(
         panelTabMediaPicker.visibility = if (tab == "MEDIA") View.VISIBLE else View.GONE
         panelTabChat.visibility = if (tab == "CHAT") View.VISIBLE else View.GONE
         panelTabParticipants.visibility = if (tab == "PARTICIPANTS") View.VISIBLE else View.GONE
-        panelTabLogsStats.visibility = View.GONE
+        panelTabLogsStats.visibility = if (tab == "LOGS") View.VISIBLE else View.GONE
 
         val tabs = listOf(
             tabBtnMediaPicker to "MEDIA",
             tabBtnChat to "CHAT",
-            tabBtnParticipants to "PARTICIPANTS"
+            tabBtnParticipants to "PARTICIPANTS",
+            tabBtnLogsStats to "LOGS"
         )
         for ((btn, key) in tabs) {
             if (tab == key) {
@@ -1096,31 +2665,19 @@ class WatchTogetherController(
         }
     }
 
-    private fun checkRateLimit(timestamps: MutableList<Long>, maxEvents: Int, windowMs: Long): Boolean {
-        val now = System.currentTimeMillis()
-        timestamps.removeAll { now - it > windowMs }
-        if (timestamps.size >= maxEvents) return false
-        timestamps.add(now)
-        return true
-    }
-
     private fun sendChatMessage() {
         val room = currentRoom ?: return
-        if (room.isChatLocked && room.hostId != localUserId) {
-            Toast.makeText(hostContext, "🔒 الدردشة مقفلة من المضيف", Toast.LENGTH_SHORT).show()
-            return
-        }
         val text = etChatMessageInput.text.toString().trim()
         if (text.isEmpty()) return
-        if (!checkRateLimit(chatTimestamps, maxEvents = 5, windowMs = 10_000L)) {
-            Toast.makeText(hostContext, "⏳ تمهل قليلاً قبل إرسال رسائل متتالية", Toast.LENGTH_SHORT).show()
-            return
-        }
         etChatMessageInput.setText("")
-        room.lastActiveAt = System.currentTimeMillis()
-        val role = if (room.hostId == localUserId) "HOST" else (participantsMap[localUserId]?.role ?: "PARTICIPANT")
+
+        val role = if (room.hostId == localUserId) "HOST" else "PARTICIPANT"
         val msg = ChatMessageModel("MSG-" + System.currentTimeMillis(), localUserId, localUserName, role, text)
         appendChatMessage(msg)
+
+        controllerScope.launch {
+            OttRepository.sendRoomMessage(room.roomId, localUserId, text, "TEXT")
+        }
 
         val payload = JSONObject().apply {
             put("msgId", msg.msgId)
@@ -1128,34 +2685,35 @@ class WatchTogetherController(
             put("senderName", msg.senderName)
             put("senderRole", msg.senderRole)
             put("text", msg.text)
-            put("ts", msg.timestamp)
         }
         broadcastRoomEvent("CHAT_MSG", payload)
     }
 
     private fun appendChatMessage(msg: ChatMessageModel) {
         if (blockedUserIds.contains(msg.senderId)) return
+        if (chatHistory.any { it.msgId == msg.msgId }) return
         chatHistory.add(msg)
         if (!msg.isSystemEvent) statTotalMessages++
         chatAdapter.notifyItemInserted(chatHistory.size - 1)
         rvChatMessages.scrollToPosition(chatHistory.size - 1)
-        saveCachedMessageHistory()
     }
 
     private fun appendSystemChatAndLog(text: String) {
-        val sysMsg = ChatMessageModel("SYS-" + System.currentTimeMillis(), "SYSTEM", "النظام", "SYSTEM", text, isSystemEvent = true)
+        val sysMsg = ChatMessageModel("SYS-" + System.nanoTime(), "SYSTEM", "النظام", "SYSTEM", text, isSystemEvent = true)
         chatHistory.add(sysMsg)
         chatAdapter.notifyItemInserted(chatHistory.size - 1)
         rvChatMessages.scrollToPosition(chatHistory.size - 1)
-        logRoomEvent("EVENT", text)
+        eventLogs.add(0, RoomEventLogItem(System.currentTimeMillis(), "EVENT", text))
+        if (this::eventLogsAdapter.isInitialized) eventLogsAdapter.notifyDataSetChanged()
     }
 
     private fun sendEmojiReaction(emoji: String) {
-        if (!checkRateLimit(emojiTimestamps, maxEvents = 8, windowMs = 5_000L)) return
-        currentRoom?.lastActiveAt = System.currentTimeMillis()
+        val room = currentRoom ?: return
         spawnFloatingEmoji(emoji)
-        statTotalEmojis++
-        broadcastRoomEvent("EMOJI", JSONObject().put("emoji", emoji).put("senderName", localUserName))
+        controllerScope.launch {
+            OttRepository.sendRoomMessage(room.roomId, localUserId, emoji, "REACTION")
+        }
+        broadcastRoomEvent("EMOJI", JSONObject().put("emoji", emoji))
     }
 
     private fun spawnFloatingEmoji(emoji: String) {
@@ -1182,22 +2740,17 @@ class WatchTogetherController(
         animAlpha.start()
     }
 
-    private fun initVoiceEngineForRoom(roomId: String) {
+    private fun initVoiceEngineForRoom(roomCode: String) {
         voiceChatManager?.release()
         voiceChatManager = VoiceChatManager(
             context = hostContext,
-            roomId = roomId,
+            roomId = roomCode,
             userId = localUserId,
             userName = localUserName
         ) { isSpeaking, _ ->
             mainHandler.post {
                 participantsMap[localUserId]?.isSpeaking = isSpeaking
                 tvVoiceSpeakingIndicator.text = if (isSpeaking) "🟢 يتحدث..." else "صوت نقي"
-            }
-        }.also { vm ->
-            vm.onOutgoingVoiceFrame = { pcmBytes ->
-                val b64 = Base64.encodeToString(pcmBytes, Base64.NO_WRAP)
-                broadcastRoomEvent("VOICE_FRAME", JSONObject().put("audio", b64))
             }
         }
         if (ContextCompat.checkSelfPermission(hostContext, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
@@ -1206,16 +2759,7 @@ class WatchTogetherController(
     }
 
     private fun toggleMicrophoneState() {
-        val room = currentRoom ?: return
-        if (room.isVoiceLocked && room.hostId != localUserId) {
-            Toast.makeText(hostContext, "🔒 الصوت مقفل من المضيف", Toast.LENGTH_SHORT).show()
-            return
-        }
         val vm = voiceChatManager ?: return
-        if (vm.isForceMutedByHost() && room.hostId != localUserId) {
-            Toast.makeText(hostContext, "🔇 الميكروفون مكتوم من المضيف", Toast.LENGTH_SHORT).show()
-            return
-        }
         if (ContextCompat.checkSelfPermission(hostContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             hostActivity?.let { ActivityCompat.requestPermissions(it, arrayOf(Manifest.permission.RECORD_AUDIO), 901) }
             return
@@ -1224,318 +2768,176 @@ class WatchTogetherController(
         val newMuted = !vm.isMuted()
         vm.setMuted(newMuted)
         participantsMap[localUserId]?.isMuted = newMuted
-        room.lastActiveAt = System.currentTimeMillis()
-        updateMicButtonUI(newMuted)
-        participantsAdapter.notifyDataSetChanged()
-        broadcastRoomEvent("MIC_STATE", JSONObject().put("isMuted", newMuted))
-    }
-
-    private fun updateMicButtonUI(isMuted: Boolean) {
-        if (isMuted) {
+        if (newMuted) {
             btnToggleMic.text = "🎤 مكتوم"
             btnToggleMic.setTextColor(Color.parseColor("#FF8A80"))
         } else {
             btnToggleMic.text = "🎙️ متصل"
             btnToggleMic.setTextColor(Color.parseColor("#00E676"))
         }
+        participantsAdapter.notifyDataSetChanged()
     }
 
-    private fun extractXtreamCredentials(): Triple<String, String, String> {
-        var host = ""
-        var user = ""
-        var pass = ""
-
-        // 1. القراءة المباشرة من SessionManager بجميع دواله وحقوله
-        try {
-            val smCls = Class.forName("com.primeott.app.data.local.SessionManager")
-            val ctor = smCls.getConstructor(Context::class.java)
-            val smObj = ctor.newInstance(hostContext)
-            for (m in smCls.methods) {
-                val mn = m.name.lowercase(Locale.US)
-                if (m.parameterCount == 0 && m.returnType == String::class.java) {
-                    val r = (m.invoke(smObj) as? String)?.trim() ?: ""
-                    if (r.isEmpty()) continue
-                    if ((mn.contains("server") || mn.contains("host") || mn.contains("dns") || mn.contains("portal") || mn.contains("xtream")) && r.startsWith("http") && !r.contains("workers.dev")) {
-                        host = r.trimEnd('/')
-                    } else if (mn.contains("user") && user.isEmpty()) {
-                        user = r
-                    } else if (mn.contains("pass") && pass.isEmpty()) {
-                        pass = r
-                    }
-                }
-            }
-            for (f in smCls.declaredFields) {
-                f.isAccessible = true
-                val v = f.get(smObj)
-                if (v is android.content.SharedPreferences) {
-                    for ((k, pv) in v.all) {
-                        val kl = k.lowercase(Locale.US)
-                        val vs = pv?.toString()?.trim() ?: ""
-                        if (vs.isEmpty()) continue
-                        if ((kl.contains("server") || kl.contains("host") || kl.contains("dns") || kl.contains("url")) && vs.startsWith("http") && !vs.contains("workers.dev")) {
-                            host = vs.trimEnd('/')
-                        } else if ((kl.contains("user")) && user.isEmpty() && vs != "زائر") {
-                            user = vs
-                        } else if ((kl.contains("pass")) && pass.isEmpty()) {
-                            pass = vs
-                        }
-                    }
-                }
-            }
-        } catch (_: Throwable) {}
-
-        // 2. فحص جميع ملفات SharedPreferences في التطبيق
-        val prefsDir = java.io.File(hostContext.applicationInfo.dataDir, "shared_prefs")
-        val prefFiles = prefsDir.listFiles()?.map { it.name.removeSuffix(".xml") }
-            ?: listOf("prime_ott_prefs", "session_prefs", "xtream_prefs", "user_prefs", "com.primeott.app_preferences")
-        for (pName in prefFiles) {
-            if (pName == "royal_auth_prefs" || pName == "watch_together_prefs") continue
-            val sp = hostContext.getSharedPreferences(pName, Context.MODE_PRIVATE)
-            for ((k, v) in sp.all) {
-                val kl = k.lowercase(Locale.US)
-                val vs = v?.toString()?.trim() ?: ""
-                if (vs.isEmpty()) continue
-                if ((kl.contains("server") || kl.contains("host") || kl.contains("portal") || kl.contains("base_url") || kl.contains("dns")) && vs.startsWith("http") && !vs.contains("workers.dev")) {
-                    if (host.isEmpty()) host = vs.trimEnd('/')
-                } else if ((kl.contains("user")) && user.isEmpty()) {
-                    user = vs
-                } else if ((kl.contains("pass")) && pass.isEmpty()) {
-                    pass = vs
-                }
-            }
-        }
-
-        if (host.isEmpty()) host = defaultXtreamHost
-        return Triple(host, user, pass)
-    }
-
-    // استخراج أي عنصر فيلم أو مسلسل أو قناة من أي كائن في OttRepository عبر الـ Reflection الذكي
-    private fun parseAnyRepoItemToMediaOption(
-        itemObj: Any?,
-        host: String,
-        user: String,
-        pass: String,
-        forceMovie: Boolean? = null
-    ): MediaStreamOption? {
-        if (itemObj == null) return null
-        if (itemObj is JSONObject) {
-            val sid = itemObj.optString("stream_id").ifEmpty { itemObj.optString("id").ifEmpty { itemObj.optString("series_id") } }
-            val title = itemObj.optString("name").ifEmpty { itemObj.optString("title") }
-            if (title.isEmpty()) return null
-            var url = itemObj.optString("stream_url").ifEmpty { itemObj.optString("url").ifEmpty { itemObj.optString("direct_source") } }
-            val ext = itemObj.optString("container_extension", "mp4").ifEmpty { "mp4" }
-            val typeStr = itemObj.optString("stream_type", itemObj.optString("type", "")).lowercase(Locale.US)
-            val isMov = forceMovie ?: (typeStr.contains("movie") || typeStr.contains("vod") || typeStr.contains("serie") || itemObj.has("container_extension"))
-            if (url.isEmpty() && sid.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
-                url = if (isMov) "$host/movie/$user/$pass/$sid.$ext" else "$host/live/$user/$pass/$sid.m3u8"
-            }
-            if (url.isEmpty()) return null
-            val sub = if (isMov) "🎬 فيلم / VOD" else "📺 بث مباشر"
-            return MediaStreamOption(sid.ifEmpty { title }, title, sub, url, "", isMatch = isMov)
-        }
-
-        try {
-            var idVal = ""
-            var titleVal = ""
-            var urlVal = ""
-            var extVal = "mp4"
-            var catVal = ""
-            var typeVal = ""
-
-            for (f in itemObj.javaClass.declaredFields) {
-                f.isAccessible = true
-                val fn = f.name.lowercase(Locale.US)
-                val fv = f.get(itemObj)?.toString()?.trim() ?: ""
-                if (fv.isEmpty() || fv == "null") continue
-
-                val isImage = fv.lowercase(Locale.US).let {
-                    it.endsWith(".jpg") || it.endsWith(".png") || it.endsWith(".webp") || it.endsWith(".jpeg") || it.contains("tmdb.org") || it.contains("/images/")
-                }
-
-                if ((fn == "name" || fn == "title" || fn.contains("streamname") || fn.contains("moviename")) && titleVal.isEmpty() && !fv.startsWith("http")) {
-                    titleVal = fv
-                } else if ((fn.contains("url") || fn.contains("stream") || fn.contains("link") || fn.contains("source")) && fv.startsWith("http") && !isImage) {
-                    urlVal = fv
-                } else if ((fn == "id" || fn == "streamid" || fn == "stream_id" || fn == "vodid" || fn == "movieid") && idVal.isEmpty()) {
-                    idVal = fv
-                } else if (fn.contains("ext") && fv.length <= 5) {
-                    extVal = fv.trimStart('.')
-                } else if ((fn.contains("category") || fn.contains("genre") || fn.contains("group")) && catVal.isEmpty() && !fv.startsWith("http")) {
-                    catVal = fv
-                } else if (fn.contains("type") && typeVal.isEmpty()) {
-                    typeVal = fv
-                }
-            }
-
-            if (titleVal.isEmpty()) return null
-            val isMov = forceMovie ?: (
-                typeVal.contains("movie", true) ||
-                typeVal.contains("vod", true) ||
-                typeVal.contains("serie", true) ||
-                urlVal.contains("/movie/", true) ||
-                urlVal.contains("/series/", true) ||
-                urlVal.endsWith(".mp4", true) ||
-                urlVal.endsWith(".mkv", true) ||
-                itemObj.javaClass.simpleName.contains("Vod", true) ||
-                itemObj.javaClass.simpleName.contains("Movie", true)
-            )
-
-            if (urlVal.isEmpty() && idVal.isNotEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
-                urlVal = if (isMov) "$host/movie/$user/$pass/$idVal.$extVal" else "$host/live/$user/$pass/$idVal.m3u8"
-            }
-            if (urlVal.isEmpty()) return null
-
-            val subLabel = if (catVal.isNotEmpty()) {
-                if (isMov) "🎬 $catVal" else "📺 $catVal"
-            } else {
-                if (isMov) "🎬 فيلم سينمائي (Movie)" else "📺 قناة بث مباشر"
-            }
-
-            return MediaStreamOption(
-                id = idVal.ifEmpty { titleVal },
-                title = titleVal,
-                subtitle = subLabel,
-                streamUrl = urlVal,
-                fallbackTsUrl = if (urlVal.endsWith(".m3u8")) urlVal.replace(".m3u8", ".ts") else "",
-                isMatch = isMov
-            )
-        } catch (_: Throwable) {
-            return null
-        }
-    }
-
-    private fun loadChannelsCatalog() {
-        isShowingSportsSubTab = true
-        refreshMediaPickerList()
-
-        CoroutineScope(Dispatchers.IO).launch {
-            val (host, user, pass) = extractXtreamCredentials()
-            val fetchedMovies = mutableListOf<MediaStreamOption>()
-            val fetchedChannels = mutableListOf<MediaStreamOption>()
-
-            // 1. Qraya mn l-Cache w SharedPreferences li rahom fihom les films deja chargées
-            try {
-                val prefsDir = java.io.File(hostContext.applicationInfo.dataDir, "shared_prefs")
-                val files = prefsDir.listFiles() ?: emptyArray()
-                for (pf in files) {
-                    val sp = hostContext.getSharedPreferences(pf.name.removeSuffix(".xml"), Context.MODE_PRIVATE)
-                    for ((k, v) in sp.all) {
-                        val s = v?.toString() ?: ""
-                        if (s.startsWith("[") && s.contains("stream_id")) {
-                            val arr = JSONArray(s)
-                            for (i in 0 until arr.length()) {
-                                val o = arr.optJSONObject(i) ?: continue
-                                val sid = o.optString("stream_id", o.optString("id"))
-                                val name = o.optString("name", o.optString("title"))
-                                val ext = o.optString("container_extension", "mp4").ifEmpty { "mp4" }
-                                val isVod = o.has("container_extension") || o.optString("stream_type") == "movie"
-                                if (name.isNotEmpty() && sid.isNotEmpty()) {
-                                    if (isVod) {
-                                        val mUrl = "$host/movie/$user/$pass/$sid.$ext"
-                                        fetchedMovies.add(MediaStreamOption(sid, name, "🎬 فيلم", mUrl, "", isMatch = true))
-                                    } else {
-                                        val cUrl = "$host/live/$user/$pass/$sid.m3u8"
-                                        fetchedChannels.add(MediaStreamOption(sid, name, "📺 بث مباشر", cUrl, "", isMatch = false))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-
-            // 2. Ida kanou farghin, n-chargiw direct mn API ta3 l-server Xtream
-            if (fetchedMovies.isEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
-                try {
-                    val url = "$host/player_api.php?username=$user&password=$pass&action=get_vod_streams"
-                    val req = Request.Builder().url(url).build()
-                    httpClient.newCall(req).execute().use { resp ->
-                        if (resp.isSuccessful) {
-                            val arr = JSONArray(resp.body?.string() ?: "[]")
-                            for (i in 0 until arr.length().coerceAtMost(300)) {
-                                val o = arr.getJSONObject(i)
-                                val sid = o.optString("stream_id")
-                                val name = o.optString("name")
-                                val ext = o.optString("container_extension", "mp4").ifEmpty { "mp4" }
-                                val mUrl = "$host/movie/$user/$pass/$sid.$ext"
-                                fetchedMovies.add(MediaStreamOption(sid, name, "🎬 فيلم", mUrl, "", isMatch = true))
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-
-            if (fetchedChannels.isEmpty() && user.isNotEmpty() && pass.isNotEmpty()) {
-                try {
-                    val url = "$host/player_api.php?username=$user&password=$pass&action=get_live_streams"
-                    val req = Request.Builder().url(url).build()
-                    httpClient.newCall(req).execute().use { resp ->
-                        if (resp.isSuccessful) {
-                            val arr = JSONArray(resp.body?.string() ?: "[]")
-                            for (i in 0 until arr.length().coerceAtMost(300)) {
-                                val o = arr.getJSONObject(i)
-                                val sid = o.optString("stream_id")
-                                val name = o.optString("name")
-                                val cUrl = "$host/live/$user/$pass/$sid.m3u8"
-                                fetchedChannels.add(MediaStreamOption(sid, name, "📺 بث مباشر", cUrl, "", isMatch = false))
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-
-            withContext(Dispatchers.Main) {
-                if (!isDestroyed) {
-                    allSportsStreamsList.clear()
-                    allSportsStreamsList.addAll(fetchedMovies.distinctBy { it.title })
-
-                    allChannelsList.clear()
-                    allChannelsList.addAll(fetchedChannels.distinctBy { it.title })
-
-                    refreshMediaPickerList()
-                }
-            }
-        }
-    }
-
-    private fun refreshMediaPickerList() {
-        val query = etSearchMediaInRoom.text.toString().trim().lowercase(Locale.getDefault())
-        val source = if (isShowingSportsSubTab) allSportsStreamsList else allChannelsList
-
-        btnSubTabMatches.setBackgroundResource(if (isShowingSportsSubTab) R.drawable.wt_bg_btn_primary else R.drawable.wt_bg_badge_dark)
-        btnSubTabMatches.setTextColor(Color.WHITE)
-
-        btnSubTabChannels.setBackgroundResource(if (!isShowingSportsSubTab) R.drawable.wt_bg_btn_primary else R.drawable.wt_bg_badge_dark)
-        btnSubTabChannels.setTextColor(Color.WHITE)
-
-        displayedMediaList.clear()
-        for (item in source) {
-            if (query.isEmpty() ||
-                item.title.lowercase(Locale.getDefault()).contains(query) ||
-                item.subtitle.lowercase(Locale.getDefault()).contains(query)) {
-                displayedMediaList.add(item)
-            }
-        }
-        mediaPickerAdapter.notifyDataSetChanged()
-    }
-
-    private fun selectMediaForRoom(media: MediaStreamOption) {
+    private fun broadcastPlaybackSync() {
         val room = currentRoom ?: return
-        val role = participantsMap[localUserId]?.role ?: "PARTICIPANT"
-        if (room.hostId != localUserId && role != "MODERATOR") {
-            Toast.makeText(hostContext, "⚠️ تغيير القناة متاح للمضيف والمشرفين فقط", Toast.LENGTH_SHORT).show()
-            return
+        if (isExtractingNewMovie || room.streamUrl.isBlank()) return
+        val player = playerEngine.player
+        statSyncCount++
+        val packedStream = packUrlAndReferer(room.streamUrl, room.streamReferer)
+        val payload = JSONObject().apply {
+            put("stream_url", packedStream)
+            put("content_title", room.streamTitle)
+            put("is_playing", player?.isPlaying ?: room.isPlaying)
+            put("playback_position_ms", player?.currentPosition ?: room.playbackPositionMs)
         }
-        room.streamUrl = media.streamUrl
-        room.streamTitle = media.title
-        room.category = media.subtitle
-        room.isPlaying = true
-        room.status = "LIVE"
-        room.lastActiveAt = System.currentTimeMillis()
-        startStreamPlayback(media.streamUrl, media.title, true, 0L)
-        broadcastPlaybackSync()
-        appendSystemChatAndLog("📺 تم تغيير البث إلى: ${media.title}")
+        controllerScope.launch {
+            OttRepository.syncWatchRoom(
+                roomId = room.roomId,
+                deviceId = localUserId,
+                lastMessageId = lastSyncedMessageId,
+                isMuted = voiceChatManager?.isMuted() ?: true,
+                inVoice = true,
+                playbackUpdate = payload
+            )
+        }
+        broadcastRoomEvent("PLAYBACK_SYNC", payload)
+        updateDetailedStatsUI()
+    }
+
+    private fun performCloudflareRoomSync() {
+        val room = currentRoom ?: return
+        if (isExtractingNewMovie) return
+
+        controllerScope.launch {
+            val playbackObj = if (room.hostId == localUserId && room.streamUrl.isNotBlank()) {
+                JSONObject().apply {
+                    put("stream_url", packUrlAndReferer(room.streamUrl, room.streamReferer))
+                    put("content_title", room.streamTitle)
+                    put("is_playing", playerEngine.isPlaying())
+                    put("playback_position_ms", playerEngine.player?.currentPosition ?: 0L)
+                }
+            } else null
+
+            val res = OttRepository.syncWatchRoom(
+                roomId = room.roomId,
+                deviceId = localUserId,
+                lastMessageId = lastSyncedMessageId,
+                isMuted = voiceChatManager?.isMuted() ?: true,
+                inVoice = true,
+                playbackUpdate = playbackObj
+            )
+            if (res.status == "success") {
+                applyServerSyncResult(res)
+            }
+        }
+    }
+
+    private fun applyServerSyncResult(res: com.primeott.app.data.repository.RoomSyncResult) {
+        val room = currentRoom ?: return
+        val srvRoom = res.room ?: return
+
+        if (res.participants.isNotEmpty()) {
+            participantsMap.clear()
+            for (p in res.participants) {
+                participantsMap[p.deviceId] = ParticipantModel(
+                    userId = p.deviceId,
+                    userName = p.userName,
+                    role = p.role,
+                    isMuted = p.isMuted
+                )
+            }
+            room.onlineCount = participantsMap.size
+            statPeakViewers = statPeakViewers.coerceAtLeast(room.onlineCount)
+        }
+
+        for (m in res.messages) {
+            if (m.id > lastSyncedMessageId) lastSyncedMessageId = m.id
+            if (m.senderId == localUserId) continue
+            if (m.messageType == "REACTION") {
+                spawnFloatingEmoji(m.content)
+            } else {
+                appendChatMessage(
+                    ChatMessageModel(
+                        msgId = "SRV_${m.id}",
+                        senderId = m.senderId,
+                        senderName = m.senderName,
+                        senderRole = "PARTICIPANT",
+                        text = m.content,
+                        timestamp = if (m.createdAt > 0) m.createdAt else System.currentTimeMillis()
+                    )
+                )
+            }
+        }
+
+        if (room.hostId != localUserId && !isExtractingNewMovie) {
+            isHandlingRemoteSync = true
+            try {
+                val (srvCleanUrl, srvRef) = unpackUrlAndReferer(srvRoom.streamUrl)
+                if (srvCleanUrl.isNotEmpty() && srvCleanUrl != room.streamUrl) {
+                    room.streamUrl = srvCleanUrl
+                    room.streamReferer = srvRef
+                    room.streamTitle = srvRoom.contentTitle.ifEmpty { room.streamTitle }
+                    val guestSource = StreamSource(
+                        label = room.streamServerLabel,
+                        url = room.streamUrl,
+                        referer = room.streamReferer,
+                        isDirectStream = true
+                    )
+                    playStreamSourceInEngine(guestSource, room.streamTitle, srvRoom.playbackPositionMs)
+                } else {
+                    playerEngine.player?.let { player ->
+                        if (player.isPlaying != srvRoom.isPlaying) {
+                            player.playWhenReady = srvRoom.isPlaying
+                        }
+                        if (srvRoom.playbackPositionMs > 0 && abs(player.currentPosition - srvRoom.playbackPositionMs) > 3500L) {
+                            player.seekTo(srvRoom.playbackPositionMs)
+                        }
+                    }
+                }
+            } finally {
+                mainHandler.postDelayed({ isHandlingRemoteSync = false }, 350L)
+            }
+        }
+
         updateRoomHeaderAndPermissionsUI()
+        updateDetailedStatsUI()
+    }
+
+    private fun fetchActiveRoomsDirectory(cleanOldSelfRooms: Boolean = false) {
+        controllerScope.launch {
+            val rooms = OttRepository.fetchActiveWatchRooms()
+            activeRoomsList.clear()
+
+            for (r in rooms) {
+                val rId = r.roomId.ifEmpty { r.roomCode }
+                val isMyAbandonedRoom = cleanOldSelfRooms &&
+                    currentRoom == null &&
+                    (r.hostName == localUserName || r.hostName == "Prime User") &&
+                    r.participantCount <= 1
+
+                if (isMyAbandonedRoom) {
+                    launch { OttRepository.manageWatchRoom(rId, localUserId, "CLOSE_ROOM") }
+                    continue
+                }
+
+                activeRoomsList.add(
+                    WatchRoomModel(
+                        roomId = rId,
+                        roomCode = r.roomCode,
+                        roomName = r.roomName,
+                        hostId = "",
+                        hostName = r.hostName,
+                        isPrivate = r.isPrivate,
+                        onlineCount = r.participantCount.coerceAtLeast(1),
+                        status = "LIVE",
+                        streamUrl = "",
+                        streamTitle = r.contentTitle.ifEmpty { "بث مشترك" },
+                        isMovie = r.contentType == "VOD"
+                    )
+                )
+            }
+            applyRoomSearchAndFilters()
+        }
     }
 
     private fun promptCustomStreamUrlDialog() {
@@ -1545,8 +2947,8 @@ class WatchTogetherController(
             orientation = LinearLayout.VERTICAL
             setPadding(40, 20, 40, 10)
         }
-        val etTitle = EditText(hostContext).apply { hint = "اسم القناة المباشرة" }
-        val etUrl = EditText(hostContext).apply { hint = "رابط البث (m3u8 / ts / mp4)" }
+        val etTitle = EditText(hostContext).apply { hint = "اسم الفيلم أو القناة" }
+        val etUrl = EditText(hostContext).apply { hint = "رابط البث المباشر (m3u8 / mp4)" }
         layout.addView(etTitle)
         layout.addView(etUrl)
         AlertDialog.Builder(hostContext)
@@ -1554,8 +2956,11 @@ class WatchTogetherController(
             .setView(layout)
             .setPositiveButton("تشغيل ومزامنة") { _, _ ->
                 val url = etUrl.text.toString().trim()
-                val title = etTitle.text.toString().trim().ifEmpty { "بث مباشر خارجي" }
-                if (url.isNotEmpty()) selectMediaForRoom(MediaStreamOption("custom", title, "رابط مخصص", url))
+                val title = etTitle.text.toString().trim().ifEmpty { "بث خارجي" }
+                if (url.isNotEmpty()) {
+                    val customSrc = StreamSource(label = "CUSTOM", url = url, isDirectStream = true)
+                    applyResolvedStreamSourceToRoom(customSrc, title, isMovie = true)
+                }
             }
             .setNegativeButton("إلغاء", null)
             .show()
@@ -1569,65 +2974,21 @@ class WatchTogetherController(
         val actions = mutableListOf<() -> Unit>()
 
         val isLocallyMuted = voiceChatManager?.isParticipantMutedLocally(target.userId) == true
-        options.add(if (isLocallyMuted) "🔊 إلغاء الكتم الصوتي المحلي" else "🔇 كتم صوت هذا العضو لدي")
+        options.add(if (isLocallyMuted) "🔊 إلغاء الكتم المحلي" else "🔇 كتم صوت هذا العضو لدي")
         actions.add {
             voiceChatManager?.setParticipantMutedLocally(target.userId, !isLocallyMuted)
-            Toast.makeText(hostContext, "تم تحديث الصوت", Toast.LENGTH_SHORT).show()
         }
 
         if (isMeHost) {
-            options.add(if (target.isHostForceMuted) "🎙️ السماح للعضو بالتحدث" else "🔇 كتم ميكروفون العضو في الغرفة")
-            actions.add {
-                target.isHostForceMuted = !target.isHostForceMuted
-                target.isMuted = target.isHostForceMuted
-                participantsAdapter.notifyDataSetChanged()
-                broadcastRoomEvent("HOST_MUTE_USER", JSONObject().put("targetId", target.userId).put("muted", target.isHostForceMuted))
-                appendSystemChatAndLog("🎤 تم تحديث صلاحية الميكروفون لـ ${target.userName}")
-            }
-
-            options.add(if (target.role == "MODERATOR") "⬇️ إلغاء الإشراف" else "🛡️ ترقية إلى مشرف (Moderator)")
-            actions.add {
-                target.role = if (target.role == "MODERATOR") "PARTICIPANT" else "MODERATOR"
-                participantsAdapter.notifyDataSetChanged()
-                appendSystemChatAndLog("🛡️ تم تحديث صلاحية ${target.userName}")
-            }
-
-            options.add("👑 نقل ملكية الغرفة إلى ${target.userName}")
-            actions.add {
-                participantsMap[localUserId]?.role = "PARTICIPANT"
-                target.role = "HOST"
-                room.hostId = target.userId
-                room.hostName = target.userName
-                broadcastRoomEvent("TRANSFER_HOST", JSONObject().put("newHostId", target.userId).put("newHostName", target.userName))
-                appendSystemChatAndLog("👑 تم نقل ملكية الغرفة إلى ${target.userName}")
-                updateRoomHeaderAndPermissionsUI()
-            }
-
             options.add("👢 طرد من الغرفة (Kick)")
             actions.add {
+                controllerScope.launch {
+                    OttRepository.manageWatchRoom(room.roomId, localUserId, "KICK", target.userId)
+                }
                 participantsMap.remove(target.userId)
-                room.onlineCount = participantsMap.size
-                broadcastRoomEvent("KICK_USER", JSONObject().put("targetId", target.userId))
-                appendSystemChatAndLog("👢 تم طرد ${target.userName}")
-                updateRoomHeaderAndPermissionsUI()
-            }
-
-            options.add("🚫 حظر نهائي من الغرفة (Ban)")
-            actions.add {
-                bannedUserIds.add(target.userId)
-                participantsMap.remove(target.userId)
-                room.onlineCount = participantsMap.size
-                broadcastRoomEvent("BAN_USER", JSONObject().put("targetId", target.userId))
-                appendSystemChatAndLog("🚫 تم حظر ${target.userName}")
                 updateRoomHeaderAndPermissionsUI()
             }
         }
-
-        options.add("⚠️ الإبلاغ عن العضو (Report)")
-        actions.add { showReportUserDialog(target.userId, target.userName) }
-
-        options.add("🚫 حظر شخصي (Block)")
-        actions.add { blockUserPersonally(target.userId, target.userName) }
 
         AlertDialog.Builder(hostContext)
             .setTitle("إدارة العضو: ${target.userName}")
@@ -1642,29 +3003,6 @@ class WatchTogetherController(
         showParticipantManagementDialog(existing)
     }
 
-    private fun showReportUserDialog(targetId: String, targetName: String) {
-        val reasons = arrayOf("إزعاج ورسائل متكررة (Spam)", "إساءة صوتية", "محتوى غير لائق", "سلوك تخريبي")
-        AlertDialog.Builder(hostContext)
-            .setTitle("⚠️ الإبلاغ عن: $targetName")
-            .setItems(reasons) { _, which ->
-                logRoomEvent("REPORT", "بلاغ ضد $targetName (${reasons[which]})")
-                broadcastRoomEvent("REPORT_USER", JSONObject().put("targetId", targetId).put("reason", reasons[which]))
-                Toast.makeText(hostContext, "✅ تم إرسال البلاغ", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("إلغاء", null)
-            .show()
-    }
-
-    private fun blockUserPersonally(targetId: String, targetName: String) {
-        blockedUserIds.add(targetId)
-        voiceChatManager?.setParticipantMutedLocally(targetId, true)
-        hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
-            .edit().putStringSet("blocked_users", blockedUserIds).apply()
-        chatHistory.removeAll { it.senderId == targetId }
-        chatAdapter.notifyDataSetChanged()
-        Toast.makeText(hostContext, "🚫 تم حظر $targetName", Toast.LENGTH_SHORT).show()
-    }
-
     private fun showBlockedUsersDialog() {
         if (blockedUserIds.isEmpty()) {
             Toast.makeText(hostContext, "قائمة المحظورين فارغة", Toast.LENGTH_SHORT).show()
@@ -1675,8 +3013,6 @@ class WatchTogetherController(
             .setTitle("🚫 المحظورون (اضغط لإلغاء الحظر)")
             .setItems(arr) { _, which ->
                 blockedUserIds.remove(arr[which])
-                hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
-                    .edit().putStringSet("blocked_users", blockedUserIds).apply()
                 Toast.makeText(hostContext, "✅ تم إلغاء الحظر", Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("إغلاق", null)
@@ -1688,96 +3024,18 @@ class WatchTogetherController(
         if (room.hostId != localUserId) return
         val items = arrayOf(
             if (room.isChatLocked) "🔓 فتح الدردشة الكتابية" else "🔒 قفل الدردشة الكتابية",
-            if (room.isVoiceLocked) "🔓 فتح الدردشة الصوتية" else "🔒 قفل الدردشة الصوتية",
-            if (room.isPrivate) "🌐 تحويل الغرفة إلى عامة" else "🔒 تحويل الغرفة إلى خاصة",
-            if (room.requireApproval) "✅ إلغاء شرط الموافقة للانضمام" else "🛡️ تفعيل شرط موافقة المضيف للانضمام",
-            "🔑 تعيين / تغيير كلمة مرور الغرفة",
-            "👥 تعديل الحد الأقصى للمشاركين (${room.maxParticipants})"
+            if (room.isPrivate) "🌐 تحويل الغرفة إلى عامة" else "🔒 تحويل الغرفة إلى خاصة"
         )
         AlertDialog.Builder(hostContext)
-            .setTitle("⚙️ إعدادات وتحكم المضيف")
+            .setTitle("⚙️ إعدادات المضيف")
             .setItems(items) { _, which ->
                 when (which) {
-                    0 -> {
-                        room.isChatLocked = !room.isChatLocked
-                        appendSystemChatAndLog(if (room.isChatLocked) "🔒 تم قفل الدردشة" else "🔓 تم فتح الدردشة")
-                    }
+                    0 -> room.isChatLocked = !room.isChatLocked
                     1 -> {
-                        room.isVoiceLocked = !room.isVoiceLocked
-                        appendSystemChatAndLog(if (room.isVoiceLocked) "🔒 تم قفل الصوت" else "🔓 تم فتح الصوت")
-                    }
-                    2 -> {
                         room.isPrivate = !room.isPrivate
                         updateRoomHeaderAndPermissionsUI()
                     }
-                    3 -> room.requireApproval = !room.requireApproval
-                    4 -> promptSetNewRoomPassword(room)
-                    5 -> promptChangeMaxParticipants(room)
-                    
                 }
-            }
-            .setNegativeButton("إغلاق", null)
-            .show()
-    }
-
-    private fun promptSetNewRoomPassword(room: WatchRoomModel) {
-        val input = EditText(hostContext).apply { hint = "كلمة المرور الجديدة" }
-        AlertDialog.Builder(hostContext)
-            .setTitle("🔑 كلمة مرور الغرفة")
-            .setView(input)
-            .setPositiveButton("حفظ") { _, _ ->
-                val raw = input.text.toString().trim()
-                room.passwordHash = if (raw.isEmpty()) "" else sha256(raw)
-                room.isPrivate = raw.isNotEmpty()
-                updateRoomHeaderAndPermissionsUI()
-            }
-            .setNegativeButton("إلغاء", null)
-            .show()
-    }
-
-    private fun promptChangeMaxParticipants(room: WatchRoomModel) {
-        val input = EditText(hostContext).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            setText(room.maxParticipants.toString())
-        }
-        AlertDialog.Builder(hostContext)
-            .setTitle("👥 الحد الأقصى للمشاركين")
-            .setView(input)
-            .setPositiveButton("تحديث") { _, _ ->
-                room.maxParticipants = input.text.toString().toIntOrNull()?.coerceIn(2, 200) ?: 25
-                updateRoomHeaderAndPermissionsUI()
-            }
-            .setNegativeButton("إلغاء", null)
-            .show()
-    }
-
-    private fun handleNextJoinRequest(approve: Boolean) {
-        val req = if (pendingJoinRequests.isEmpty()) null else pendingJoinRequests.removeAt(0)
-        if (req == null) return
-        if (approve) {
-            participantsMap[req.userId] = ParticipantModel(req.userId, req.userName, "PARTICIPANT")
-            currentRoom?.onlineCount = participantsMap.size
-            currentRoom?.lastActiveAt = System.currentTimeMillis()
-            statPeakViewers = statPeakViewers.coerceAtLeast(participantsMap.size)
-            appendSystemChatAndLog("✅ انضم ${req.userName} إلى الغرفة")
-        } else {
-            appendSystemChatAndLog("❌ تم رفض طلب انضمام ${req.userName}")
-        }
-        layoutJoinRequestBanner.visibility = if (pendingJoinRequests.isEmpty()) View.GONE else View.VISIBLE
-        updateRoomHeaderAndPermissionsUI()
-    }
-
-    private fun showBansAndJoinRequestsDialog() {
-        val bannedList = bannedUserIds.toList()
-        if (bannedList.isEmpty()) {
-            Toast.makeText(hostContext, "لا يوجد أعضاء محظورون حالياً", Toast.LENGTH_SHORT).show()
-            return
-        }
-        AlertDialog.Builder(hostContext)
-            .setTitle("🚫 المحظورون من الغرفة (اضغط لرفع الحظر)")
-            .setItems(bannedList.toTypedArray()) { _, which ->
-                bannedUserIds.remove(bannedList[which])
-                appendSystemChatAndLog("✅ تم رفع الحظر")
             }
             .setNegativeButton("إغلاق", null)
             .show()
@@ -1785,34 +3043,32 @@ class WatchTogetherController(
 
     private fun copyInviteCodeAndLink(shareSheet: Boolean) {
         val room = currentRoom ?: return
-        val deepLink = "primeott://watch?room=${room.roomId}&code=${room.roomCode}"
-        val inviteText = "🎬 انضم لغرفة «${room.roomName}» لمشاهدة «${room.streamTitle}»! رمز الغرفة: ${room.roomCode} | الرابط: $deepLink"
+        val inviteText = "🎬 انضم لغرفة «${room.roomName}» لمشاهدة «${room.streamTitle}»! رمز الغرفة: ${room.roomCode}"
         val clipboard = hostContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("WatchTogetherInvite", inviteText))
-        Toast.makeText(hostContext, "📋 تم نسخ الرمز (#${room.roomCode})", Toast.LENGTH_SHORT).show()
+        clipboard.setPrimaryClip(ClipData.newPlainText("WatchTogetherInvite", room.roomCode))
+        Toast.makeText(hostContext, "📋 تم نسخ رمز الغرفة (#${room.roomCode})", Toast.LENGTH_SHORT).show()
         if (shareSheet) {
-            try {
+            runCatching {
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "text/plain"
                     putExtra(Intent.EXTRA_TEXT, inviteText)
                 }
                 hostContext.startActivity(Intent.createChooser(shareIntent, "مشاركة دعوة الغرفة:"))
-            } catch (_: Exception) {}
+            }
         }
     }
 
     fun confirmLeaveRoom() {
-        val room = currentRoom ?: return
-        val willClose = participantsMap.size <= 1
-        val msg = if (willClose) {
-            "أنت المشاهد الوحيد حالياً؛ مغادرتك ستؤدي إلى إغلاق الغرفة تلقائياً لعدم وجود نشاط."
-        } else {
-            "هل تريد مغادرة غرفة «${room.roomName}»؟"
+        if (isFullscreenPlayer) {
+            toggleAppPlayerFullscreen(false)
+            return
         }
+        val room = currentRoom ?: return
+        val isHost = room.hostId == localUserId
         AlertDialog.Builder(hostContext)
             .setTitle("🚪 مغادرة الغرفة")
-            .setMessage(msg)
-            .setPositiveButton("مغادرة") { _, _ -> leaveCurrentRoom(closePermanently = willClose) }
+            .setMessage(if (isHost) "هل تريد مغادرة وإغلاق غرفة «${room.roomName}»؟" else "هل تريد مغادرة غرفة «${room.roomName}»؟")
+            .setPositiveButton("مغادرة") { _, _ -> leaveCurrentRoom(closePermanently = isHost) }
             .setNegativeButton("البقاء", null)
             .show()
     }
@@ -1822,121 +3078,54 @@ class WatchTogetherController(
         if (room.hostId != localUserId) return
         AlertDialog.Builder(hostContext)
             .setTitle("⛔ إغلاق الغرفة نهائياً")
-            .setMessage("سيتم إغلاق الغرفة وحذفها من قائمة الغرف النشطة لجميع المستخدمين.")
+            .setMessage("سيتم إغلاق الغرفة لجميع المشاركين.")
             .setPositiveButton("إغلاق الغرفة") { _, _ -> leaveCurrentRoom(closePermanently = true) }
             .setNegativeButton("إلغاء", null)
             .show()
     }
 
-    // إغلاق وحذف الغرفة تلقائياً إذا أصبحت فارغة أو غير نشطة
     fun leaveCurrentRoom(closePermanently: Boolean) {
+        if (isFullscreenPlayer) toggleAppPlayerFullscreen(false)
         val room = currentRoom
         if (room != null) {
-            participantsMap.remove(localUserId)
-            val remaining = participantsMap.size
-
-            if (closePermanently || remaining <= 0) {
-                room.status = "CLOSED"
-                room.onlineCount = 0
-                broadcastRoomEvent("ROOM_CLOSED", JSONObject().put("roomId", room.roomId).put("status", "CLOSED"))
-                notifyBackendRoomClosed(room.roomId)
-                activeRoomsList.removeAll { it.roomId == room.roomId }
-            } else {
-                room.onlineCount = remaining
-                room.lastActiveAt = System.currentTimeMillis()
-                broadcastRoomEvent("USER_LEFT", JSONObject().put("userId", localUserId))
-                if (room.hostId == localUserId) {
-                    val nextHost = participantsMap.values.first()
-                    nextHost.role = "HOST"
-                    room.hostId = nextHost.userId
-                    room.hostName = nextHost.userName
-                    broadcastRoomEvent("TRANSFER_HOST", JSONObject().put("newHostId", nextHost.userId).put("newHostName", nextHost.userName))
-                }
+            val action = if (closePermanently || room.hostId == localUserId) "CLOSE_ROOM" else "LEAVE"
+            controllerScope.launch {
+                OttRepository.manageWatchRoom(room.roomId, localUserId, action)
+                fetchActiveRoomsDirectory(cleanOldSelfRooms = false)
             }
-            saveRoomsToLocalRegistry()
         }
-        exoPlayer?.pause()
+        cleanupHeadlessSniffer()
+        playerEngine.pauseAndReleaseSocket()
         voiceChatManager?.stopVoiceChat()
         try { webSocket?.close(1000, "Leave") } catch (_: Exception) {}
         webSocket = null
         currentRoom = null
         layoutActiveRoomContainer.visibility = View.GONE
         layoutLobbyContainer.visibility = View.VISIBLE
-        applyRoomSearchAndFilters()
-    }
-
-    private fun notifyBackendRoomClosed(roomId: String) {
-        Thread {
-            try {
-                val payload = JSONObject().apply {
-                    put("type", "ROOM_CLOSED")
-                    put("roomId", roomId)
-                    put("status", "CLOSED")
-                    put("onlineCount", 0)
-                }
-                val req = Request.Builder()
-                    .url("$workerBaseUrl/room/event")
-                    .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
-                    .build()
-                httpClient.newCall(req).execute().close()
-            } catch (_: Exception) {}
-        }.start()
     }
 
     private fun connectRoomWebSocket(roomId: String) {
         try { webSocket?.cancel() } catch (_: Exception) {}
         val wsUrl = workerBaseUrl.replace("https://", "wss://").replace("http://", "ws://") +
             "/ws/room?roomId=$roomId&userId=$localUserId&token=$authToken"
-        val req = Request.Builder().url(wsUrl).addHeader("Authorization", "Bearer $authToken").build()
+        val req = Request.Builder().url(wsUrl).build()
         webSocket = httpClient.newWebSocket(req, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                reconnectAttempt = 0
-                mainHandler.post {
-                    logRoomEvent("WS", "تم الاتصال اللحظي بالغرفة")
-                    broadcastRoomEvent("USER_JOINED", JSONObject().put("userId", localUserId).put("userName", localUserName))
-                }
-            }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 mainHandler.post { handleIncomingRealtimeEvent(text) }
-            }
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                mainHandler.post { scheduleWebSocketReconnect(roomId) }
             }
         })
     }
 
-    private fun scheduleWebSocketReconnect(roomId: String) {
-        if (isDestroyed || currentRoom?.roomId != roomId) return
-        reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(5)
-        mainHandler.postDelayed({
-            if (!isDestroyed && currentRoom?.roomId == roomId) connectRoomWebSocket(roomId)
-        }, 1500L * reconnectAttempt)
-    }
-
     private fun broadcastRoomEvent(type: String, payload: JSONObject) {
         val room = currentRoom ?: return
-        room.lastActiveAt = System.currentTimeMillis()
         val envelope = JSONObject().apply {
             put("type", type)
             put("roomId", room.roomId)
             put("senderId", localUserId)
             put("senderName", localUserName)
-            put("onlineCount", participantsMap.size)
-            put("ts", System.currentTimeMillis())
             put("data", payload)
         }
-        val raw = envelope.toString()
-        try { webSocket?.send(raw) } catch (_: Exception) {}
-        Thread {
-            try {
-                val req = Request.Builder()
-                    .url("$workerBaseUrl/room/event")
-                    .addHeader("Authorization", "Bearer $authToken")
-                    .post(raw.toRequestBody("application/json".toMediaTypeOrNull()))
-                    .build()
-                httpClient.newCall(req).execute().close()
-            } catch (_: Exception) {}
-        }.start()
+        try { webSocket?.send(envelope.toString()) } catch (_: Exception) {}
     }
 
     private fun handleIncomingRealtimeEvent(rawJson: String) {
@@ -1947,299 +3136,35 @@ class WatchTogetherController(
             val senderName = env.optString("senderName", "مشاهد")
             val data = env.optJSONObject("data") ?: JSONObject()
             if (senderId == localUserId || blockedUserIds.contains(senderId)) return
-            currentRoom?.lastActiveAt = System.currentTimeMillis()
 
             when (type) {
-                "PLAYBACK_SYNC" -> applyIncomingPlaybackSync(data)
-                "CHAT_MSG" -> appendChatMessage(ChatMessageModel(data.optString("msgId"), senderId, senderName, data.optString("senderRole", "PARTICIPANT"), data.optString("text")))
-                "EMOJI" -> {
-                    statTotalEmojis++
-                    spawnFloatingEmoji(data.optString("emoji", "🔥"))
-                }
-                "VOICE_FRAME" -> {
-                    val b64 = data.optString("audio")
-                    if (b64.isNotEmpty()) voiceChatManager?.playIncomingWebSocketVoice(senderId, Base64.decode(b64, Base64.NO_WRAP))
-                }
-                "USER_JOINED" -> {
-                    participantsMap[senderId] = ParticipantModel(senderId, senderName, "PARTICIPANT")
-                    currentRoom?.onlineCount = participantsMap.size
-                    statPeakViewers = statPeakViewers.coerceAtLeast(participantsMap.size)
-                    appendSystemChatAndLog("👋 انضم $senderName إلى الغرفة")
-                    updateRoomHeaderAndPermissionsUI()
-                }
-                "USER_LEFT" -> {
-                    participantsMap.remove(senderId)
-                    val rem = participantsMap.size
-                    currentRoom?.onlineCount = rem
-                    appendSystemChatAndLog("🚪 غادر $senderName الغرفة")
-                    if (rem <= 0) {
-                        leaveCurrentRoom(closePermanently = true)
-                    } else {
-                        updateRoomHeaderAndPermissionsUI()
-                    }
-                }
-                "KICK_USER" -> if (data.optString("targetId") == localUserId) leaveCurrentRoom(false)
-                "BAN_USER" -> if (data.optString("targetId") == localUserId) {
-                    bannedUserIds.add(localUserId)
-                    leaveCurrentRoom(false)
-                }
-                "ROOM_CLOSED" -> {
-                    Toast.makeText(hostContext, "⛔ تم إغلاق الغرفة", Toast.LENGTH_SHORT).show()
-                    leaveCurrentRoom(true)
-                }
+                "CHAT_MSG" -> appendChatMessage(
+                    ChatMessageModel(
+                        data.optString("msgId", "WS_${System.nanoTime()}"),
+                        senderId,
+                        senderName,
+                        data.optString("senderRole", "PARTICIPANT"),
+                        data.optString("text")
+                    )
+                )
+                "EMOJI" -> spawnFloatingEmoji(data.optString("emoji", "🔥"))
             }
         } catch (_: Exception) {}
     }
 
-    private fun performHeartbeatAndHealthCheck() {
-        val startTs = System.currentTimeMillis()
-        val activeRm = currentRoom
-        if (activeRm != null) {
-            if (participantsMap.isEmpty()) {
-                leaveCurrentRoom(closePermanently = true)
-                return
-            }
-            activeRm.lastActiveAt = startTs
-            activeRm.onlineCount = participantsMap.size
-            saveRoomsToLocalRegistry()
-        }
-
-        Thread {
-            var ping = Random.nextInt(22, 42)
-            try {
-                val req = Request.Builder().url("$workerBaseUrl/health").get().build()
-                httpClient.newCall(req).execute().use {
-                    ping = (System.currentTimeMillis() - startTs).toInt().coerceIn(18, 250)
-                }
-            } catch (_: Exception) {}
-            backendPingMs = ping
-            mainHandler.post {
-                if (!isDestroyed) {
-                    tvBackendHealthLobby.text = "🟢 ${backendPingMs}ms"
-                    tvBackendHealthRoom.text = "🟢 ${backendPingMs}ms"
-                }
-            }
-        }.start()
-    }
-
-    // إغلاق وحذف أي غرفة غير نشطة أو فارغة تلقائياً
-    private fun cleanupExpiredAndEmptyRooms() {
-        val now = System.currentTimeMillis()
-        val beforeCount = activeRoomsList.size
-
-        val staleRooms = activeRoomsList.filter { !isRoomActiveAndValid(it, now) }
-        for (stale in staleRooms) {
-            notifyBackendRoomClosed(stale.roomId)
-        }
-        activeRoomsList.removeAll { !isRoomActiveAndValid(it, now) }
-
-        if (activeRoomsList.size != beforeCount) {
-            saveRoomsToLocalRegistry()
-            if (currentRoom == null) {
-                applyRoomSearchAndFilters()
-            }
-        }
-    }
-
     private fun updateExpirationCountdownUI() {
         val room = currentRoom ?: return
-        val rem = room.expiresAt - System.currentTimeMillis()
-        if (rem <= 0 || participantsMap.isEmpty()) {
-            leaveCurrentRoom(true)
-            return
-        }
+        val rem = (room.expiresAt - System.currentTimeMillis()).coerceAtLeast(0L)
         val hrs = TimeUnit.MILLISECONDS.toHours(rem)
         val mins = TimeUnit.MILLISECONDS.toMinutes(rem) % 60
         val secs = TimeUnit.MILLISECONDS.toSeconds(rem) % 60
         tvExpirationTimerBadge.text = String.format(Locale.US, "⏳ %02d:%02d:%02d", hrs, mins, secs)
     }
 
-    private fun logRoomEvent(type: String, detail: String) {
-        eventLogs.add(0, RoomEventLogItem(System.currentTimeMillis(), type, detail))
-        if (this::eventLogsAdapter.isInitialized) eventLogsAdapter.notifyDataSetChanged()
-    }
-
     private fun updateDetailedStatsUI() {
         val room = currentRoom ?: return
         val up = ((System.currentTimeMillis() - room.createdAt) / 60_000L).coerceAtLeast(1)
-        tvRoomDetailedStats.text = "📊 الغرفة: #${room.roomCode} | المتصلون: ${participantsMap.size}/${room.maxParticipants} | الذروة: $statPeakViewers | الرسائل: $statTotalMessages | المزامنة: $statSyncCount | البينغ: ${backendPingMs}ms | مدة النشاط: $up د"
-    }
-
-    private fun parseRoomJson(o: JSONObject): WatchRoomModel? {
-        val rid = o.optString("roomId")
-        val rcode = o.optString("roomCode")
-        if (rid.isEmpty() || rcode.isEmpty()) return null
-        // منع أي غرف وهمية قديمة
-        if (rid in setOf("RM-LIVE-1", "RM-LIVE-2", "RM-VIP-3") || rcode in setOf("PRM101", "DZ2026", "VIP990")) {
-            return null
-        }
-        val now = System.currentTimeMillis()
-        return WatchRoomModel(
-            roomId = rid,
-            roomCode = rcode,
-            roomName = o.optString("roomName", "غرفة مشاهدة"),
-            hostId = o.optString("hostId"),
-            hostName = o.optString("hostName", "مضيف"),
-            isPrivate = o.optBoolean("isPrivate", false),
-            passwordHash = o.optString("passwordHash", ""),
-            requireApproval = o.optBoolean("requireApproval", false),
-            maxParticipants = o.optInt("maxParticipants", 25),
-            onlineCount = o.optInt("onlineCount", 0),
-            status = o.optString("status", "LIVE"),
-            streamUrl = o.optString("streamUrl"),
-            streamTitle = o.optString("streamTitle", "بث مباشر"),
-            category = o.optString("category", "بث مباشر"),
-            createdAt = o.optLong("createdAt", now),
-            lastActiveAt = o.optLong("lastActiveAt", now),
-            expiresAt = o.optLong("expiresAt", now + 3600_000L)
-        )
-    }
-
-    // جلب الغرف الحقيقية والنشطة فقط (بدون إضافة أي غرف وهمية)
-    private fun fetchActiveRoomsDirectory() {
-        val prefs = hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
-        val savedJson = prefs.getString("active_rooms_registry", null)
-        val now = System.currentTimeMillis()
-        activeRoomsList.clear()
-
-        if (!savedJson.isNullOrEmpty()) {
-            try {
-                val arr = JSONArray(savedJson)
-                for (i in 0 until arr.length()) {
-                    val parsed = parseRoomJson(arr.getJSONObject(i))
-                    if (parsed != null && isRoomActiveAndValid(parsed, now)) {
-                        activeRoomsList.add(parsed)
-                    }
-                }
-            } catch (_: Exception) {}
-        }
-
-        saveRoomsToLocalRegistry()
-        applyRoomSearchAndFilters()
-
-        // مزامنة الغرف الحقيقية النشطة من سيرفر Cloudflare
-        Thread {
-            try {
-                val req = Request.Builder().url("$workerBaseUrl/rooms/list").get().build()
-                httpClient.newCall(req).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        val body = resp.body?.string() ?: "{}"
-                        val obj = JSONObject(body)
-                        val arr = obj.optJSONArray("rooms") ?: JSONArray()
-                        val remoteActive = mutableListOf<WatchRoomModel>()
-                        val checkTs = System.currentTimeMillis()
-                        for (i in 0 until arr.length()) {
-                            val r = parseRoomJson(arr.getJSONObject(i))
-                            if (r != null && isRoomActiveAndValid(r, checkTs)) {
-                                remoteActive.add(r)
-                            }
-                        }
-                        mainHandler.post {
-                            if (!isDestroyed) {
-                                for (rem in remoteActive) {
-                                    val idx = activeRoomsList.indexOfFirst { it.roomId == rem.roomId }
-                                    if (idx >= 0) {
-                                        activeRoomsList[idx] = rem
-                                    } else {
-                                        activeRoomsList.add(rem)
-                                    }
-                                }
-                                cleanupExpiredAndEmptyRooms()
-                                applyRoomSearchAndFilters()
-                            }
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-        }.start()
-    }
-
-    private fun saveRoomsToLocalRegistry() {
-        val now = System.currentTimeMillis()
-        val arr = JSONArray()
-        for (r in activeRoomsList) {
-            if (!isRoomActiveAndValid(r, now)) continue
-            arr.put(JSONObject().apply {
-                put("roomId", r.roomId)
-                put("roomCode", r.roomCode)
-                put("roomName", r.roomName)
-                put("hostId", r.hostId)
-                put("hostName", r.hostName)
-                put("isPrivate", r.isPrivate)
-                put("passwordHash", r.passwordHash)
-                put("requireApproval", r.requireApproval)
-                put("maxParticipants", r.maxParticipants)
-                put("onlineCount", r.onlineCount)
-                put("status", r.status)
-                put("streamUrl", r.streamUrl)
-                put("streamTitle", r.streamTitle)
-                put("category", r.category)
-                put("createdAt", r.createdAt)
-                put("lastActiveAt", r.lastActiveAt)
-                put("expiresAt", r.expiresAt)
-            })
-        }
-        hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
-            .edit().putString("active_rooms_registry", arr.toString()).apply()
-    }
-
-    private fun publishRoomToBackend(room: WatchRoomModel) {
-        Thread {
-            try {
-                val payload = JSONObject().apply {
-                    put("roomId", room.roomId)
-                    put("roomCode", room.roomCode)
-                    put("roomName", room.roomName)
-                    put("hostId", room.hostId)
-                    put("hostName", room.hostName)
-                    put("isPrivate", room.isPrivate)
-                    put("maxParticipants", room.maxParticipants)
-                    put("onlineCount", room.onlineCount)
-                    put("status", room.status)
-                    put("streamUrl", room.streamUrl)
-                    put("streamTitle", room.streamTitle)
-                    put("lastActiveAt", room.lastActiveAt)
-                }
-                val req = Request.Builder()
-                    .url("$workerBaseUrl/rooms/create")
-                    .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
-                    .build()
-                httpClient.newCall(req).execute().close()
-            } catch (_: Exception) {}
-        }.start()
-    }
-
-    private fun loadCachedMessageHistory(roomId: String) {
-        val raw = hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
-            .getString("chat_history_$roomId", null) ?: return
-        try {
-            val arr = JSONArray(raw)
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                val sid = o.optString("senderId")
-                if (!blockedUserIds.contains(sid)) {
-                    chatHistory.add(ChatMessageModel(o.optString("msgId"), sid, o.optString("senderName"), o.optString("senderRole"), o.optString("text"), o.optLong("ts")))
-                }
-            }
-            chatAdapter.notifyDataSetChanged()
-        } catch (_: Exception) {}
-    }
-
-    private fun saveCachedMessageHistory() {
-        val room = currentRoom ?: return
-        val arr = JSONArray()
-        for (m in chatHistory.filter { !it.isSystemEvent }.takeLast(40)) {
-            arr.put(JSONObject().apply {
-                put("msgId", m.msgId)
-                put("senderId", m.senderId)
-                put("senderName", m.senderName)
-                put("senderRole", m.senderRole)
-                put("text", m.text)
-                put("ts", m.timestamp)
-            })
-        }
-        hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
-            .edit().putString("chat_history_${room.roomId}", arr.toString()).apply()
+        tvRoomDetailedStats.text = "📊 الغرفة: #${room.roomCode} | المتصلون: ${participantsMap.size} | الذروة: $statPeakViewers | الرسائل: $statTotalMessages | المزامنة: $statSyncCount | مدة النشاط: $up د"
     }
 
     fun handleIntent(intent: Intent?) {
@@ -2253,83 +3178,67 @@ class WatchTogetherController(
             }
         }
 
-        var passedUrl = intent.getStringExtra("stream_url")
-            ?: intent.getStringExtra("STREAM_URL")
+        val passedUrl = intent.getStringExtra(WatchRoomActivity.EXTRA_STREAM_URL)
+            ?: intent.getStringExtra("stream_url")
             ?: intent.getStringExtra("url")
-            ?: intent.getStringExtra("video_url")
-            ?: intent.getStringExtra("movie_url")
-            ?: intent.getStringExtra("content_url")
             ?: ""
 
-        val passedTitle = intent.getStringExtra("stream_title")
-            ?: intent.getStringExtra("STREAM_TITLE")
-            ?: intent.getStringExtra("channel_name")
-            ?: intent.getStringExtra("room_name")
+        val passedStreamId = intent.getStringExtra("stream_id") ?: ""
+        val passedReferer = intent.getStringExtra("stream_referer") ?: ""
+        val passedUa = intent.getStringExtra("stream_ua") ?: SessionManager.CUSTOM_USER_AGENT
+
+        val passedTitle = intent.getStringExtra(WatchRoomActivity.EXTRA_STREAM_TITLE)
+            ?: intent.getStringExtra(WatchRoomActivity.EXTRA_CHANNEL_NAME)
             ?: intent.getStringExtra("title")
-            ?: intent.getStringExtra("name")
             ?: ""
 
-        val passedStreamId = intent.getStringExtra("stream_id")
-            ?: intent.getIntExtra("stream_id", 0).takeIf { it > 0 }?.toString()
-            ?: intent.getStringExtra("id")
-            ?: intent.getIntExtra("id", 0).takeIf { it > 0 }?.toString()
-            ?: ""
+        val passedRoomName = intent.getStringExtra(WatchRoomActivity.EXTRA_ROOM_NAME) ?: ""
 
-        val passedExt = (intent.getStringExtra("container_extension")
-            ?: intent.getStringExtra("extension")
-            ?: "mp4").trimStart('.')
-
-        val passedCode = intent.getStringExtra("room_code")
-            ?: intent.getStringExtra("room_id")
-            ?: intent.getStringExtra("ROOM_ID")
+        val passedCode = intent.getStringExtra(WatchRoomActivity.EXTRA_ROOM_CODE)
+            ?: intent.getStringExtra(WatchRoomActivity.EXTRA_ROOM_ID)
             ?: ""
 
         val isDirectMovie = intent.getBooleanExtra("direct_movie_launch", false)
-        val isHostFlag = intent.getBooleanExtra("is_host", true)
-        val isPrivateFlag = intent.getBooleanExtra("is_private", false)
+        val isHostFlag = intent.getBooleanExtra(WatchRoomActivity.EXTRA_IS_HOST, true)
 
-        if (passedUrl.isEmpty() && passedStreamId.isNotEmpty()) {
-            val (host, user, pass) = extractXtreamCredentials()
-            if (user.isNotEmpty() && pass.isNotEmpty()) {
-                passedUrl = "$host/movie/$user/$pass/$passedStreamId.$passedExt"
-            }
-        }
-
-        if (passedUrl.isEmpty() && passedTitle.isNotEmpty()) {
-            val matched = (allSportsStreamsList + allChannelsList).firstOrNull {
-                it.title.contains(passedTitle, ignoreCase = true) || passedTitle.contains(it.title, ignoreCase = true)
-            }
-            if (matched != null) {
-                passedUrl = matched.streamUrl
-            }
-        }
-
-        if (isDirectMovie || passedUrl.isNotEmpty() || (passedTitle.isNotEmpty() && isHostFlag)) {
-            val code = if (passedCode.length >= 4) passedCode.take(6).uppercase(Locale.US) else generateRoomCode()
+        if (isDirectMovie || passedUrl.isNotEmpty() || passedStreamId.isNotEmpty()) {
+            val code = passedCode.ifEmpty { generateRoomCode() }
             val titleToUse = passedTitle.ifEmpty { "فيلم مشترك" }
-            val now = System.currentTimeMillis()
+            val rName = passedRoomName.ifEmpty { "غرفة $titleToUse" }
+
             val directRoom = WatchRoomModel(
-                roomId = generateUniqueRoomId(),
+                roomId = code,
                 roomCode = code,
-                roomName = if (titleToUse.startsWith("غرفة")) titleToUse else "غرفة $titleToUse",
+                roomName = rName,
                 hostId = localUserId,
                 hostName = localUserName,
-                isPrivate = isPrivateFlag,
-                maxParticipants = 25,
+                isPrivate = false,
                 onlineCount = 1,
                 status = "LIVE",
+                streamId = passedStreamId,
                 streamUrl = passedUrl,
+                streamReferer = passedReferer,
+                streamUserAgent = passedUa,
                 streamTitle = titleToUse,
-                category = "أفلام وبث مشترك",
-                isPlaying = true,
-                createdAt = now,
-                lastActiveAt = now
+                category = "🎬 مشاهدة جماعية",
+                isMovie = true,
+                isPlaying = passedUrl.isNotEmpty()
             )
-            activeRoomsList.removeAll { it.hostId == localUserId }
-            activeRoomsList.add(0, directRoom)
-            saveRoomsToLocalRegistry()
-            publishRoomToBackend(directRoom)
-            enterWatchRoom(directRoom, isHost = true)
+            enterWatchRoom(directRoom, isHost = isHostFlag)
+
+            if (passedUrl.isNotEmpty()) {
+                broadcastPlaybackSync()
+            } else if (passedStreamId.isNotEmpty()) {
+                extractAndPlayMovieIdenticalToApp(
+                    MediaStreamOption(
+                        id = passedStreamId,
+                        title = titleToUse,
+                        subtitle = "🎬 فيلم",
+                        streamUrl = "",
+                        isMovie = true
+                    )
+                )
+            }
         } else if (passedCode.isNotEmpty()) {
             joinRoomByCodeOrLink(passedCode)
         }
@@ -2337,21 +3246,100 @@ class WatchTogetherController(
 
     fun release() {
         isDestroyed = true
-        if (currentRoom != null) {
-            leaveCurrentRoom(closePermanently = participantsMap.size <= 1)
+        val room = currentRoom
+        if (room != null && room.hostId == localUserId) {
+            GlobalScope.launch(Dispatchers.IO) {
+                OttRepository.manageWatchRoom(room.roomId, localUserId, "CLOSE_ROOM")
+            }
         }
+        progressTickJob?.cancel()
+        snifferExtractionJob?.cancel()
+        cleanupHeadlessSniffer()
+        controllerScope.cancel()
         mainHandler.removeCallbacksAndMessages(null)
         try { webSocket?.close(1000, "Destroy") } catch (_: Exception) {}
         voiceChatManager?.release()
-        exoPlayer?.release()
-        exoPlayer = null
+        playerEngine.release()
+    }
+
+    private fun dp(value: Int): Int =
+        (value * hostContext.resources.displayMetrics.density).toInt()
+
+    private fun dpF(value: Float): Float =
+        value * hostContext.resources.displayMetrics.density
+
+    private fun makeRoundedBg(
+        fillColor: Int,
+        radiusDp: Float,
+        strokeColor: Int? = null,
+        strokeWidthDp: Float = 1f
+    ): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dpF(radiusDp)
+            setColor(fillColor)
+            if (strokeColor != null) {
+                setStroke(max(1, dpF(strokeWidthDp).toInt()), strokeColor)
+            }
+        }
+    }
+
+    private fun formatTimeMs(ms: Long): String {
+        val totalSecs = (ms / 1000L).coerceAtLeast(0L)
+        val hours = totalSecs / 3600
+        val mins = (totalSecs % 3600) / 60
+        val secs = totalSecs % 60
+        return if (hours > 0) {
+            String.format(Locale.US, "%02d:%02d:%02d", hours, mins, secs)
+        } else {
+            String.format(Locale.US, "%02d:%02d", mins, secs)
+        }
+    }
+
+    private fun loadPosterIntoImageView(url: String, imageView: ImageView) {
+        imageView.tag = url
+        if (url.isBlank()) {
+            imageView.setImageDrawable(null)
+            imageView.setBackgroundColor(Color.parseColor("#1D2230"))
+            return
+        }
+        val cached = posterBitmapCache.get(url)
+        if (cached != null) {
+            imageView.setImageBitmap(cached)
+            return
+        }
+        imageView.setImageDrawable(null)
+        imageView.setBackgroundColor(Color.parseColor("#1D2230"))
+        controllerScope.launch(Dispatchers.IO) {
+            try {
+                val req = Request.Builder().url(url).build()
+                httpClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val bytes = resp.body?.bytes()
+                        if (bytes != null) {
+                            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            if (bmp != null) {
+                                posterBitmapCache.put(url, bmp)
+                                withContext(Dispatchers.Main) {
+                                    if (imageView.tag == url) {
+                                        imageView.setImageBitmap(bmp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     private fun sha256(input: String): String =
         MessageDigest.getInstance("SHA-256").digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
 
-    inner class ActiveRoomsAdapter(private val items: List<WatchRoomModel>, private val onJoinClick: (WatchRoomModel) -> Unit) :
-        RecyclerView.Adapter<ActiveRoomsAdapter.VH>() {
+    inner class ActiveRoomsAdapter(
+        private val items: List<WatchRoomModel>,
+        private val onJoinClick: (WatchRoomModel) -> Unit
+    ) : RecyclerView.Adapter<ActiveRoomsAdapter.VH>() {
         inner class VH(val root: LinearLayout, val tvTitle: TextView, val tvMeta: TextView, val tvStream: TextView, val btnJoin: AppCompatButton) : RecyclerView.ViewHolder(root)
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
             val card = LinearLayout(parent.context).apply {
@@ -2379,18 +3367,20 @@ class WatchTogetherController(
         override fun onBindViewHolder(holder: VH, position: Int) {
             val r = items[position]
             val lockBadge = if (r.isPrivate) "🔒 خاصة" else "🌐 عامة"
-            holder.tvTitle.text = "${r.roomName}  •  #$lockBadge (${r.roomCode})"
-            holder.tvStream.text = "📺 ${r.streamTitle}"
-            holder.tvMeta.text = "👑 ${r.hostName}   •   🟢 ${r.onlineCount}/${r.maxParticipants} متصل الآن"
-            holder.btnJoin.text = if (r.requireApproval && r.hostId != localUserId) "طلب انضمام" else "دخول الغرفة ⬅"
+            holder.tvTitle.text = "${r.roomName}  •  $lockBadge (#${r.roomCode})"
+            holder.tvStream.text = "🎬 ${r.streamTitle}"
+            holder.tvMeta.text = "👑 ${r.hostName}   •   🟢 ${r.onlineCount} متصل الآن"
+            holder.btnJoin.text = "دخول الغرفة ⬅"
             holder.btnJoin.setOnClickListener { onJoinClick(r) }
             holder.root.setOnClickListener { onJoinClick(r) }
         }
         override fun getItemCount(): Int = items.size
     }
 
-    inner class ChatAdapter(private val items: List<ChatMessageModel>, private val onMessageClick: (ChatMessageModel) -> Unit) :
-        RecyclerView.Adapter<ChatAdapter.VH>() {
+    inner class ChatAdapter(
+        private val items: List<ChatMessageModel>,
+        private val onMessageClick: (ChatMessageModel) -> Unit
+    ) : RecyclerView.Adapter<ChatAdapter.VH>() {
         inner class VH(val tv: TextView) : RecyclerView.ViewHolder(tv)
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
             val tv = TextView(parent.context).apply {
@@ -2406,7 +3396,7 @@ class WatchTogetherController(
                 holder.tv.setTextColor(Color.parseColor("#FFE082"))
                 holder.tv.text = "[$timeStr] ${m.text}"
             } else {
-                val badge = if (m.senderRole == "HOST") "👑 " else if (m.senderRole == "MODERATOR") "🛡️ " else "👤 "
+                val badge = if (m.senderRole == "HOST") "👑 " else "👤 "
                 holder.tv.setTextColor(Color.WHITE)
                 holder.tv.text = "[$timeStr] $badge${m.senderName}: ${m.text}"
                 holder.tv.setOnClickListener { onMessageClick(m) }
@@ -2415,8 +3405,10 @@ class WatchTogetherController(
         override fun getItemCount(): Int = items.size
     }
 
-    inner class ParticipantsAdapter(private val getList: () -> List<ParticipantModel>, private val onItemClick: (ParticipantModel) -> Unit) :
-        RecyclerView.Adapter<ParticipantsAdapter.VH>() {
+    inner class ParticipantsAdapter(
+        private val getList: () -> List<ParticipantModel>,
+        private val onItemClick: (ParticipantModel) -> Unit
+    ) : RecyclerView.Adapter<ParticipantsAdapter.VH>() {
         inner class VH(val tv: TextView) : RecyclerView.ViewHolder(tv)
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
             val tv = TextView(parent.context).apply {
@@ -2427,9 +3419,9 @@ class WatchTogetherController(
         }
         override fun onBindViewHolder(holder: VH, position: Int) {
             val p = getList()[position]
-            val roleBadge = if (p.role == "HOST") "👑 مضيف" else if (p.role == "MODERATOR") "🛡️ مشرف" else "مشاهد"
-            val micBadge = if (p.isHostForceMuted) "🔇 مكتوم من المضيف" else if (p.isSpeaking) "🟢 يتحدث الآن..." else if (p.isMuted) "🎤 مكتوم" else "🎙️ متصل"
-            holder.tv.text = "${p.userName} ($roleBadge)   •   $micBadge   "
+            val roleBadge = if (p.role == "HOST") "👑 مضيف" else "مشاهد"
+            val micBadge = if (p.isSpeaking) "🟢 يتحدث الآن..." else if (p.isMuted) "🎤 مكتوم" else "🎙️ متصل"
+            holder.tv.text = "${p.userName} ($roleBadge)   •   $micBadge"
             holder.tv.setOnClickListener { onItemClick(p) }
         }
         override fun getItemCount(): Int = getList().size
@@ -2438,82 +3430,167 @@ class WatchTogetherController(
     inner class MediaPickerAdapter(
         private val items: List<MediaStreamOption>,
         private val onSelect: (MediaStreamOption) -> Unit
-    ) : RecyclerView.Adapter<MediaPickerAdapter.VH>() {
+    ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
-        inner class VH(
-            val root: LinearLayout,
+        inner class MoviePosterVH(
+            val cardRoot: FrameLayout,
+            val ivPoster: ImageView,
+            val tvRatingBadge: TextView,
+            val tvMovieTitle: TextView
+        ) : RecyclerView.ViewHolder(cardRoot)
+
+        inner class ChannelRowVH(
+            val rowRoot: LinearLayout,
             val tvIcon: TextView,
             val tvTitle: TextView,
             val tvSub: TextView,
             val btnPlay: AppCompatButton
-        ) : RecyclerView.ViewHolder(root)
+        ) : RecyclerView.ViewHolder(rowRoot)
 
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-            val row = LinearLayout(parent.context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setBackgroundResource(R.drawable.wt_bg_card)
-                setPadding(20, 16, 20, 16)
-                layoutParams = RecyclerView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { bottomMargin = 10 }
-            }
-
-            val tvIcon = TextView(parent.context).apply {
-                textSize = 20f
-                gravity = Gravity.CENTER
-                setBackgroundResource(R.drawable.wt_bg_badge_dark)
-                setPadding(18, 14, 18, 14)
-            }
-
-            val textCol = LinearLayout(parent.context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    marginStart = 16
-                    marginEnd = 12
-                }
-            }
-
-            val tvTitle = TextView(parent.context).apply {
-                setTextColor(Color.WHITE)
-                textSize = 13f
-                setTypeface(typeface, Typeface.BOLD)
-                maxLines = 1
-            }
-
-            val tvSub = TextView(parent.context).apply {
-                setTextColor(Color.parseColor("#80D8FF"))
-                textSize = 11f
-                setPadding(0, 4, 0, 0)
-            }
-
-            textCol.addView(tvTitle)
-            textCol.addView(tvSub)
-
-            val btnPlay = AppCompatButton(parent.context).apply {
-                setBackgroundResource(R.drawable.wt_bg_btn_primary)
-                setTextColor(Color.WHITE)
-                textSize = 11f
-                isAllCaps = false
-                text = "▶️ تشغيل"
-                setPadding(24, 0, 24, 0)
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 72)
-            }
-
-            row.addView(tvIcon)
-            row.addView(textCol)
-            row.addView(btnPlay)
-            return VH(row, tvIcon, tvTitle, tvSub, btnPlay)
+        override fun getItemViewType(position: Int): Int {
+            return if (items[position].isMovie) 1 else 0
         }
 
-        override fun onBindViewHolder(holder: VH, position: Int) {
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+            if (viewType == 1) {
+                val card = FrameLayout(parent.context).apply {
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#1A1E29"))
+                        cornerRadius = dp(16).toFloat()
+                    }
+                    clipToOutline = true
+                    layoutParams = RecyclerView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(182)
+                    ).apply {
+                        setMargins(dp(5), dp(6), dp(5), dp(6))
+                    }
+                }
+
+                val ivPoster = ImageView(parent.context).apply {
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                }
+
+                val bottomScrim = View(parent.context).apply {
+                    background = GradientDrawable(
+                        GradientDrawable.Orientation.BOTTOM_TOP,
+                        intArrayOf(Color.parseColor("#EE0B0D14"), Color.parseColor("#880B0D14"), Color.TRANSPARENT)
+                    )
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(82),
+                        Gravity.BOTTOM
+                    )
+                }
+
+                val tvRating = TextView(parent.context).apply {
+                    setTextColor(Color.WHITE)
+                    textSize = 10.5f
+                    setTypeface(typeface, Typeface.BOLD)
+                    setPadding(dp(8), dp(3), dp(8), dp(3))
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#CC141720"))
+                        cornerRadius = dp(10).toFloat()
+                    }
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.TOP or Gravity.END
+                    ).apply {
+                        setMargins(dp(6), dp(6), dp(6), dp(6))
+                    }
+                }
+
+                val tvTitle = TextView(parent.context).apply {
+                    setTextColor(Color.WHITE)
+                    textSize = 12f
+                    setTypeface(typeface, Typeface.BOLD)
+                    maxLines = 2
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(dp(8), dp(4), dp(8), dp(8))
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        Gravity.BOTTOM or Gravity.START
+                    )
+                }
+
+                card.addView(ivPoster)
+                card.addView(bottomScrim)
+                card.addView(tvRating)
+                card.addView(tvTitle)
+                return MoviePosterVH(card, ivPoster, tvRating, tvTitle)
+            } else {
+                val row = LinearLayout(parent.context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setBackgroundResource(R.drawable.wt_bg_card)
+                    setPadding(20, 16, 20, 16)
+                    layoutParams = RecyclerView.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { bottomMargin = 10 }
+                }
+                val tvIcon = TextView(parent.context).apply {
+                    textSize = 20f
+                    gravity = Gravity.CENTER
+                    setBackgroundResource(R.drawable.wt_bg_badge_dark)
+                    setPadding(18, 14, 18, 14)
+                }
+                val textCol = LinearLayout(parent.context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        marginStart = 16
+                        marginEnd = 12
+                    }
+                }
+                val tvTitle = TextView(parent.context).apply {
+                    setTextColor(Color.WHITE)
+                    textSize = 13f
+                    setTypeface(typeface, Typeface.BOLD)
+                    maxLines = 1
+                }
+                val tvSub = TextView(parent.context).apply {
+                    setTextColor(Color.parseColor("#80D8FF"))
+                    textSize = 11f
+                    setPadding(0, 4, 0, 0)
+                }
+                textCol.addView(tvTitle)
+                textCol.addView(tvSub)
+                val btnPlay = AppCompatButton(parent.context).apply {
+                    setBackgroundResource(R.drawable.wt_bg_btn_primary)
+                    setTextColor(Color.WHITE)
+                    textSize = 11f
+                    isAllCaps = false
+                    text = "▶️ تشغيل"
+                    setPadding(24, 0, 24, 0)
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, 72)
+                }
+                row.addView(tvIcon)
+                row.addView(textCol)
+                row.addView(btnPlay)
+                return ChannelRowVH(row, tvIcon, tvTitle, tvSub, btnPlay)
+            }
+        }
+
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             val item = items[position]
-            holder.tvIcon.text = if (item.isMatch) "🎬" else "📺"
-            holder.tvTitle.text = item.title
-            holder.tvSub.text = item.subtitle
-            holder.btnPlay.setOnClickListener { onSelect(item) }
-            holder.root.setOnClickListener { onSelect(item) }
+            if (holder is MoviePosterVH) {
+                holder.tvMovieTitle.text = item.title
+                holder.tvRatingBadge.text = "★ ${item.rating}"
+                loadPosterIntoImageView(item.posterUrl, holder.ivPoster)
+                holder.cardRoot.setOnClickListener { onSelect(item) }
+            } else if (holder is ChannelRowVH) {
+                holder.tvIcon.text = "📺"
+                holder.tvTitle.text = item.title
+                holder.tvSub.text = item.subtitle
+                holder.btnPlay.setOnClickListener { onSelect(item) }
+                holder.rowRoot.setOnClickListener { onSelect(item) }
+            }
         }
 
         override fun getItemCount(): Int = items.size
