@@ -88,7 +88,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.ByteArrayInputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
@@ -105,11 +108,14 @@ class ContentDetailActivity : AppCompatActivity() {
         private const val SNIFFER_UA =
             "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
+        private const val TMDB_API_KEY = "8476a7ab80ad76f0936744df0430e67c"
+
         private val FLIX_INITIAL_LEFT_COLOR = "#233242".toColorInt()
         private val FLIX_INITIAL_RIGHT_COLOR = "#000000".toColorInt()
 
         private val detailsCache = ConcurrentHashMap<String, MovieFullDetails>()
         private val paletteCache = ConcurrentHashMap<String, Pair<Int, Int>>()
+        private val distinctCoverCache = ConcurrentHashMap<String, String>()
         private val actorCreditsCache = ConcurrentHashMap<String, List<VodItem>>()
     }
 
@@ -151,6 +157,7 @@ class ContentDetailActivity : AppCompatActivity() {
     private var snifferTimeoutJob: Job? = null
     private var detailsFetchJob: Job? = null
     private var streamFetchJob: Job? = null
+    private var coverResolveJob: Job? = null
 
     private var currentLeftBrightColor: Int = FLIX_INITIAL_LEFT_COLOR
     private var currentRightDarkColor: Int = FLIX_INITIAL_RIGHT_COLOR
@@ -568,50 +575,123 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * خوارزمية استخراج الألوان الديناميكية الدقيقة (72-Hue Swatch Histogram)
+     * تلتقط اللون الحقيقي الطاغي في الغلاف (أخضر، ذهبي، سماوي، قرمزي، بنفسجي، برتقالي، أزرق، إلخ)
+     * دون خلط الألوان المتقابلة مع بعضها.
+     */
     private fun extractFlixVisionPalette(bitmap: Bitmap): Pair<Int, Int> {
         return try {
-            val scaled = Bitmap.createScaledBitmap(bitmap, 40, 40, false)
-            var rSum = 0f
-            var gSum = 0f
-            var bSum = 0f
-            var weightTotal = 0f
+            val scaled = Bitmap.createScaledBitmap(bitmap, 64, 64, true)
+            val numBins = 72 // كل خانة تمثل 5 درجات لونية من 360 درجة
+            val binWeights = FloatArray(numBins)
+            val binCosH = FloatArray(numBins)
+            val binSinH = FloatArray(numBins)
+            val binSatSum = FloatArray(numBins)
+            val binValSum = FloatArray(numBins)
+
+            var fallbackR = 0f
+            var fallbackG = 0f
+            var fallbackB = 0f
+            var fallbackWeight = 0f
+
             val hsv = FloatArray(3)
 
-            for (y in 6 until 36) {
-                for (x in 2 until 38) {
+            for (y in 2 until 60) {
+                // تركيز أعلى على منطقة الوسط وأسفل الغلاف जहां تندمج الخلفية مع الصورة
+                val verticalFactor = when {
+                    y in 18..54 -> 1.35f
+                    else -> 0.85f
+                }
+                for (x in 2 until 62) {
                     val pixel = scaled.getPixel(x, y)
+                    val alpha = Color.alpha(pixel)
+                    if (alpha < 180) continue
+
                     val r = Color.red(pixel)
                     val g = Color.green(pixel)
                     val b = Color.blue(pixel)
                     Color.colorToHSV(pixel, hsv)
+
+                    val hue = hsv[0]
                     val sat = hsv[1]
                     val value = hsv[2]
 
-                    if (value in 0.12f..0.92f && sat >= 0.10f) {
-                        val weight = (sat * 2.5f) + (1f - abs(value - 0.50f))
-                        rSum += r * weight
-                        gSum += g * weight
-                        bSum += b * weight
-                        weightTotal += weight
+                    if (value in 0.14f..0.95f) {
+                        val w = (sat + 0.1f) * value * verticalFactor
+                        fallbackR += r * w
+                        fallbackG += g * w
+                        fallbackB += b * w
+                        fallbackWeight += w
                     }
+
+                    // استبعاد الأسود المحروق والأبيض الرمادي الباهت من التصويت اللوني
+                    if (value < 0.15f || (value > 0.94f && sat < 0.18f) || sat < 0.14f) continue
+
+                    val bin = ((hue / 5f).toInt()).coerceIn(0, numBins - 1)
+                    // إعطاء وزن قوي للألوان المشبعة والواضحة في البوستر
+                    val vibrantBoost = (sat * sat * 2.6f + sat * 0.8f) * (0.4f + 0.6f * sin(value * Math.PI).toFloat())
+                    val weight = vibrantBoost * verticalFactor
+
+                    val rad = Math.toRadians(hue.toDouble())
+                    binWeights[bin] += weight
+                    binCosH[bin] += (cos(rad).toFloat() * weight)
+                    binSinH[bin] += (sin(rad).toFloat() * weight)
+                    binSatSum[bin] += sat * weight
+                    binValSum[bin] += value * weight
                 }
             }
 
-            if (weightTotal <= 0.01f) {
-                "#283646".toColorInt() to "#000000".toColorInt()
-            } else {
-                val baseColor = Color.rgb(
-                    (rSum / weightTotal).toInt().coerceIn(0, 255),
-                    (gSum / weightTotal).toInt().coerceIn(0, 255),
-                    (bSum / weightTotal).toInt().coerceIn(0, 255)
-                )
-                Color.colorToHSV(baseColor, hsv)
-                hsv[1] = hsv[1].coerceIn(0.45f, 0.78f)
-                hsv[2] = hsv[2].coerceIn(0.32f, 0.44f)
-                val leftBrightColor = Color.HSVToColor(hsv)
-                val rightDarkColor = "#000000".toColorInt()
+            // إيجاد التجمع اللوني الأقوى مع احتساب الجيران المباشرين (Smooth Peak)
+            var bestBin = -1
+            var bestClusterScore = 0f
+            for (i in 0 until numBins) {
+                val prev = (i - 1 + numBins) % numBins
+                val next = (i + 1) % numBins
+                val clusterScore = binWeights[i] + (binWeights[prev] * 0.45f) + (binWeights[next] * 0.45f)
+                if (clusterScore > bestClusterScore) {
+                    bestClusterScore = clusterScore
+                    bestBin = i
+                }
+            }
+
+            if (bestBin != -1 && bestClusterScore > 0.05f) {
+                val prev = (bestBin - 1 + numBins) % numBins
+                val next = (bestBin + 1) % numBins
+
+                val totalW = (binWeights[bestBin] + binWeights[prev] * 0.45f + binWeights[next] * 0.45f).coerceAtLeast(0.001f)
+                val avgCos = (binCosH[bestBin] + binCosH[prev] * 0.45f + binCosH[next] * 0.45f) / totalW
+                val avgSin = (binSinH[bestBin] + binSinH[prev] * 0.45f + binSinH[next] * 0.45f) / totalW
+
+                var dominantHue = Math.toDegrees( kotlin.math.atan2(avgSin.toDouble(), avgCos.toDouble()) ).toFloat()
+                if (dominantHue < 0f) dominantHue += 360f
+
+                val rawSat = (binSatSum[bestBin] + binSatSum[prev] * 0.45f + binSatSum[next] * 0.45f) / totalW
+                val rawVal = (binValSum[bestBin] + binValSum[prev] * 0.45f + binValSum[next] * 0.45f) / totalW
+
+                // الحفاظ على حيوية اللون وإضاءته الحقيقية ليظهر كل لون بوضوح كما في FlixVision
+                val finalSat = (rawSat * 1.12f).coerceIn(0.48f, 0.92f)
+                val finalVal = (rawVal * 0.85f).coerceIn(0.42f, 0.64f)
+
+                val leftBrightColor = Color.HSVToColor(floatArrayOf(dominantHue, finalSat, finalVal))
+                // جعل اللون الأيمن غامقاً جداً ومشتقاً من نفس درجة الغلاف بدلاً من الأسود الميت
+                val rightDarkColor = Color.HSVToColor(floatArrayOf(dominantHue, (finalSat * 0.85f).coerceAtMost(0.80f), 0.05f))
 
                 leftBrightColor to rightDarkColor
+            } else if (fallbackWeight > 0.01f) {
+                // للأغلفة ذات الطابع الرمادي أو الكلاسيكي (Noir / B&W)
+                val avgColor = Color.rgb(
+                    (fallbackR / fallbackWeight).toInt().coerceIn(0, 255),
+                    (fallbackG / fallbackWeight).toInt().coerceIn(0, 255),
+                    (fallbackB / fallbackWeight).toInt().coerceIn(0, 255)
+                )
+                Color.colorToHSV(avgColor, hsv)
+                hsv[1] = hsv[1].coerceIn(0.15f, 0.45f)
+                hsv[2] = hsv[2].coerceIn(0.35f, 0.52f)
+                val leftBrightColor = Color.HSVToColor(hsv)
+                leftBrightColor to "#040508".toColorInt()
+            } else {
+                "#283646".toColorInt() to "#000000".toColorInt()
             }
         } catch (_: Exception) {
             "#283646".toColorInt() to "#000000".toColorInt()
@@ -625,21 +705,13 @@ class ContentDetailActivity : AppCompatActivity() {
         moviePlayerController.setDynamicThemeColor(targetLeftColor)
 
         val evaluator = ArgbEvaluator()
-        val startLeft = FLIX_INITIAL_LEFT_COLOR
-        val startRight = FLIX_INITIAL_RIGHT_COLOR
-
-        currentLeftBrightColor = startLeft
-        currentRightDarkColor = startRight
-        fullScreenAmbientDrawable.updateColors(
-            leftBright = startLeft,
-            rightDark = startRight,
-            extractionFraction = 0f
-        )
+        val startLeft = currentLeftBrightColor
+        val startRight = currentRightDarkColor
 
         colorExtractionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             startDelay = 0L
-            duration = 2000L
-            interpolator = DecelerateInterpolator(1.3f)
+            duration = 950L
+            interpolator = DecelerateInterpolator(1.4f)
             addUpdateListener { va ->
                 val f = va.animatedFraction
                 val liveLeft = evaluator.evaluate(f, startLeft, targetLeftColor) as Int
@@ -890,7 +962,6 @@ class ContentDetailActivity : AppCompatActivity() {
      * فتح المشغل بدون تحريك alpha على حاوية الـ SurfaceView لمنع تجمّد الصورة نهائياً
      */
     private fun activateInlinePlayerSmoothly() {
-        val alreadyPrepared = playerEngine.player != null && resolvedDirectStreams.isNotEmpty()
         isPlayerModeActive = true
         fullScreenAmbientDrawable.setPlayerModeActive(true)
 
@@ -905,20 +976,21 @@ class ContentDetailActivity : AppCompatActivity() {
         pContainer.visibility = View.VISIBLE
         detailsScrollView.smoothScrollTo(0, 0)
 
-        if (alreadyPrepared && moviePlayerController.playerView.player != null) {
-            moviePlayerController.setLoadingState(false)
-            playerEngine.resume()
-            moviePlayerController.updatePlayPauseVectorIcon(true)
-            moviePlayerController.showControlsWithFade()
-        } else if (resolvedDirectStreams.isNotEmpty()) {
-            moviePlayerController.setLoadingState(true)
-            playerEngine.playSources(
-                moviePlayerController.playerView,
-                resolvedDirectStreams.toList(),
-                0,
-                pendingResumePositionMs
-            )
-            playerEngine.resume()
+        if (resolvedDirectStreams.isNotEmpty()) {
+            moviePlayerController.playerView.onResume()
+            if (playerEngine.player != null && moviePlayerController.playerView.player == playerEngine.player) {
+                moviePlayerController.setLoadingState(false)
+                playerEngine.resume()
+                moviePlayerController.updatePlayPauseVectorIcon(true)
+            } else {
+                moviePlayerController.setLoadingState(true)
+                playerEngine.playSources(
+                    moviePlayerController.playerView,
+                    resolvedDirectStreams.toList(),
+                    0,
+                    pendingResumePositionMs
+                )
+            }
         } else {
             moviePlayerController.setLoadingState(true)
             val vod = currentVod ?: return
@@ -1281,12 +1353,41 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
+    private fun upgradeTmdbImageQuality(url: String, preferredSize: String = "w1280"): String {
+        if (!url.contains("image.tmdb.org/t/p/")) return url
+        return url.replace(Regex("/t/p/w\\d+/"), "/t/p/$preferredSize/")
+    }
+
+    private fun renderCoverUrlAndExtractPalette(vodId: String, coverUrl: String) {
+        if (coverUrl.isEmpty()) return
+        val cacheKey = "${vodId}_${coverUrl.hashCode()}"
+        val cachedPalette = paletteCache[cacheKey]
+
+        Glide.with(this)
+            .asBitmap()
+            .load(coverUrl)
+            .diskCacheStrategy(DiskCacheStrategy.ALL)
+            .dontAnimate()
+            .into(object : CustomTarget<Bitmap>() {
+                override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
+                    if (currentVod?.id != vodId || isDestroyed || isFinishing) return
+                    ivHeroBackdrop.setImageBitmap(resource)
+                    val extracted = cachedPalette ?: extractFlixVisionPalette(resource).also {
+                        paletteCache[cacheKey] = it
+                    }
+                    startCoverColorExtractionAnimation(extracted.first, extracted.second)
+                }
+
+                override fun onLoadCleared(placeholder: Drawable?) {}
+            })
+    }
+
     /**
-     * تفريغ صورة الغلاف السابقة فوراً (ivHeroBackdrop.setImageDrawable(null)) حتى لا تبقى صورة الفيلم القديم عالقة
+     * جلب غلاف داخلي مختلف لصفحة التفاصيل (مثل FlixVision في parseMovie: يستعمل backdrop_path w1280 أو غلاف بديل من TMDB)
+     * حتى يتغير الغلاف عن البوستر الخارجي ويتحدث اللون الديناميكي معه
      */
     private fun loadPosterAndExtractPalette(vod: VodItem) {
-        val targetUrl = vod.posterUrl.ifEmpty { vod.backdropUrl }
-
+        coverResolveJob?.cancel()
         colorExtractionAnimator?.cancel()
         ivHeroBackdrop.setImageDrawable(null)
         fullScreenAmbientDrawable.updateColors(
@@ -1295,29 +1396,90 @@ class ContentDetailActivity : AppCompatActivity() {
             extractionFraction = 0f
         )
 
-        if (targetUrl.isEmpty()) return
+        val outsideFileName = vod.posterUrl.substringAfterLast("/", "")
+        val cachedDistinctCover = distinctCoverCache[vod.id]
 
-        val cachedPalette = paletteCache[vod.id]
+        val hasDistinctBackdrop = vod.backdropUrl.isNotEmpty() &&
+                !vod.backdropUrl.endsWith(outsideFileName)
 
-        Glide.with(this)
-            .asBitmap()
-            .load(targetUrl)
-            .diskCacheStrategy(DiskCacheStrategy.ALL)
-            .dontAnimate()
-            .into(object : CustomTarget<Bitmap>() {
-                override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
-                    if (currentVod?.id != vod.id) return
-                    ivHeroBackdrop.setImageBitmap(resource)
-                    val extracted = cachedPalette ?: extractFlixVisionPalette(resource).also {
-                        paletteCache[vod.id] = it
+        val initialCoverUrl = when {
+            !cachedDistinctCover.isNullOrEmpty() -> cachedDistinctCover
+            hasDistinctBackdrop -> upgradeTmdbImageQuality(vod.backdropUrl, "w1280")
+            vod.posterUrl.isNotEmpty() -> upgradeTmdbImageQuality(vod.posterUrl, "w780")
+            else -> vod.backdropUrl
+        }
+
+        if (initialCoverUrl.isNotEmpty()) {
+            renderCoverUrlAndExtractPalette(vod.id, initialCoverUrl)
+        }
+
+        // إذا لم يكن هناك غلاف داخلي مختلف بعد، نجلبه من TMDB مباشرة ليظهر غلاف مختلف عن البوستر الخارجي
+        if (cachedDistinctCover.isNullOrEmpty() && !hasDistinctBackdrop) {
+            coverResolveJob = lifecycleScope.launch {
+                val fetchedCover = withContext(Dispatchers.IO) {
+                    fetchDistinctTmdbCoverUrl(vod.id, vod.isSeries, outsideFileName)
+                }
+                if (!fetchedCover.isNullOrEmpty() && currentVod?.id == vod.id) {
+                    distinctCoverCache[vod.id] = fetchedCover
+                    renderCoverUrlAndExtractPalette(vod.id, fetchedCover)
+                }
+            }
+        }
+    }
+
+    private fun fetchDistinctTmdbCoverUrl(
+        rawId: String,
+        isSeries: Boolean,
+        outsideFileName: String
+    ): String? {
+        val cleanId = rawId.filter { it.isDigit() }
+        if (cleanId.isEmpty()) return null
+        val typePath = if (isSeries) "tv" else "movie"
+        val apiUrl = "https://api.themoviedb.org/3/$typePath/$cleanId?api_key=$TMDB_API_KEY&append_to_response=images"
+
+        return try {
+            val conn = (URL(apiUrl).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 6000
+                readTimeout = 6000
+            }
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+
+            val json = JSONObject(body)
+
+            // 1. كما يفعل FlixVision في JsonUtils.parseMovie: أخذ backdrop_path بدقة w1280
+            val backdropPath = json.optString("backdrop_path", "").trim()
+            if (backdropPath.isNotEmpty() && backdropPath != "null" && !backdropPath.endsWith(outsideFileName)) {
+                return "https://image.tmdb.org/t/p/w1280$backdropPath"
+            }
+
+            // 2. البحث في قائمة backdrops أو posters الإضافية عن صورة مختلفة عن البوستر الخارجي
+            val imagesObj = json.optJSONObject("images")
+            if (imagesObj != null) {
+                val backdrops = imagesObj.optJSONArray("backdrops")
+                if (backdrops != null) {
+                    for (i in 0 until backdrops.length()) {
+                        val filePath = backdrops.optJSONObject(i)?.optString("file_path").orEmpty()
+                        if (filePath.isNotEmpty() && !filePath.endsWith(outsideFileName)) {
+                            return "https://image.tmdb.org/t/p/w1280$filePath"
+                        }
                     }
-                    startCoverColorExtractionAnimation(extracted.first, extracted.second)
                 }
-
-                override fun onLoadCleared(placeholder: Drawable?) {
-                    ivHeroBackdrop.setImageDrawable(null)
+                val posters = imagesObj.optJSONArray("posters")
+                if (posters != null) {
+                    for (i in 0 until posters.length()) {
+                        val filePath = posters.optJSONObject(i)?.optString("file_path").orEmpty()
+                        if (filePath.isNotEmpty() && !filePath.endsWith(outsideFileName)) {
+                            return "https://image.tmdb.org/t/p/w780$filePath"
+                        }
+                    }
                 }
-            })
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun loadVodItemIntoScreen(
@@ -1339,7 +1501,7 @@ class ContentDetailActivity : AppCompatActivity() {
 
         isPlayerModeActive = false
         playerEngine.pauseAndReleaseSocket()
-        moviePlayerController.playerView.player = null
+
         switchToPosterShowcaseMode(saveCurrentPlayerPos = false, animateTransition = false)
 
         currentVod = vod
@@ -1664,13 +1826,21 @@ class ContentDetailActivity : AppCompatActivity() {
 
     private fun createWatchTogetherRoom() {
         val vod = currentVod ?: return
-        val streamUrl = resolvedDirectStreams.firstOrNull()?.url ?: providerTargets.firstOrNull()?.url ?: return
+
+        // نجبدو الرابط إذا كان واجد، وإذا مازال ما وجدش ندخلو للغرفة فوراً وهي تكمل تجبدو وحدها!
+        val resolvedStream = resolvedDirectStreams.firstOrNull()
+        val providerStream = providerTargets.firstOrNull { it.isDirectStream }
+        val directStream = resolvedStream?.url ?: providerStream?.url ?: ""
+
+        val refererUrl = providerTargets.getOrNull(currentProviderIndex)?.url ?: directStream
+        val customUa = SessionManager.CUSTOM_USER_AGENT
+
         lifecycleScope.launch {
             val (ok, codeOrErr) = OttRepository.createWatchRoom(
                 deviceId = SessionManager.getDeviceId(this@ContentDetailActivity),
                 userName = SessionManager.getUserName(this@ContentDetailActivity),
-                roomName = vod.title.take(25),
-                roomIcon = "VOD",
+                roomName = "غرفة ${vod.title.take(22)}",
+                roomIcon = "🎬",
                 isPrivate = false,
                 password = "",
                 allowGuestsControl = true,
@@ -1678,16 +1848,22 @@ class ContentDetailActivity : AppCompatActivity() {
                 streamId = vod.id,
                 contentTitle = vod.title,
                 contentPoster = vod.posterUrl,
-                streamUrl = streamUrl
+                streamUrl = directStream
             )
-            if (ok) {
-                playerEngine.pauseAndReleaseSocket()
-                startActivity(Intent(this@ContentDetailActivity, WatchRoomActivity::class.java).apply {
-                    putExtra(WatchRoomActivity.EXTRA_ROOM_CODE, codeOrErr)
-                })
-            } else {
-                Toast.makeText(this@ContentDetailActivity, codeOrErr, Toast.LENGTH_LONG).show()
-            }
+
+            playerEngine.pauseAndReleaseSocket()
+
+            startActivity(Intent(this@ContentDetailActivity, WatchRoomActivity::class.java).apply {
+                putExtra(WatchRoomActivity.EXTRA_ROOM_CODE, if (ok) codeOrErr else "")
+                putExtra(WatchRoomActivity.EXTRA_ROOM_NAME, "غرفة ${vod.title.take(22)}")
+                putExtra(WatchRoomActivity.EXTRA_STREAM_URL, directStream)
+                putExtra(WatchRoomActivity.EXTRA_STREAM_TITLE, vod.title)
+                putExtra(WatchRoomActivity.EXTRA_IS_HOST, true)
+                putExtra("direct_movie_launch", true)
+                putExtra("stream_id", vod.id)
+                putExtra("stream_referer", refererUrl)
+                putExtra("stream_ua", customUa)
+            })
         }
     }
 
@@ -1715,6 +1891,7 @@ class ContentDetailActivity : AppCompatActivity() {
         detailsFetchJob?.cancel()
         streamFetchJob?.cancel()
         snifferTimeoutJob?.cancel()
+        coverResolveJob?.cancel()
         colorExtractionAnimator?.cancel()
         moviePlayerController.release()
         headlessSnifferWebView.destroy()
@@ -1983,76 +2160,73 @@ object VectorIcons {
         }
     }
 
-    /**
-     * أيقونة السهم الدائري للتقديم والترجيع مكتوب داخلها "15s" بوضوح
-     */
     fun createCircularSeekArrowIcon(context: Context, isForward: Boolean): Drawable {
         val d = context.resources.displayMetrics.density
-        val sizePx = (36 * d).toInt()
+        val sizePx = (38 * d).toInt()
         return object : Drawable() {
-            private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 style = Paint.Style.STROKE
-                strokeWidth = 2.1f * d
+                strokeWidth = 2.2f * d
                 strokeCap = Paint.Cap.ROUND
             }
-            private val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            private val headPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
-                style = Paint.Style.FILL
+                style = Paint.Style.STROKE
+                strokeWidth = 2.2f * d
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
             }
-            private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            private val numPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
-                textSize = 8.5f * d
-                typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                textSize = 11.2f * d
+                typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
                 textAlign = Paint.Align.CENTER
             }
 
             override fun draw(canvas: Canvas) {
-                val b = bounds
-                val w = b.width().toFloat()
-                val h = b.height().toFloat()
-                val pad = w * 0.10f
-                val rect = RectF(pad, pad, w - pad, h - pad)
+                val w = bounds.width().toFloat()
+                val h = bounds.height().toFloat()
+                val pad = w * 0.12f
+                val arcRect = RectF(pad, pad + h * 0.04f, w - pad, h - pad + h * 0.04f)
 
                 if (isForward) {
-                    canvas.drawArc(rect, -85f, 295f, false, arcPaint)
-                    val tipX = w * 0.68f
-                    val tipY = pad
-                    val arrow = Path().apply {
-                        moveTo(w * 0.46f, tipY - w * 0.12f)
-                        lineTo(tipX, tipY)
-                        lineTo(w * 0.46f, tipY + w * 0.12f)
-                        close()
+                    canvas.drawArc(arcRect, -65f, 295f, false, ringPaint)
+                    val cx = w * 0.56f
+                    val cy = pad + h * 0.04f
+                    val head = Path().apply {
+                        moveTo(cx - w * 0.10f, cy - h * 0.09f)
+                        lineTo(cx + w * 0.04f, cy)
+                        lineTo(cx - w * 0.10f, cy + h * 0.09f)
                     }
-                    canvas.drawPath(arrow, arrowPaint)
+                    canvas.drawPath(head, headPaint)
                 } else {
-                    canvas.drawArc(rect, -95f, -295f, false, arcPaint)
-                    val tipX = w * 0.32f
-                    val tipY = pad
-                    val arrow = Path().apply {
-                        moveTo(w * 0.54f, tipY - w * 0.12f)
-                        lineTo(tipX, tipY)
-                        lineTo(w * 0.54f, tipY + w * 0.12f)
-                        close()
+                    canvas.drawArc(arcRect, -115f, -295f, false, ringPaint)
+                    val cx = w * 0.44f
+                    val cy = pad + h * 0.04f
+                    val head = Path().apply {
+                        moveTo(cx + w * 0.10f, cy - h * 0.09f)
+                        lineTo(cx - w * 0.04f, cy)
+                        lineTo(cx + w * 0.10f, cy + h * 0.09f)
                     }
-                    canvas.drawPath(arrow, arrowPaint)
+                    canvas.drawPath(head, headPaint)
                 }
 
-                val textY = (h / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f) + (0.5f * d)
-                canvas.drawText("15s", w / 2f, textY, textPaint)
+                val textY = (h * 0.54f) - ((numPaint.descent() + numPaint.ascent()) / 2f)
+                canvas.drawText("15", w / 2f, textY, numPaint)
             }
 
             override fun getIntrinsicWidth(): Int = sizePx
             override fun getIntrinsicHeight(): Int = sizePx
             override fun setAlpha(alpha: Int) {
-                arcPaint.alpha = alpha
-                arrowPaint.alpha = alpha
-                textPaint.alpha = alpha
+                ringPaint.alpha = alpha
+                headPaint.alpha = alpha
+                numPaint.alpha = alpha
             }
             override fun setColorFilter(colorFilter: ColorFilter?) {
-                arcPaint.colorFilter = colorFilter
-                arrowPaint.colorFilter = colorFilter
-                textPaint.colorFilter = colorFilter
+                ringPaint.colorFilter = colorFilter
+                headPaint.colorFilter = colorFilter
+                numPaint.colorFilter = colorFilter
             }
             @Deprecated("Deprecated in Java")
             override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
@@ -2444,23 +2618,38 @@ object VectorIcons {
 
     fun createSmallServerStackIcon(context: Context, tintColor: Int): Drawable {
         val d = context.resources.displayMetrics.density
-        val sizePx = (13 * d).toInt()
+        val sizePx = (18 * d).toInt()
         return object : Drawable() {
-            private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = tintColor
                 style = Paint.Style.STROKE
-                strokeWidth = 1.4f * d
+                strokeWidth = 1.6f * d
             }
+            private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tintColor
+                style = Paint.Style.FILL
+            }
+
             override fun draw(canvas: Canvas) {
                 val w = bounds.width().toFloat()
                 val h = bounds.height().toFloat()
-                canvas.drawRoundRect(RectF(w * 0.12f, h * 0.16f, w * 0.88f, h * 0.45f), w * 0.1f, w * 0.1f, paint)
-                canvas.drawRoundRect(RectF(w * 0.12f, h * 0.55f, w * 0.88f, h * 0.84f), w * 0.1f, w * 0.1f, paint)
+                val r = w * 0.12f
+                canvas.drawRoundRect(RectF(w * 0.10f, h * 0.15f, w * 0.90f, h * 0.45f), r, r, strokePaint)
+                canvas.drawCircle(w * 0.28f, h * 0.30f, w * 0.06f, dotPaint)
+                canvas.drawRoundRect(RectF(w * 0.10f, h * 0.55f, w * 0.90f, h * 0.85f), r, r, strokePaint)
+                canvas.drawCircle(w * 0.28f, h * 0.70f, w * 0.06f, dotPaint)
             }
+
             override fun getIntrinsicWidth(): Int = sizePx
             override fun getIntrinsicHeight(): Int = sizePx
-            override fun setAlpha(alpha: Int) { paint.alpha = alpha }
-            override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+            override fun setAlpha(alpha: Int) {
+                strokePaint.alpha = alpha
+                dotPaint.alpha = alpha
+            }
+            override fun setColorFilter(colorFilter: ColorFilter?) {
+                strokePaint.colorFilter = colorFilter
+                dotPaint.colorFilter = colorFilter
+            }
             @Deprecated("Deprecated in Java")
             override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
         }

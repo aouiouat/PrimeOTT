@@ -7,7 +7,6 @@ import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -20,6 +19,7 @@ import android.util.Rational
 import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
@@ -122,15 +122,16 @@ class MovieInlinePlayerController(
     private lateinit var btnSkipIntro: LinearLayout
 
     private lateinit var gestureIndicatorCard: LinearLayout
-    private lateinit var fullscreenLeftBrightnessBar: LinearLayout
-    private lateinit var pbSideBrightness: ProgressBar
-    private lateinit var tvSideBrightnessPct: TextView
-    private lateinit var fullscreenRightVolumeBar: LinearLayout
-    private lateinit var pbSideVolume: ProgressBar
-    private lateinit var tvSideVolumePct: TextView
     private lateinit var ivGestureIcon: ImageView
     private lateinit var pbGestureLevel: ProgressBar
     private lateinit var tvGesturePercent: TextView
+
+    private var fullscreenLeftBrightnessBar: LinearLayout? = null
+    private var pbSideBrightness: ProgressBar? = null
+    private var tvSideBrightnessPct: TextView? = null
+    private var fullscreenRightVolumeBar: LinearLayout? = null
+    private var pbSideVolume: ProgressBar? = null
+    private var tvSideVolumePct: TextView? = null
 
     private lateinit var tvElapsed: TextView
     private lateinit var seekBar: SeekBar
@@ -155,7 +156,6 @@ class MovieInlinePlayerController(
     private var hasRenderedInitialFrameForStream: Boolean = false
     private var currentPlaybackSpeed: Float = 1.0f
 
-    // اللون الديناميكي المأخوذ من ثيم الغلاف لتأثير ضغط الأزرار
     private var dynamicThemeAccentColor: Int = "#E50914".toColorInt()
 
     private var isCurrentMediaSeries: Boolean = false
@@ -202,7 +202,6 @@ class MovieInlinePlayerController(
                 setBufferingState(false)
                 scheduleAutoHideIfPlaying()
             } else if (!isPlaying) {
-                // عند الإيقاف المؤقت لا نخفي الأزرار تلقائياً
                 controlsOverlay.removeCallbacks(autoHideRunnable)
             }
         }
@@ -230,7 +229,6 @@ class MovieInlinePlayerController(
     }
 
     private val autoHideRunnable = Runnable {
-        // لا نخفي التحكم أبداً إذا كان الفيديو ما يزال في طور التحميل (Buffering)
         if (!isBufferingNow && attachedPlayer?.isPlaying == true && !isUserSeeking) {
             hideControlsSmoothly()
         }
@@ -280,6 +278,13 @@ class MovieInlinePlayerController(
         pbGestureLevel = rootPlayerFrame.findViewById(R.id.pbGestureLevel)
         tvGesturePercent = rootPlayerFrame.findViewById(R.id.tvGesturePercent)
         btnSkipIntro = rootPlayerFrame.findViewById(R.id.btnSkipIntro)
+
+        fullscreenLeftBrightnessBar = rootPlayerFrame.findViewById(R.id.fullscreenLeftBrightnessBar)
+        pbSideBrightness = rootPlayerFrame.findViewById(R.id.pbSideBrightness)
+        tvSideBrightnessPct = rootPlayerFrame.findViewById(R.id.tvSideBrightnessPct)
+        fullscreenRightVolumeBar = rootPlayerFrame.findViewById(R.id.fullscreenRightVolumeBar)
+        pbSideVolume = rootPlayerFrame.findViewById(R.id.pbSideVolume)
+        tvSideVolumePct = rootPlayerFrame.findViewById(R.id.tvSideVolumePct)
 
         controlsOverlay = rootPlayerFrame.findViewById(R.id.controlsOverlay)
         btnMinimizePlayer = rootPlayerFrame.findViewById(R.id.btnMinimizePlayer)
@@ -339,8 +344,6 @@ class MovieInlinePlayerController(
         rootPlayerFrame.findViewById<ImageView>(R.id.ivHoldFastIcon)
             .setImageDrawable(VectorIcons.createFastForwardDoubleArrowIcon(activity, Color.WHITE))
 
-        gestureIndicatorCard.background = makeRoundedBg("#E010131C".toColorInt(), 20f, "#40FFFFFF".toColorInt(), 1f)
-
         btnSkipIntro.background = makeRoundedBg("#E612151E".toColorInt(), 18f, "#CCFFFFFF".toColorInt(), 1.1f)
         rootPlayerFrame.findViewById<ImageView>(R.id.ivSkipIntroArrow)
             .setImageDrawable(VectorIcons.createSkipNextIcon(activity, Color.WHITE))
@@ -350,30 +353,29 @@ class MovieInlinePlayerController(
             if (isFullscreen) applyFullscreenState(false) else onMinimizeToCover()
         }
 
-        fullscreenLeftBrightnessBar = rootPlayerFrame.findViewById(R.id.fullscreenLeftBrightnessBar)
-        pbSideBrightness = rootPlayerFrame.findViewById(R.id.pbSideBrightness)
-        tvSideBrightnessPct = rootPlayerFrame.findViewById(R.id.tvSideBrightnessPct)
-        fullscreenRightVolumeBar = rootPlayerFrame.findViewById(R.id.fullscreenRightVolumeBar)
-        pbSideVolume = rootPlayerFrame.findViewById(R.id.pbSideVolume)
-        tvSideVolumePct = rootPlayerFrame.findViewById(R.id.tvSideVolumePct)
+        // نفس التصميم الزجاجي الشفاف (Glass) الخاص بأزرار المشغل لمؤشرات الصوت والإضاءة
+        val glassIndicatorBg = { makeRoundedBg("#2EFFFFFF".toColorInt(), 18f, "#4DFFFFFF".toColorInt(), 0.85f) }
+        fullscreenLeftBrightnessBar?.background = glassIndicatorBg()
+        fullscreenRightVolumeBar?.background = glassIndicatorBg()
+        gestureIndicatorCard.background = glassIndicatorBg()
 
-        fullscreenLeftBrightnessBar.background = makeRoundedBg("#B310131C".toColorInt(), 18f, "#33FFFFFF".toColorInt(), 1f)
-        fullscreenRightVolumeBar.background = makeRoundedBg("#B310131C".toColorInt(), 18f, "#33FFFFFF".toColorInt(), 1f)
-        rootPlayerFrame.findViewById<ImageView>(R.id.ivSideBrightnessIcon)
-            .setImageDrawable(VectorIcons.createBrightnessSunIcon(activity, Color.WHITE))
-        rootPlayerFrame.findViewById<ImageView>(R.id.ivSideVolumeIcon)
-            .setImageDrawable(VectorIcons.createAudioSpeakerIcon(activity, Color.WHITE))
+        rootPlayerFrame.findViewById<ImageView?>(R.id.ivSideBrightnessIcon)
+            ?.setImageDrawable(VectorIcons.createBrightnessSunIcon(activity, Color.WHITE))
+        rootPlayerFrame.findViewById<ImageView?>(R.id.ivSideVolumeIcon)
+            ?.setImageDrawable(VectorIcons.createAudioSpeakerIcon(activity, Color.WHITE))
 
-        btnTopServerOnly.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.9f)
-        btnTopQualityOnly.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.9f)
+        // زر السيرفر: أيقونة فقط بدون أي كتابة وبنفس الخلفية الزجاجية
+        btnTopServerOnly.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
+        btnTopServerOnly.text = ""
         val srvIcon = VectorIcons.createSmallServerStackIcon(activity, Color.WHITE).apply {
             setBounds(0, 0, intrinsicWidth, intrinsicHeight)
         }
-        val qIcon = VectorIcons.createSmallQualitySparkIcon(activity, Color.WHITE).apply {
-            setBounds(0, 0, intrinsicWidth, intrinsicHeight)
-        }
         btnTopServerOnly.setCompoundDrawables(srvIcon, null, null, null)
-        btnTopQualityOnly.setCompoundDrawables(qIcon, null, null, null)
+
+        // زر الجودة: يكتب فقط (HD / FHD / 4K) بتصميم زجاجي نظيف
+        btnTopQualityOnly.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
+        btnTopQualityOnly.setCompoundDrawables(null, null, null, null)
+        btnTopQualityOnly.visibility = View.VISIBLE
 
         btnTopSubtitles.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
         btnTopSubtitles.setImageDrawable(VectorIcons.createSubtitlesCcIcon(activity, Color.WHITE))
@@ -392,7 +394,6 @@ class MovieInlinePlayerController(
 
         updateTouchCirclesThemeColor(dynamicThemeAccentColor)
 
-        // أيقونات التقديم والترجيع مكتوب داخلها 15s بوضوح
         btnRewind15.setImageDrawable(VectorIcons.createCircularSeekArrowIcon(activity, isForward = false))
         btnCenterPlayPause.setImageDrawable(VectorIcons.createPlayPauseIcon(activity, isPlaying = true))
         btnForward15.setImageDrawable(VectorIcons.createCircularSeekArrowIcon(activity, isForward = true))
@@ -432,9 +433,6 @@ class MovieInlinePlayerController(
         animateSubtitlePositionForControls(controlsVisible = true, animate = false)
     }
 
-    /**
-     * تحديث لون الدوائر التفاعلية (Play/Pause و 15s) وشريط التقدم ليتطابق مع لون الثيم الديناميكي تحت المشغل
-     */
     fun setDynamicThemeColor(themeColor: Int) {
         val vividAccent = ColorUtils.blendARGB(themeColor, Color.WHITE, 0.15f)
         dynamicThemeAccentColor = vividAccent
@@ -461,7 +459,6 @@ class MovieInlinePlayerController(
         if (buffering) {
             btnCenterPlayPause.visibility = View.INVISIBLE
             centerBufferingSpinner.visibility = View.VISIBLE
-            // إبقاء واجهة التحكم والـ Loader ظاهرة طوال فترة التحميل وعدم إخفائها
             controlsOverlay.removeCallbacks(autoHideRunnable)
             if (!controlsOverlay.isVisible && !isInPipMode && !isControlsLocked) {
                 controlsOverlay.alpha = 1f
@@ -477,11 +474,10 @@ class MovieInlinePlayerController(
     fun onFirstFrameRendered() {
         setBufferingState(false)
         updatePlayPauseVectorIcon(true)
-        // نخفي الأزرار تلقائياً فقط عند بداية اشتغال الفيلم لأول مرة، وليس عند التقديم بـ 15s
         if (!hasRenderedInitialFrameForStream) {
             hasRenderedInitialFrameForStream = true
             controlsOverlay.removeCallbacks(autoHideRunnable)
-            controlsOverlay.postDelayed(autoHideRunnable, 1200L)
+            controlsOverlay.postDelayed(autoHideRunnable, 1400L)
         }
     }
 
@@ -541,6 +537,7 @@ class MovieInlinePlayerController(
                 updatePlayPauseVectorIcon(false)
                 controlsOverlay.removeCallbacks(autoHideRunnable)
             } else {
+                setBufferingState(false)
                 engine.resume()
                 updatePlayPauseVectorIcon(true)
                 resetAutoHide()
@@ -758,11 +755,11 @@ class MovieInlinePlayerController(
         pbGestureLevel.progress = clamped
         tvGesturePercent.text = "$clamped%"
         if (isBrightness) {
-            pbSideBrightness.progress = clamped
-            tvSideBrightnessPct.text = "$clamped%"
+            pbSideBrightness?.progress = clamped
+            tvSideBrightnessPct?.text = "$clamped%"
         } else {
-            pbSideVolume.progress = clamped
-            tvSideVolumePct.text = "$clamped%"
+            pbSideVolume?.progress = clamped
+            tvSideVolumePct?.text = "$clamped%"
         }
         if (!gestureIndicatorCard.isVisible) {
             gestureIndicatorCard.alpha = 1f
@@ -887,7 +884,6 @@ class MovieInlinePlayerController(
                 background = if (isSel) makeRoundedBg("#26FFFFFF".toColorInt(), 10f, "#55FFFFFF".toColorInt(), 1f) else null
                 setPadding(dp(12), dp(10), dp(12), dp(10))
                 setOnClickListener {
-                    btnTopServerOnly.text = srv.label.take(12)
                     selectedQualityHeight = null
                     onServerSelected(idx, srv)
                     dialog.dismiss()
@@ -916,9 +912,6 @@ class MovieInlinePlayerController(
         dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    /**
-     * نافذة اختيار الجودة مع قفل صارم للجودة المختارة (4K / 1080p / 720p) لكي لا تعود لـ 720p
-     */
     private fun showQualityOnlyPopup(engine: PrimePlayerEngine) {
         val dialog = Dialog(activity)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -969,7 +962,7 @@ class MovieInlinePlayerController(
                         .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
                         .build()
                 }
-                btnTopQualityOnly.text = detectedBadge
+                btnTopQualityOnly.text = formatShortQualityLogo(detectedBadge)
                 dialog.dismiss()
             }
         }
@@ -985,8 +978,8 @@ class MovieInlinePlayerController(
             }
             val shortBadge = when {
                 qTrack.height >= 2160 -> "4K"
-                qTrack.height >= 1080 -> "1080p"
-                qTrack.height >= 720 -> "720p"
+                qTrack.height >= 1080 -> "FHD"
+                qTrack.height >= 720 -> "HD"
                 else -> "${qTrack.height}p"
             }
             val isSel = selectedQualityHeight == qTrack.height
@@ -1000,14 +993,6 @@ class MovieInlinePlayerController(
                 setOnClickListener {
                     selectedQualityHeight = qTrack.height
                     engine.selectVideoQualityHeight(qTrack.height)
-                    // قفل الحد الأدنى والأعلى للجودة على ExoPlayer مباشرة لضمان عدم الرجوع لـ 720p
-                    engine.player?.let { exo ->
-                        exo.trackSelectionParameters = exo.trackSelectionParameters
-                            .buildUpon()
-                            .setMinVideoSize(qTrack.width.coerceAtLeast(1), qTrack.height)
-                            .setMaxVideoSize(qTrack.width.coerceAtLeast(3840), qTrack.height)
-                            .build()
-                    }
                     btnTopQualityOnly.text = shortBadge
                     dialog.dismiss()
                 }
@@ -1150,6 +1135,20 @@ class MovieInlinePlayerController(
         val btnResetSync = root.findViewById<TextView>(R.id.btnResetSync)
         val btnPlusHalf = root.findViewById<TextView>(R.id.btnPlusHalf)
 
+        fun flashTap(v: TextView, isWhiteRest: Boolean = false, action: () -> Unit) {
+            v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            v.animate().scaleX(0.90f).scaleY(0.90f).setDuration(65L).withEndAction {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(95L).start()
+            }.start()
+            v.background = makeRoundedBg(Color.WHITE, 8f)
+            v.setTextColor("#0E1015".toColorInt())
+            v.postDelayed({
+                v.background = makeRoundedBg(if (isWhiteRest) Color.WHITE else "#24FFFFFF".toColorInt(), 8f)
+                v.setTextColor(if (isWhiteRest) "#0E1015".toColorInt() else Color.WHITE)
+            }, 130L)
+            action()
+        }
+
         tabTracksBtn.background = makeRoundedBg(Color.WHITE, 10f)
         btnClosePopup.background = makeRoundedBg("#1FFFFFFF".toColorInt(), 16f)
         btnClosePopup.setOnClickListener { dialog.dismiss() }
@@ -1202,6 +1201,7 @@ class MovieInlinePlayerController(
                         marginEnd = dp(5)
                     }
                     setOnClickListener {
+                        vibrateTap(this)
                         subtitleTextSizeSp = spVal
                         saveAndApplySubtitleStyle()
                         rebuildSizePills()
@@ -1237,6 +1237,7 @@ class MovieInlinePlayerController(
                         marginEnd = dp(5)
                     }
                     setOnClickListener {
+                        vibrateTap(this)
                         subtitleBgAlpha = alphaVal
                         saveAndApplySubtitleStyle()
                         rebuildBgPills()
@@ -1247,26 +1248,11 @@ class MovieInlinePlayerController(
         }
         rebuildBgPills()
 
-        // التحكم في رفع وإنزال الترجمة (Vertical Position)
         positionRow.background = makeRoundedBg("#14FFFFFF".toColorInt(), 12f, "#28FFFFFF".toColorInt(), 1f)
         tvPositionStatus.text = String.format(Locale.US, "Position: %+ddp", subtitleExtraLiftDp)
         btnSubPosDown.background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
         btnSubPosReset.background = makeRoundedBg(Color.WHITE, 8f)
         btnSubPosUp.background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
-
-        fun flashTap(v: TextView, isWhiteRest: Boolean = false, action: () -> Unit) {
-            v.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
-            v.animate().scaleX(0.90f).scaleY(0.90f).setDuration(65L).withEndAction {
-                v.animate().scaleX(1f).scaleY(1f).setDuration(95L).start()
-            }.start()
-            v.background = makeRoundedBg(Color.WHITE, 8f)
-            v.setTextColor("#0E1015".toColorInt())
-            v.postDelayed({
-                v.background = makeRoundedBg(if (isWhiteRest) Color.WHITE else "#24FFFFFF".toColorInt(), 8f)
-                v.setTextColor(if (isWhiteRest) "#0E1015".toColorInt() else Color.WHITE)
-            }, 130L)
-            action()
-        }
 
         btnSubPosDown.setOnClickListener {
             flashTap(btnSubPosDown) {
@@ -1290,7 +1276,6 @@ class MovieInlinePlayerController(
             }
         }
 
-        // التحكم في مزامنة الوقت (Time Sync)
         syncRow.background = makeRoundedBg("#14FFFFFF".toColorInt(), 12f, "#28FFFFFF".toColorInt(), 1f)
         tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
         btnMinusHalf.background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
@@ -1317,6 +1302,7 @@ class MovieInlinePlayerController(
         }
 
         tabTracksBtn.setOnClickListener {
+            vibrateTap(tabTracksBtn)
             tracksPanel.visibility = View.VISIBLE
             settingsPanel.visibility = View.GONE
             tabTracksBtn.background = makeRoundedBg(Color.WHITE, 10f)
@@ -1325,6 +1311,7 @@ class MovieInlinePlayerController(
             tabSettingsBtn.setTextColor("#B0BAC9".toColorInt())
         }
         tabSettingsBtn.setOnClickListener {
+            vibrateTap(tabSettingsBtn)
             tracksPanel.visibility = View.GONE
             settingsPanel.visibility = View.VISIBLE
             tabSettingsBtn.background = makeRoundedBg(Color.WHITE, 10f)
@@ -1381,6 +1368,7 @@ class MovieInlinePlayerController(
                         ViewGroup.LayoutParams.WRAP_CONTENT
                     ).apply { marginEnd = dp(6) }
                     setOnClickListener {
+                        vibrateTap(this)
                         selectedLangFilter = code
                         renderAvailableLanguageChipsAndTracks()
                     }
@@ -1417,6 +1405,7 @@ class MovieInlinePlayerController(
                         background = if (isSelected) makeRoundedBg("#26FFFFFF".toColorInt(), 10f, "#55FFFFFF".toColorInt(), 1f) else null
                         setPadding(dp(14), dp(10), dp(14), dp(10))
                         setOnClickListener {
+                            vibrateTap(this)
                             selectedSubtitleId = track.id
                             subtitleOffsetMs = 0L
                             scope.launch {
@@ -1452,11 +1441,13 @@ class MovieInlinePlayerController(
         }
 
         btnRefreshSubs.setOnClickListener {
-            btnRefreshSubs.text = "..."
-            onRequestRefreshSubtitles { freshSubs ->
-                availableSubtitles = freshSubs
-                btnRefreshSubs.text = "Reload"
-                renderAvailableLanguageChipsAndTracks()
+            flashTap(btnRefreshSubs) {
+                btnRefreshSubs.text = "..."
+                onRequestRefreshSubtitles { freshSubs ->
+                    availableSubtitles = freshSubs
+                    btnRefreshSubs.text = "Reload"
+                    renderAvailableLanguageChipsAndTracks()
+                }
             }
         }
 
@@ -1471,6 +1462,10 @@ class MovieInlinePlayerController(
         dialog.window?.setLayout(dialogWidthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
+    private fun vibrateTap(v: View) {
+        v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
     private fun saveAndApplySubtitleStyle() {
         activity.getSharedPreferences(PREFS_SUB_STYLE, Context.MODE_PRIVATE).edit()
             .putFloat("sub_size_sp", subtitleTextSizeSp)
@@ -1483,7 +1478,9 @@ class MovieInlinePlayerController(
     }
 
     private fun applySubtitleStyleToOverlay() {
-        tvSubtitleOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
+        if (!isInPipMode) {
+            tvSubtitleOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
+        }
         tvSubtitleOverlay.setTextColor(subtitleTextColor)
         if (subtitleBgAlpha <= 10) {
             tvSubtitleOverlay.background = null
@@ -1698,8 +1695,8 @@ class MovieInlinePlayerController(
             btnTopQualityOnly.visibility = View.VISIBLE
             btnTopLock.visibility = View.VISIBLE
             fullscreenBottomActionsRow.visibility = View.VISIBLE
-            fullscreenLeftBrightnessBar.visibility = View.VISIBLE
-            fullscreenRightVolumeBar.visibility = View.VISIBLE
+            fullscreenLeftBrightnessBar?.visibility = View.VISIBLE
+            fullscreenRightVolumeBar?.visibility = View.VISIBLE
             vBottomPlayerSeparator.visibility = View.GONE
 
             playerContainer.layoutParams = LinearLayout.LayoutParams(
@@ -1719,14 +1716,13 @@ class MovieInlinePlayerController(
             WindowCompat.setDecorFitsSystemWindows(activity.window, true)
             WindowInsetsControllerCompat(activity.window, playerContainer).show(WindowInsetsCompat.Type.systemBars())
 
-            // في المشغل الصغير: نخفي سهم الرجوع، ونبقي زر Server ظاهراً
             btnMinimizePlayer.visibility = View.GONE
             btnTopServerOnly.visibility = View.VISIBLE
             btnTopQualityOnly.visibility = View.VISIBLE
             btnTopLock.visibility = View.GONE
             fullscreenBottomActionsRow.visibility = View.GONE
-            fullscreenLeftBrightnessBar.visibility = View.GONE
-            fullscreenRightVolumeBar.visibility = View.GONE
+            fullscreenLeftBrightnessBar?.visibility = View.GONE
+            fullscreenRightVolumeBar?.visibility = View.GONE
             vBottomPlayerSeparator.visibility = View.VISIBLE
 
             resizeModeIndex = 0
@@ -1748,15 +1744,23 @@ class MovieInlinePlayerController(
     }
 
     fun setServerBadgeLabel(serverName: String) {
-        btnTopServerOnly.text = serverName.take(12)
+        // نبقي زر السيرفر يعرض الأيقونة فقط بدون كتابة اسم السيرفر
+        btnTopServerOnly.text = ""
     }
 
-    /**
-     * تحديث شارة الجودة الحقيقية للسيرفر (لا نقوم بالكتابة فوقها إذا اختار المستخدم جودة محددة يدوياً)
-     */
     fun onEngineQualityDetected(qualityBadge: String) {
         if (selectedQualityHeight == null) {
-            btnTopQualityOnly.text = qualityBadge
+            btnTopQualityOnly.text = formatShortQualityLogo(qualityBadge)
+        }
+    }
+
+    private fun formatShortQualityLogo(raw: String): String {
+        return when {
+            raw.contains("2160") || raw.contains("4K", true) -> "4K"
+            raw.contains("1080") || raw.contains("FHD", true) -> "FHD"
+            raw.contains("720") || raw.contains("HD", true) -> "HD"
+            raw.contains("480") || raw.contains("SD", true) -> "SD"
+            else -> "FHD"
         }
     }
 
@@ -1770,9 +1774,6 @@ class MovieInlinePlayerController(
         hasRenderedInitialFrameForStream = false
         selectedQualityHeight = null
         btnSkipIntro.visibility = View.GONE
-
-        // مسح سطح الفيديو القديم فوراً حتى لا تبقى أي صورة قديمة عالقة
-        playerView.player = null
 
         if (isSeries) {
             detectedIntroStartMs = 15_000L
@@ -1884,9 +1885,6 @@ class MovieInlinePlayerController(
         }
     }
 
-    /**
-     * التقديم والترجيع بـ 15 ثانية دون إخفاء الأزرار (يعيد ضبط المؤقت ليبقى ظاهراً 3.4 ثوانٍ إضافية)
-     */
     private fun seekByDeltaMs(engine: PrimePlayerEngine, deltaMs: Long) {
         val exo = engine.player ?: return
         val dur = exo.duration
