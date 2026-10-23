@@ -37,7 +37,6 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
@@ -258,7 +257,7 @@ class ContentDetailActivity : AppCompatActivity() {
             scope = lifecycleScope,
             fontBold = fontProductBold,
             fontRegular = fontProductRegular,
-            onMinimizeToCover = { switchToPosterShowcaseMode(saveCurrentPlayerPos = true) },
+            onMinimizeToCover = { switchToPosterShowcaseMode(saveCurrentPlayerPos = true, animateTransition = true) },
             onFullscreenChanged = { enterFull ->
                 if (enterFull) {
                     heroBackdropFixedContainer.visibility = View.GONE
@@ -344,7 +343,6 @@ class ContentDetailActivity : AppCompatActivity() {
             },
             onPlaybackExhausted = {
                 runOnUiThread {
-                    // إذا تعطل السيرفر الحالي يتحول تلقائياً إلى السيرفر التالي بدون توقف
                     hasLockedPrimaryStream = false
                     tryNextProviderInBackground()
                 }
@@ -376,7 +374,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 closeActorPageOverlayAndRestoreIfNeeded()
             }
             isPlayerModeActive -> {
-                switchToPosterShowcaseMode(saveCurrentPlayerPos = true)
+                switchToPosterShowcaseMode(saveCurrentPlayerPos = true, animateTransition = true)
             }
             navigationBackStack.isNotEmpty() -> {
                 when (val prev = navigationBackStack.removeLast()) {
@@ -469,7 +467,7 @@ class ContentDetailActivity : AppCompatActivity() {
     }
 
     /**
-     * أنيميشن استخراج اللون الهادئة والواضحة (7.2 ثوانٍ بمنحنى انسيابي متدرج تحس بحركته دون سرعة مفاجئة)
+     * أنيميشن استخراج اللون المضبوطة على 2000L كما اعتمدتها
      */
     private fun startCoverColorExtractionAnimation(targetLeftColor: Int, targetRightColor: Int) {
         colorExtractionAnimator?.cancel()
@@ -477,7 +475,6 @@ class ContentDetailActivity : AppCompatActivity() {
         val evaluator = ArgbEvaluator()
         val startLeft = FLIX_INITIAL_LEFT_COLOR
         val startRight = FLIX_INITIAL_RIGHT_COLOR
-        val midBridgeLeft = ColorUtils.blendARGB(startLeft, targetLeftColor, 0.45f)
 
         currentLeftBrightColor = startLeft
         currentRightDarkColor = startRight
@@ -488,16 +485,12 @@ class ContentDetailActivity : AppCompatActivity() {
         )
 
         colorExtractionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            startDelay = 180L
+            startDelay = 0L
             duration = 2000L
-            interpolator = AccelerateDecelerateInterpolator()
+            interpolator = DecelerateInterpolator(1.3f)
             addUpdateListener { va ->
                 val f = va.animatedFraction
-                val liveLeft = if (f < 0.45f) {
-                    evaluator.evaluate(f / 0.45f, startLeft, midBridgeLeft) as Int
-                } else {
-                    evaluator.evaluate((f - 0.45f) / 0.55f, midBridgeLeft, targetLeftColor) as Int
-                }
+                val liveLeft = evaluator.evaluate(f, startLeft, targetLeftColor) as Int
                 val liveRight = evaluator.evaluate(f, startRight, targetRightColor) as Int
                 currentLeftBrightColor = liveLeft
                 currentRightDarkColor = liveRight
@@ -594,17 +587,18 @@ class ContentDetailActivity : AppCompatActivity() {
             )
         }
 
+        // نفس ارتفاع المشغل (215dp) لكي لا يحدث أي قفزة أو Lag في الصفحة عند التبديل بين الغلاف والمشغل!
         vHeroTopSpacer = View(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(230)
+                dp(215)
             )
         }
         detailsMasterColumn.addView(vHeroTopSpacer)
 
         contentSheetColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(8), dp(18), dp(44))
+            setPadding(dp(18), dp(14), dp(18), dp(44))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -804,7 +798,6 @@ class ContentDetailActivity : AppCompatActivity() {
         seriesContainer.addView(rvEpisodes)
         contentSheetColumn.addView(seriesContainer)
 
-        // القصة مباشرة تحت الأزرار بدون عنوان Overview كما طلبت
         tvOverviewText = TextView(this).apply {
             setTextColor("#F1F5F9".toColorInt())
             textSize = 14f
@@ -1144,9 +1137,6 @@ class ContentDetailActivity : AppCompatActivity() {
         actorPageOverlay.addView(gridContainer)
     }
 
-    /**
-     * فتح صفحة الممثل بأنيميشن دخول سينمائية سلسة (Slide Up + Fade)
-     */
     private fun openFlixVisionActorPage(actor: CastMember) {
         currentVod?.let { vod ->
             navigationBackStack.addLast(
@@ -1378,34 +1368,36 @@ class ContentDetailActivity : AppCompatActivity() {
     }
 
     /**
-     * أنيميشن دخول سلسة للمشغل عند الضغط على PLAY وإخفاء زر PLAY أثناء التشغيل
+     * أنيميشن فتح المشغل بسرعة 60fps بدون أي تقطيع أو Lag (باستخدام Cross-Fade + Slide بدون إعادة بناء تخطيط الصفحة)
      */
     private fun activateInlinePlayerSmoothly() {
         isPlayerModeActive = true
         fullScreenAmbientDrawable.setPlayerModeActive(true)
 
-        val transition = TransitionSet().apply {
-            ordering = TransitionSet.ORDERING_TOGETHER
-            addTransition(ChangeBounds())
-            addTransition(Fade())
-            duration = 320L
-            interpolator = DecelerateInterpolator(1.5f)
-        }
-        TransitionManager.beginDelayedTransition(rootFrameWrapper, transition)
-
         btnPlayNowMain.visibility = View.GONE
-        heroBackdropFixedContainer.visibility = View.GONE
-        heroTopActionsRow.visibility = View.GONE
         vHeroTopSpacer.visibility = View.GONE
 
+        heroTopActionsRow.animate()
+            .alpha(0f)
+            .setDuration(180L)
+            .withEndAction { heroTopActionsRow.visibility = View.GONE }
+            .start()
+
+        heroBackdropFixedContainer.animate()
+            .alpha(0f)
+            .setDuration(240L)
+            .withEndAction { heroBackdropFixedContainer.visibility = View.GONE }
+            .start()
+
         val pContainer = moviePlayerController.playerContainer
+        pContainer.animate().cancel()
         pContainer.alpha = 0f
-        pContainer.translationY = -dpF(18f)
+        pContainer.translationY = -dpF(14f)
         pContainer.visibility = View.VISIBLE
         pContainer.animate()
             .alpha(1f)
             .translationY(0f)
-            .setDuration(300L)
+            .setDuration(260L)
             .setInterpolator(DecelerateInterpolator(1.4f))
             .start()
 
@@ -1432,9 +1424,9 @@ class ContentDetailActivity : AppCompatActivity() {
     }
 
     /**
-     * أنيميشن خروج سلسة للمشغل عند الضغط على Back وإظهار الكوفر وزر PLAY / RESUME الصحيح
+     * أنيميشن إغلاق المشغل وعودة الغلاف بسرعة 60fps بدون أي Lag
      */
-    private fun switchToPosterShowcaseMode(saveCurrentPlayerPos: Boolean) {
+    private fun switchToPosterShowcaseMode(saveCurrentPlayerPos: Boolean, animateTransition: Boolean) {
         if (saveCurrentPlayerPos && isPlayerModeActive) {
             playerEngine.player?.let { exo ->
                 if (exo.currentPosition > 5000L && exo.duration > 10000L) {
@@ -1450,24 +1442,46 @@ class ContentDetailActivity : AppCompatActivity() {
         moviePlayerController.updatePlayPauseVectorIcon(false)
         fullScreenAmbientDrawable.setPlayerModeActive(false)
 
-        val transition = TransitionSet().apply {
-            ordering = TransitionSet.ORDERING_TOGETHER
-            addTransition(ChangeBounds())
-            addTransition(Fade())
-            duration = 300L
-            interpolator = DecelerateInterpolator(1.4f)
-        }
-        TransitionManager.beginDelayedTransition(rootFrameWrapper, transition)
-
-        moviePlayerController.playerContainer.visibility = View.GONE
+        val pContainer = moviePlayerController.playerContainer
+        pContainer.animate().cancel()
+        pContainer.visibility = View.GONE
         vHeroTopSpacer.visibility = View.VISIBLE
-        heroBackdropFixedContainer.visibility = View.VISIBLE
-        heroTopActionsRow.visibility = View.VISIBLE
 
         btnPlayNowMain.visibility = View.VISIBLE
         tvPlayNowBtnLabel.text = if (pendingResumePositionMs > 15_000L) "RESUME" else "PLAY"
 
+        heroBackdropFixedContainer.animate().cancel()
+        heroTopActionsRow.animate().cancel()
         ivHeroBackdrop.alpha = 1f
+
+        if (animateTransition) {
+            heroBackdropFixedContainer.alpha = 0f
+            heroBackdropFixedContainer.scaleX = 1.03f
+            heroBackdropFixedContainer.scaleY = 1.03f
+            heroBackdropFixedContainer.visibility = View.VISIBLE
+            heroBackdropFixedContainer.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(260L)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+
+            heroTopActionsRow.alpha = 0f
+            heroTopActionsRow.visibility = View.VISIBLE
+            heroTopActionsRow.animate()
+                .alpha(1f)
+                .setDuration(240L)
+                .start()
+        } else {
+            heroBackdropFixedContainer.alpha = 1f
+            heroBackdropFixedContainer.scaleX = 1f
+            heroBackdropFixedContainer.scaleY = 1f
+            heroBackdropFixedContainer.visibility = View.VISIBLE
+            heroTopActionsRow.alpha = 1f
+            heroTopActionsRow.visibility = View.VISIBLE
+        }
+
         detailsScrollView.smoothScrollTo(0, 0)
     }
 
@@ -1569,8 +1583,8 @@ class ContentDetailActivity : AppCompatActivity() {
                     val subTrack = SubtitleTrack(
                         id = "stream_sync_${reqUrl.hashCode()}",
                         languageCode = if (isAr) "ar" else "en",
-                        languageLabel = if (isAr) "Arabic (Stream Synced)" else "English (Stream Synced)",
-                        releaseName = "Direct.Stream.Embedded.VTT",
+                        languageLabel = if (isAr) "Arabic" else "English",
+                        releaseName = "",
                         url = reqUrl
                     )
                     runOnUiThread {
@@ -1619,9 +1633,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * قفل السيرفر الأساسي ومنع أي إعادة تهيئة مزدوجة كانت تسبب رجوع الفيديو بـ 2 ثانية
-     */
     private fun onRawStreamIntercepted(url: String, referer: String, origin: String, userAgent: String) {
         runOnUiThread {
             if (hasLockedPrimaryStream) return@runOnUiThread
@@ -1676,7 +1687,10 @@ class ContentDetailActivity : AppCompatActivity() {
         headlessSnifferWebView.onPause()
         headlessSnifferWebView.pauseTimers()
 
-        moviePlayerController.resetForNewStream(isPlayerModeActive)
+        moviePlayerController.resetForNewStream(
+            isActiveMode = isPlayerModeActive,
+            isSeries = vod.isSeries
+        )
 
         streamFetchJob = lifecycleScope.launch {
             val panelServers = withContext(Dispatchers.IO) {
@@ -1737,7 +1751,6 @@ class ContentDetailActivity : AppCompatActivity() {
         val headers = if (target.referer.isNotEmpty()) mapOf("Referer" to target.referer) else emptyMap()
         headlessSnifferWebView.loadUrl(target.url, headers)
 
-        // إذا لم يستجب السيرفر خلال 5.5 ثوانٍ، يتحول تلقائياً للسيرفر التالي
         snifferTimeoutJob?.cancel()
         snifferTimeoutJob = lifecycleScope.launch {
             delay(5500L)
@@ -1794,9 +1807,6 @@ class ContentDetailActivity : AppCompatActivity() {
             })
     }
 
-    /**
-     * تحميل الفيلم في الواجهة مع إصلاح مشكلة RESUME + إضافة أنيميشن دخول ناعمة عند التنقل بين الأفلام
-     */
     private fun loadVodItemIntoScreen(
         vod: VodItem,
         resetScroll: Boolean = true,
@@ -1805,7 +1815,6 @@ class ContentDetailActivity : AppCompatActivity() {
     ) {
         detailsFetchJob?.cancel()
 
-        // حفظ تقدم الفيلم القديم فقط إذا كان المشغل مفتوحاً قبل التبديل للفيلم الجديد
         val previousVod = currentVod
         if (previousVod != null && previousVod.id != vod.id && isPlayerModeActive) {
             playerEngine.player?.let { exo ->
@@ -1815,15 +1824,9 @@ class ContentDetailActivity : AppCompatActivity() {
             }
         }
 
-        // إيقاف المشغل أولاً قبل تعيين الفيلم الجديد حتى لا ينتقل موضع الفيلم القديم للفيلم الجديد!
         isPlayerModeActive = false
         playerEngine.pauseAndReleaseSocket()
-        moviePlayerController.playerContainer.visibility = View.GONE
-        vHeroTopSpacer.visibility = View.VISIBLE
-        heroBackdropFixedContainer.visibility = View.VISIBLE
-        heroTopActionsRow.visibility = View.VISIBLE
-        btnPlayNowMain.visibility = View.VISIBLE
-        fullScreenAmbientDrawable.setPlayerModeActive(false)
+        switchToPosterShowcaseMode(saveCurrentPlayerPos = false, animateTransition = false)
 
         currentVod = vod
         selectedSeason = 1
@@ -1831,7 +1834,6 @@ class ContentDetailActivity : AppCompatActivity() {
         isOverviewExpanded = false
         moviePlayerController.updateAvailableSubtitles(emptyList(), emptyList(), "")
 
-        // قراءة التقدم المحفوظ لهذا الفيلم تحديداً فقط (بدون الكتابة فوقه عند فتح الصفحة)
         val savedForThisMovie = SessionManager.getSavedPositionForVod(this, vod.id)
             .coerceAtLeast(vod.savedPositionMs)
         pendingResumePositionMs = if (savedForThisMovie > 15_000L) savedForThisMovie else 0L
@@ -1877,17 +1879,16 @@ class ContentDetailActivity : AppCompatActivity() {
             }
         }
 
-        // أنيميشن دخول سينمائية ناعمة عند الانتقال من فيلم لآخر
         if (animatePageEntry) {
             ivHeroBackdrop.alpha = 0f
-            ivHeroBackdrop.animate().alpha(1f).setDuration(320L).start()
+            ivHeroBackdrop.animate().alpha(1f).setDuration(300L).start()
 
             contentSheetColumn.alpha = 0f
-            contentSheetColumn.translationY = dpF(26f)
+            contentSheetColumn.translationY = dpF(24f)
             contentSheetColumn.animate()
                 .alpha(1f)
                 .translationY(0f)
-                .setDuration(320L)
+                .setDuration(300L)
                 .setInterpolator(DecelerateInterpolator(1.5f))
                 .start()
         }
@@ -2176,9 +2177,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * عند الخروج من التطبيق يتوقف المشغل فوراً وتتحدث أيقونة التشغيل إلى (Play ▶) دون أي انعكاس
-     */
     override fun onPause() {
         super.onPause()
         val p = playerEngine.player
@@ -2431,12 +2429,11 @@ object VectorIcons {
 
     fun createPlayPauseIcon(context: Context, isPlaying: Boolean): Drawable {
         val d = context.resources.displayMetrics.density
-        val sizePx = (34 * d).toInt()
+        val sizePx = (36 * d).toInt()
         return object : Drawable() {
             private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 style = Paint.Style.FILL
-                setShadowLayer(6f * d, 0f, 2f * d, "#99000000".toColorInt())
             }
 
             override fun draw(canvas: Canvas) {
@@ -2444,11 +2441,11 @@ object VectorIcons {
                 val w = b.width().toFloat()
                 val h = b.height().toFloat()
                 if (isPlaying) {
-                    val barW = w * 0.21f
-                    val barH = h * 0.72f
+                    val barW = w * 0.22f
+                    val barH = h * 0.74f
                     val top = (h - barH) / 2f
-                    val r = barW * 0.35f
-                    val left1 = w * 0.21f
+                    val r = barW * 0.18f
+                    val left1 = w * 0.20f
                     val left2 = w * 0.58f
                     canvas.drawRoundRect(RectF(left1, top, left1 + barW, top + barH), r, r, paint)
                     canvas.drawRoundRect(RectF(left2, top, left2 + barW, top + barH), r, r, paint)
@@ -2472,62 +2469,54 @@ object VectorIcons {
         }
     }
 
-    fun createSeek15Icon(context: Context, isForward: Boolean): Drawable {
+    /**
+     * أيقونة السهم الدائري للتقديم والترجيع المطابقة للفيديو المرفق تماماً
+     */
+    fun createCircularSeekArrowIcon(context: Context, isForward: Boolean): Drawable {
         val d = context.resources.displayMetrics.density
-        val sizePx = (32 * d).toInt()
+        val sizePx = (28 * d).toInt()
         return object : Drawable() {
             private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 style = Paint.Style.STROKE
                 strokeWidth = 2.2f * d
                 strokeCap = Paint.Cap.ROUND
-                setShadowLayer(5f * d, 0f, 1.5f * d, "#99000000".toColorInt())
             }
             private val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 style = Paint.Style.FILL
-            }
-            private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.WHITE
-                textSize = 9.5f * d
-                typeface = Typeface.create("sans-serif", Typeface.BOLD)
-                textAlign = Paint.Align.CENTER
-                setShadowLayer(4f * d, 0f, 1f * d, "#99000000".toColorInt())
             }
 
             override fun draw(canvas: Canvas) {
                 val b = bounds
                 val w = b.width().toFloat()
                 val h = b.height().toFloat()
-                val pad = w * 0.10f
+                val pad = w * 0.14f
                 val rect = RectF(pad, pad, w - pad, h - pad)
 
                 if (isForward) {
-                    canvas.drawArc(rect, -80f, 290f, false, arcPaint)
-                    val tipX = w * 0.67f
+                    canvas.drawArc(rect, -85f, 295f, false, arcPaint)
+                    val tipX = w * 0.68f
                     val tipY = pad
                     val arrow = Path().apply {
-                        moveTo(w * 0.48f, tipY - w * 0.12f)
+                        moveTo(w * 0.45f, tipY - w * 0.14f)
                         lineTo(tipX, tipY)
-                        lineTo(w * 0.48f, tipY + w * 0.12f)
+                        lineTo(w * 0.45f, tipY + w * 0.14f)
                         close()
                     }
                     canvas.drawPath(arrow, arrowPaint)
                 } else {
-                    canvas.drawArc(rect, -100f, -290f, false, arcPaint)
-                    val tipX = w * 0.33f
+                    canvas.drawArc(rect, -95f, -295f, false, arcPaint)
+                    val tipX = w * 0.32f
                     val tipY = pad
                     val arrow = Path().apply {
-                        moveTo(w * 0.52f, tipY - w * 0.12f)
+                        moveTo(w * 0.55f, tipY - w * 0.14f)
                         lineTo(tipX, tipY)
-                        lineTo(w * 0.52f, tipY + w * 0.12f)
+                        lineTo(w * 0.55f, tipY + w * 0.14f)
                         close()
                     }
                     canvas.drawPath(arrow, arrowPaint)
                 }
-
-                val textY = (h / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f) + (0.5f * d)
-                canvas.drawText("15", w / 2f, textY, textPaint)
             }
 
             override fun getIntrinsicWidth(): Int = sizePx
@@ -2535,12 +2524,10 @@ object VectorIcons {
             override fun setAlpha(alpha: Int) {
                 arcPaint.alpha = alpha
                 arrowPaint.alpha = alpha
-                textPaint.alpha = alpha
             }
             override fun setColorFilter(colorFilter: ColorFilter?) {
                 arcPaint.colorFilter = colorFilter
                 arrowPaint.colorFilter = colorFilter
-                textPaint.colorFilter = colorFilter
             }
             @Deprecated("Deprecated in Java")
             override fun getOpacity(): Int = PixelFormat.TRANSLUCENT

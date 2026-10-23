@@ -14,7 +14,6 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
-import android.net.TrafficStats
 import android.net.Uri
 import android.os.Build
 import android.os.Process
@@ -27,6 +26,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
@@ -56,7 +56,6 @@ import com.primeott.app.R
 import com.primeott.app.domain.model.StreamSource
 import com.primeott.app.domain.model.SubtitleCue
 import com.primeott.app.domain.model.SubtitleTrack
-import com.primeott.app.presentation.common.AnimUtils
 import com.primeott.app.presentation.player.PrimePlayerEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -87,9 +86,6 @@ class MovieInlinePlayerController(
 ) {
 
     companion object {
-        private const val INTRO_START_MS = 10_000L
-        private const val INTRO_END_MS = 95_000L
-        private const val INTRO_SKIP_JUMP_MS = 85_000L
         private const val PREFS_SUB_STYLE = "prime_sub_style_prefs"
     }
 
@@ -99,11 +95,8 @@ class MovieInlinePlayerController(
         private set
 
     private lateinit var tvSubtitleOverlay: TextView
-    private lateinit var loadingContainer: LinearLayout
-    private lateinit var loadingSpinner: ProgressBar
-    private lateinit var tvLoadingPercent: TextView
-    private lateinit var tvNetworkSpeedBadge: TextView
     private lateinit var vTopEdgeSoftGradient: View
+    private lateinit var vBottomPlayerSeparator: View
 
     private lateinit var controlsOverlay: FrameLayout
     private lateinit var btnMinimizePlayer: ImageView
@@ -114,14 +107,24 @@ class MovieInlinePlayerController(
     private lateinit var btnTopQualityOnly: TextView
     private lateinit var btnTopSubtitles: ImageView
 
+    // أزرار الوسط + الـ Loader الدائري في نفس مكان Play/Pause بالضبط كما في الفيديو
+    private lateinit var btnRewind15Container: FrameLayout
+    private lateinit var btnRewind15BgCircle: View
     private lateinit var btnRewind15: ImageView
+
+    private lateinit var centerActionSlot: FrameLayout
+    private lateinit var btnCenterPlayPauseBgCircle: View
     private lateinit var btnCenterPlayPause: ImageView
+    private lateinit var centerBufferingSpinner: ProgressBar
+
+    private lateinit var btnForward15Container: FrameLayout
+    private lateinit var btnForward15BgCircle: View
     private lateinit var btnForward15: ImageView
-    private lateinit var tvSeekFeedbackBadge: TextView
+
     private lateinit var holdSpeed2xPill: LinearLayout
     private lateinit var btnSkipIntro: LinearLayout
 
-    // مؤشر الصوت (يمين) والإضاءة (يسار)
+    // مؤشر الصوت والإضاءة في أعلى الشاشة
     private lateinit var gestureIndicatorCard: LinearLayout
     private lateinit var ivGestureIcon: ImageView
     private lateinit var pbGestureLevel: ProgressBar
@@ -146,7 +149,13 @@ class MovieInlinePlayerController(
     private var isControlsLocked: Boolean = false
     private var isUserSeeking: Boolean = false
     private var isHold2xActive: Boolean = false
+    private var isBufferingNow: Boolean = true
     private var currentPlaybackSpeed: Float = 1.0f
+
+    // إعدادات Skip Intro الذكية
+    private var isCurrentMediaSeries: Boolean = false
+    private var detectedIntroStartMs: Long = -1L
+    private var detectedIntroEndMs: Long = -1L
     private var hasSkippedIntroForCurrentMedia: Boolean = false
     private var selectedQualityHeight: Int? = null
 
@@ -156,7 +165,8 @@ class MovieInlinePlayerController(
     private var subtitleOffsetMs: Long = 0L
     private var subtitleTextSizeSp: Float = 16f
     private var subtitleTextColor: Int = Color.WHITE
-    private var subtitleBgAlpha: Int = 140
+    // 0 = Transparent + Strong Black Shadow, 130 = Frosted Glass, 215 = Dark Box
+    private var subtitleBgAlpha: Int = 0
 
     private var resizeModeIndex: Int = 0
     private val resizeModes = listOf(
@@ -167,16 +177,13 @@ class MovieInlinePlayerController(
     private val resizeLabels = listOf("Fit", "Stretch", "Zoom")
 
     private var progressJob: Job? = null
-    private var lastRxBytes: Long = 0L
-    private var lastRxTimestamp: Long = 0L
     private var lastSavedTick: Int = 0
-    private var simulatedBufferPct: Int = 12
     private var attachedPlayer: Player? = null
 
     private val audioManager: AudioManager by lazy {
         activity.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
-    private var swipeMode: Int = 0 // 0 = None, 1 = Brightness (Left), 2 = Volume (Right)
+    private var swipeMode: Int = 0
     private var swipeStartY: Float = 0f
     private var swipeStartX: Float = 0f
     private var initialBrightness: Float = 0.6f
@@ -187,23 +194,21 @@ class MovieInlinePlayerController(
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             updatePlayPauseVectorIcon(isPlaying)
             if (isPlaying) {
-                loadingContainer.visibility = View.GONE
+                setBufferingState(false)
             }
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             when (playbackState) {
                 Player.STATE_BUFFERING -> {
-                    if (!isInPipMode) {
-                        loadingContainer.visibility = View.VISIBLE
-                    }
+                    setBufferingState(true)
                 }
                 Player.STATE_READY -> {
-                    loadingContainer.visibility = View.GONE
+                    setBufferingState(false)
                     updatePlayPauseVectorIcon(attachedPlayer?.isPlaying == true)
                 }
                 Player.STATE_ENDED -> {
-                    loadingContainer.visibility = View.GONE
+                    setBufferingState(false)
                     updatePlayPauseVectorIcon(false)
                 }
                 Player.STATE_IDLE -> {}
@@ -247,7 +252,7 @@ class MovieInlinePlayerController(
         val prefs = activity.getSharedPreferences(PREFS_SUB_STYLE, Context.MODE_PRIVATE)
         subtitleTextSizeSp = prefs.getFloat("sub_size_sp", 16f).coerceIn(12f, 26f)
         subtitleTextColor = prefs.getInt("sub_text_color", Color.WHITE)
-        subtitleBgAlpha = prefs.getInt("sub_bg_alpha", 140)
+        subtitleBgAlpha = prefs.getInt("sub_bg_alpha", 0)
 
         playerContainer = FrameLayout(activity).apply {
             setBackgroundColor(Color.BLACK)
@@ -255,11 +260,10 @@ class MovieInlinePlayerController(
             clipChildren = true
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(210)
+                dp(215)
             )
         }
 
-        // المشغل الصغير يبدأ دائماً بـ RESIZE_MODE_FIT بدون أي تقريب (Zoom)
         playerView = PlayerView(activity).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -284,78 +288,31 @@ class MovieInlinePlayerController(
         }
         playerContainer.addView(vTopEdgeSoftGradient)
 
+        // الترجمة (تتحرك للأعلى تلقائياً عند ظهور شريط التحكم وتعود للأسفل عند اختفائه)
         tvSubtitleOverlay = TextView(activity).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
             ).apply {
-                setMargins(dp(20), 0, dp(20), dp(28))
+                setMargins(dp(20), 0, dp(20), dp(14))
             }
             gravity = Gravity.CENTER
             setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
             typeface = fontBold
             setTextColor(subtitleTextColor)
-            setShadowLayer(8f, 0f, 3f, Color.BLACK)
             setPadding(dp(12), dp(4), dp(12), dp(4))
             visibility = View.GONE
         }
         applySubtitleStyleToOverlay()
         playerContainer.addView(tvSubtitleOverlay)
 
-        // Loader أنيق يعرض نسبة التحميل المئوية + سرعة التحميل الحقيقية بدون جمل عشوائية
-        loadingContainer = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            background = makeRoundedBg("#B8080A10".toColorInt(), 20f, "#2EFFFFFF".toColorInt(), 1f)
-            setPadding(dp(18), dp(12), dp(18), dp(12))
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            )
-        }
-        val spinnerFrame = FrameLayout(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
-        }
-        loadingSpinner = ProgressBar(activity).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            indeterminateTintList = ColorStateList.valueOf("#E50914".toColorInt())
-        }
-        tvLoadingPercent = TextView(activity).apply {
-            text = "25%"
-            setTextColor(Color.WHITE)
-            textSize = 10f
-            typeface = fontBold
-            gravity = Gravity.CENTER
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-        spinnerFrame.addView(loadingSpinner)
-        spinnerFrame.addView(tvLoadingPercent)
-
-        tvNetworkSpeedBadge = TextView(activity).apply {
-            text = "0 KB/s"
-            setTextColor("#CBD5E1".toColorInt())
-            textSize = 10.5f
-            typeface = fontBold
-            setPadding(0, dp(4), 0, 0)
-        }
-        loadingContainer.addView(spinnerFrame)
-        loadingContainer.addView(tvNetworkSpeedBadge)
-        playerContainer.addView(loadingContainer)
-
-        // كبسولة السرعة المضاعفة (2x Speed) بأيقونة Vector مرسومة وبدون أي إيموجي
+        // كبسولة السرعة المضاعفة (2x Speed) في الأعلى
         holdSpeed2xPill = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#D90E121B".toColorInt(), 20f, "#80FFFFFF".toColorInt(), 1f)
-            setPadding(dp(14), dp(6), dp(14), dp(6))
+            background = makeRoundedBg("#D910131C".toColorInt(), 20f, "#4DFFFFFF".toColorInt(), 1f)
+            setPadding(dp(12), dp(5), dp(12), dp(5))
             visibility = View.GONE
             elevation = dpF(8f)
             layoutParams = FrameLayout.LayoutParams(
@@ -363,16 +320,16 @@ class MovieInlinePlayerController(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.CENTER_HORIZONTAL
             ).apply {
-                topMargin = dp(48)
+                topMargin = dp(10)
             }
             val ivFast = ImageView(activity).apply {
-                setImageDrawable(VectorIcons.createFastForwardDoubleArrowIcon(activity, "#38BDF8".toColorInt()))
-                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(6) }
+                setImageDrawable(VectorIcons.createFastForwardDoubleArrowIcon(activity, Color.WHITE))
+                layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginEnd = dp(5) }
             }
             val tvLabel = TextView(activity).apply {
                 text = "2x Speed"
                 setTextColor(Color.WHITE)
-                textSize = 12f
+                textSize = 11.5f
                 typeface = fontBold
             }
             addView(ivFast)
@@ -380,36 +337,36 @@ class MovieInlinePlayerController(
         }
         playerContainer.addView(holdSpeed2xPill)
 
-        // مؤشر الصوت (يمين) والإضاءة (يسار) أثناء السحب العمودي
+        // مؤشر الصوت (يمين) والإضاءة (يسار) مثبت في أعلى المشغل (topMargin = 10dp) لكي لا ينزل لوسط الشاشة
         gestureIndicatorCard = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#D90E121B".toColorInt(), 22f, "#4DFFFFFF".toColorInt(), 1f)
-            setPadding(dp(14), dp(8), dp(16), dp(8))
+            background = makeRoundedBg("#E010131C".toColorInt(), 20f, "#40FFFFFF".toColorInt(), 1f)
+            setPadding(dp(12), dp(6), dp(14), dp(6))
             visibility = View.GONE
             elevation = dpF(10f)
             layoutParams = FrameLayout.LayoutParams(
-                dp(170),
+                dp(155),
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP or Gravity.CENTER_HORIZONTAL
             ).apply {
-                topMargin = dp(48)
+                topMargin = dp(10)
             }
         }
         ivGestureIcon = ImageView(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8) }
+            layoutParams = LinearLayout.LayoutParams(dp(17), dp(17)).apply { marginEnd = dp(8) }
         }
         pbGestureLevel = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 50
-            progressTintList = ColorStateList.valueOf("#E50914".toColorInt())
-            progressBackgroundTintList = ColorStateList.valueOf("#33FFFFFF".toColorInt())
-            layoutParams = LinearLayout.LayoutParams(0, dp(5), 1f).apply { marginEnd = dp(8) }
+            progressTintList = ColorStateList.valueOf(Color.WHITE)
+            progressBackgroundTintList = ColorStateList.valueOf("#38FFFFFF".toColorInt())
+            layoutParams = LinearLayout.LayoutParams(0, dp(4), 1f).apply { marginEnd = dp(8) }
         }
         tvGesturePercent = TextView(activity).apply {
             text = "50%"
             setTextColor(Color.WHITE)
-            textSize = 11.5f
+            textSize = 11f
             typeface = fontBold
         }
         gestureIndicatorCard.addView(ivGestureIcon)
@@ -417,29 +374,11 @@ class MovieInlinePlayerController(
         gestureIndicatorCard.addView(tvGesturePercent)
         playerContainer.addView(gestureIndicatorCard)
 
-        tvSeekFeedbackBadge = TextView(activity).apply {
-            text = "+15s"
-            setTextColor(Color.WHITE)
-            textSize = 12.5f
-            typeface = fontBold
-            background = makeRoundedBg("#BF000000".toColorInt(), 20f, "#55FFFFFF".toColorInt(), 1f)
-            setPadding(dp(14), dp(5), dp(14), dp(5))
-            visibility = View.GONE
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            ).apply {
-                topMargin = dp(48)
-            }
-        }
-        playerContainer.addView(tvSeekFeedbackBadge)
-
         btnSkipIntro = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#E610131C".toColorInt(), 20f, "#D9FFFFFF".toColorInt(), 1.2f)
-            setPadding(dp(14), dp(7), dp(12), dp(7))
+            background = makeRoundedBg("#E612151E".toColorInt(), 18f, "#CCFFFFFF".toColorInt(), 1.1f)
+            setPadding(dp(14), dp(6), dp(12), dp(6))
             visibility = View.GONE
             elevation = dpF(6f)
             layoutParams = FrameLayout.LayoutParams(
@@ -447,27 +386,28 @@ class MovieInlinePlayerController(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM or Gravity.END
             ).apply {
-                setMargins(0, 0, dp(14), dp(42))
+                setMargins(0, 0, dp(14), dp(44))
             }
         }
         val tvSkipIntroLabel = TextView(activity).apply {
             text = "Skip Intro"
             setTextColor(Color.WHITE)
-            textSize = 12f
+            textSize = 11.5f
             typeface = fontBold
         }
         val ivSkipIntroArrow = ImageView(activity).apply {
             setImageDrawable(VectorIcons.createSkipNextIcon(activity, Color.WHITE))
-            layoutParams = LinearLayout.LayoutParams(dp(15), dp(15)).apply {
-                marginStart = dp(6)
+            layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply {
+                marginStart = dp(5)
             }
         }
         btnSkipIntro.addView(tvSkipIntroLabel)
         btnSkipIntro.addView(ivSkipIntroArrow)
-        AnimUtils.attachPressBounce(btnSkipIntro)
         playerContainer.addView(btnSkipIntro)
 
-        // طبقة التحكم
+        // =========================================================================
+        // طبقة التحكم (تظهر وتختفي بـ Fade ناعم، وتحتوي على الـ Loader في مكان Play/Pause)
+        // =========================================================================
         controlsOverlay = FrameLayout(activity).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -475,7 +415,7 @@ class MovieInlinePlayerController(
             )
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf("#B3000000".toColorInt(), "#38000000".toColorInt(), "#CC000000".toColorInt())
+                intArrayOf("#A6000000".toColorInt(), "#33000000".toColorInt(), "#BF000000".toColorInt())
             )
             visibility = View.VISIBLE
         }
@@ -493,7 +433,7 @@ class MovieInlinePlayerController(
 
         btnMinimizePlayer = ImageView(activity).apply {
             setImageResource(R.drawable.ic_back_chevron)
-            background = makeRoundedBg("#38FFFFFF".toColorInt(), 18f)
+            background = makeRoundedBg("#2EFFFFFF".toColorInt(), 18f)
             setPadding(dp(7), dp(7), dp(8), dp(7))
             layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
             setOnClickListener {
@@ -515,13 +455,12 @@ class MovieInlinePlayerController(
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
-        // زر Server وزر Quality يظهران فقط في المشغل الكبير (Fullscreen) كما طلبت
         btnTopServerOnly = TextView(activity).apply {
             text = "Server"
             textSize = 11.5f
             typeface = fontBold
             setTextColor(Color.WHITE)
-            background = makeRoundedBg("#33FFFFFF".toColorInt(), 8f, "#66FFFFFF".toColorInt(), 0.9f)
+            background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.9f)
             setPadding(dp(10), dp(5), dp(10), dp(5))
             visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
@@ -535,7 +474,7 @@ class MovieInlinePlayerController(
             textSize = 11.5f
             typeface = fontBold
             setTextColor(Color.WHITE)
-            background = makeRoundedBg("#33E50914".toColorInt(), 8f, "#99FF4757".toColorInt(), 1f)
+            background = makeRoundedBg("#33E50914".toColorInt(), 8f, "#88FF4757".toColorInt(), 1f)
             setPadding(dp(10), dp(5), dp(10), dp(5))
             visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
@@ -544,17 +483,16 @@ class MovieInlinePlayerController(
             ).apply { marginEnd = dp(8) }
         }
 
-        // في المشغل الصغير يظهر فقط زر CC وزر Mini PiP
         btnTopSubtitles = ImageView(activity).apply {
             setImageDrawable(VectorIcons.createSubtitlesCcIcon(activity, Color.WHITE))
-            background = makeRoundedBg("#33FFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.8f)
+            background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
             setPadding(dp(6), dp(6), dp(6), dp(6))
             layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginEnd = dp(8) }
         }
 
         btnTopPip = ImageView(activity).apply {
             setImageDrawable(VectorIcons.createPipMiniPlayerIcon(activity, Color.WHITE))
-            background = makeRoundedBg("#33FFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.8f)
+            background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
             setPadding(dp(6), dp(6), dp(6), dp(6))
             layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
             setOnClickListener {
@@ -564,13 +502,13 @@ class MovieInlinePlayerController(
 
         btnTopLock = ImageView(activity).apply {
             setImageDrawable(VectorIcons.createLockIcon(activity, Color.WHITE, locked = false))
-            background = makeRoundedBg("#33FFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.8f)
+            background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
             setPadding(dp(6), dp(6), dp(6), dp(6))
             visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginStart = dp(8) }
             setOnClickListener {
                 isControlsLocked = true
-                controlsOverlay.visibility = View.GONE
+                hideControlsSmoothly()
                 btnUnlockScreenOnly.visibility = View.VISIBLE
             }
         }
@@ -584,7 +522,11 @@ class MovieInlinePlayerController(
         topBar.addView(btnTopLock)
         controlsOverlay.addView(topBar)
 
-        // أزرار الوسط بدون أي دوائر خلفية (Pure Clean Vector Icons)
+        // =========================================================================
+        // أزرار الوسط المطابقة للفيديو 100%:
+        // [Rewind]   |   [Play/Pause أو Loader دائري أبيض في نفس المكان]   |   [Forward]
+        // مع الدائرة الحمراء التفاعلية عند اللمس كما في الفيديو
+        // =========================================================================
         val centerControlsRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -595,38 +537,107 @@ class MovieInlinePlayerController(
             )
         }
 
-        btnRewind15 = ImageView(activity).apply {
-            setImageDrawable(VectorIcons.createSeek15Icon(activity, isForward = false))
-            background = null
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-                marginEnd = dp(32)
+        // 1. زر الترجيع (يسار)
+        btnRewind15Container = FrameLayout(activity).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(58), dp(58)).apply {
+                marginEnd = dp(24)
             }
         }
+        btnRewind15BgCircle = View(activity).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor("#B38B0000".toColorInt())
+            }
+            alpha = 0f
+            scaleX = 0.7f
+            scaleY = 0.7f
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+        btnRewind15 = ImageView(activity).apply {
+            setImageDrawable(VectorIcons.createCircularSeekArrowIcon(activity, isForward = false))
+            setPadding(dp(15), dp(15), dp(15), dp(15))
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER
+            )
+        }
+        btnRewind15Container.addView(btnRewind15BgCircle)
+        btnRewind15Container.addView(btnRewind15)
 
+        // 2. خانة الوسط الموحدة (يظهر فيها إما Play/Pause أو الـ Loader الأبيض الدائري، ولا يظهران معاً أبداً!)
+        centerActionSlot = FrameLayout(activity).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(74), dp(74))
+        }
+        btnCenterPlayPauseBgCircle = View(activity).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor("#B38B0000".toColorInt())
+            }
+            alpha = 0f
+            scaleX = 0.7f
+            scaleY = 0.7f
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
         btnCenterPlayPause = ImageView(activity).apply {
             setImageDrawable(VectorIcons.createPlayPauseIcon(activity, isPlaying = true))
-            background = null
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            visibility = View.INVISIBLE
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER
+            )
         }
+        centerBufferingSpinner = ProgressBar(activity).apply {
+            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+            visibility = View.VISIBLE
+            layoutParams = FrameLayout.LayoutParams(dp(42), dp(42), Gravity.CENTER)
+        }
+        centerActionSlot.addView(btnCenterPlayPauseBgCircle)
+        centerActionSlot.addView(btnCenterPlayPause)
+        centerActionSlot.addView(centerBufferingSpinner)
 
-        btnForward15 = ImageView(activity).apply {
-            setImageDrawable(VectorIcons.createSeek15Icon(activity, isForward = true))
-            background = null
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply {
-                marginStart = dp(32)
+        // 3. زر التقديم (يمين)
+        btnForward15Container = FrameLayout(activity).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(58), dp(58)).apply {
+                marginStart = dp(24)
             }
         }
+        btnForward15BgCircle = View(activity).apply {
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor("#B38B0000".toColorInt())
+            }
+            alpha = 0f
+            scaleX = 0.7f
+            scaleY = 0.7f
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+        btnForward15 = ImageView(activity).apply {
+            setImageDrawable(VectorIcons.createCircularSeekArrowIcon(activity, isForward = true))
+            setPadding(dp(15), dp(15), dp(15), dp(15))
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                Gravity.CENTER
+            )
+        }
+        btnForward15Container.addView(btnForward15BgCircle)
+        btnForward15Container.addView(btnForward15)
 
-        AnimUtils.attachPressBounce(btnRewind15)
-        AnimUtils.attachPressBounce(btnCenterPlayPause)
-        AnimUtils.attachPressBounce(btnForward15)
-
-        centerControlsRow.addView(btnRewind15)
-        centerControlsRow.addView(btnCenterPlayPause)
-        centerControlsRow.addView(btnForward15)
+        centerControlsRow.addView(btnRewind15Container)
+        centerControlsRow.addView(centerActionSlot)
+        centerControlsRow.addView(btnForward15Container)
         controlsOverlay.addView(centerControlsRow)
 
         val bottomPlayerBar = LinearLayout(activity).apply {
@@ -649,7 +660,7 @@ class MovieInlinePlayerController(
         }
 
         tvElapsed = TextView(activity).apply {
-            text = "0:00"
+            text = "00:00"
             setTextColor(Color.WHITE)
             textSize = 11.5f
             typeface = fontBold
@@ -659,12 +670,13 @@ class MovieInlinePlayerController(
             max = 1000
             progress = 0
             progressTintList = ColorStateList.valueOf("#E50914".toColorInt())
-            thumbTintList = ColorStateList.valueOf(Color.WHITE)
+            secondaryProgressTintList = ColorStateList.valueOf("#55FFFFFF".toColorInt())
+            thumbTintList = ColorStateList.valueOf("#E50914".toColorInt())
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         tvDuration = TextView(activity).apply {
-            text = "--:--"
+            text = "00:00"
             setTextColor("#CBD5E1".toColorInt())
             textSize = 11.5f
             typeface = fontBold
@@ -685,7 +697,6 @@ class MovieInlinePlayerController(
         seekRow.addView(btnInlineFullscreen)
         bottomPlayerBar.addView(seekRow)
 
-        // أزرار الشريط السفلي في وضع Fullscreen مرتبة ومنظمة بمسافات واضحة
         fullscreenBottomActionsRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -716,7 +727,7 @@ class MovieInlinePlayerController(
         btnBottomSpeed = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#26FFFFFF".toColorInt(), 16f, "#45FFFFFF".toColorInt(), 0.8f)
+            background = makeRoundedBg("#24FFFFFF".toColorInt(), 16f, "#40FFFFFF".toColorInt(), 0.8f)
             setPadding(dp(14), dp(6), dp(14), dp(6))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -737,7 +748,7 @@ class MovieInlinePlayerController(
         btnBottomAspect = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#26FFFFFF".toColorInt(), 16f, "#45FFFFFF".toColorInt(), 0.8f)
+            background = makeRoundedBg("#24FFFFFF".toColorInt(), 16f, "#40FFFFFF".toColorInt(), 0.8f)
             setPadding(dp(14), dp(6), dp(14), dp(6))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -768,6 +779,25 @@ class MovieInlinePlayerController(
         controlsOverlay.addView(bottomPlayerBar)
         playerContainer.addView(controlsOverlay)
 
+        // الخط الفاصل السفلي بين المشغل واسم الفيلم تحته
+        vBottomPlayerSeparator = View(activity).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(2),
+                Gravity.BOTTOM
+            )
+            background = GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(
+                    Color.TRANSPARENT,
+                    "#45FFFFFF".toColorInt(),
+                    "#25FFFFFF".toColorInt(),
+                    Color.TRANSPARENT
+                )
+            )
+        }
+        playerContainer.addView(vBottomPlayerSeparator)
+
         btnUnlockScreenOnly = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -794,12 +824,68 @@ class MovieInlinePlayerController(
             setOnClickListener {
                 isControlsLocked = false
                 visibility = View.GONE
-                showControlsImmediately()
+                showControlsWithFade()
             }
         }
         playerContainer.addView(btnUnlockScreenOnly)
 
+        animateSubtitlePositionForControls(controlsVisible = true, animate = false)
         return playerContainer
+    }
+
+    /**
+     * تبديل سلس بين زر Play/Pause والـ Loader الدائري الأبيض في نفس المكان بالضبط كما في الفيديو
+     */
+    private fun setBufferingState(buffering: Boolean) {
+        isBufferingNow = buffering
+        if (buffering) {
+            btnCenterPlayPause.visibility = View.INVISIBLE
+            centerBufferingSpinner.visibility = View.VISIBLE
+            if (!controlsOverlay.isVisible && !isInPipMode && !isControlsLocked) {
+                showControlsWithFade()
+            }
+        } else {
+            centerBufferingSpinner.visibility = View.GONE
+            btnCenterPlayPause.visibility = View.VISIBLE
+        }
+    }
+
+    /**
+     * وميض الدائرة الحمراء خلف زر الوسط أو التقديم/الترجيع عند الضغط كما في الفيديو المرفق
+     */
+    private fun pulseRedCircleFeedback(circleView: View) {
+        circleView.animate().cancel()
+        circleView.alpha = 0.95f
+        circleView.scaleX = 0.78f
+        circleView.scaleY = 0.78f
+        circleView.animate()
+            .scaleX(1.06f)
+            .scaleY(1.06f)
+            .alpha(0f)
+            .setDuration(340L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+    }
+
+    /**
+     * رفع الترجمة فوق شريط التقدم عند ظهور التحكم وإعادتها للأسفل عند اختفائه
+     */
+    private fun animateSubtitlePositionForControls(controlsVisible: Boolean, animate: Boolean = true) {
+        val targetLiftY = if (controlsVisible) {
+            if (isFullscreen) -dpF(64f) else -dpF(34f)
+        } else {
+            0f
+        }
+        tvSubtitleOverlay.animate().cancel()
+        if (animate) {
+            tvSubtitleOverlay.animate()
+                .translationY(targetLiftY)
+                .setDuration(220L)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        } else {
+            tvSubtitleOverlay.translationY = targetLiftY
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -808,8 +894,9 @@ class MovieInlinePlayerController(
         getProviders: () -> List<StreamSource>,
         getCurrentProviderIdx: () -> Int
     ) {
-        btnCenterPlayPause.setOnClickListener {
+        centerActionSlot.setOnClickListener {
             resetAutoHide()
+            pulseRedCircleFeedback(btnCenterPlayPauseBgCircle)
             val exo = engine.player
             if (exo != null && exo.isPlaying) {
                 engine.pause()
@@ -820,31 +907,37 @@ class MovieInlinePlayerController(
             }
         }
 
-        btnRewind15.setOnClickListener {
+        btnRewind15Container.setOnClickListener {
             resetAutoHide()
-            seekByDeltaMs(engine, -15_000L, "-15s")
+            pulseRedCircleFeedback(btnRewind15BgCircle)
+            seekByDeltaMs(engine, -15_000L)
         }
 
-        btnForward15.setOnClickListener {
+        btnForward15Container.setOnClickListener {
             resetAutoHide()
-            seekByDeltaMs(engine, 15_000L, "+15s")
+            pulseRedCircleFeedback(btnForward15BgCircle)
+            seekByDeltaMs(engine, 15_000L)
         }
 
-        // زر Skip Intro يقدم المقدمة بدقة (+85s) ويختفي فوراً
+        // زر Skip Intro يقدم بدقة لنهاية المقدمة الفعلية
         btnSkipIntro.setOnClickListener {
             val exo = engine.player ?: return@setOnClickListener
             hasSkippedIntroForCurrentMedia = true
             btnSkipIntro.visibility = View.GONE
             val dur = exo.duration
-            val targetPos = (exo.currentPosition + INTRO_SKIP_JUMP_MS).let { t ->
+            val targetPos = if (detectedIntroEndMs > exo.currentPosition) {
+                detectedIntroEndMs
+            } else {
+                exo.currentPosition + 80_000L
+            }.let { t ->
                 if (dur > 0) min(t, (dur - 5000L).coerceAtLeast(0L)) else t
             }
+            setBufferingState(true)
             exo.seekTo(targetPos)
             if (dur > 0) {
                 seekBar.progress = ((targetPos * 1000L) / dur).toInt().coerceIn(0, 1000)
                 tvElapsed.text = formatTimeMs(targetPos)
             }
-            showSeekFeedbackToast("Intro Skipped")
         }
 
         btnTopServerOnly.setOnClickListener {
@@ -855,10 +948,9 @@ class MovieInlinePlayerController(
             showQualityOnlyPopup(engine)
         }
 
-        val openAudioAction = {
+        btnBottomAudio.setOnClickListener {
             showAudioTracksDialog(engine)
         }
-        btnBottomAudio.setOnClickListener { openAudioAction() }
 
         val openSubsAction = {
             showSubtitlesDialog()
@@ -890,21 +982,21 @@ class MovieInlinePlayerController(
                 val exo = engine.player ?: return
                 val dur = exo.duration
                 if (dur > 0) {
+                    setBufferingState(true)
                     exo.seekTo((dur * (s?.progress ?: 0)) / 1000L)
                 }
             }
         })
 
-        // الإيماءات: لمسة واحدة، لمستان للتقديم 15s، ضغط مطول لسرعة 2x، وسحب عمودي للصوت (يمين) والإضاءة (يسار)
         val gestureDetector = GestureDetector(activity, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                 if (isControlsLocked) {
                     btnUnlockScreenOnly.isVisible = !btnUnlockScreenOnly.isVisible
                 } else {
-                    if (controlsOverlay.isVisible) {
+                    if (controlsOverlay.isVisible && controlsOverlay.alpha > 0.5f) {
                         hideControlsSmoothly()
                     } else {
-                        showControlsImmediately()
+                        showControlsWithFade()
                     }
                 }
                 return true
@@ -914,9 +1006,13 @@ class MovieInlinePlayerController(
                 if (!isControlsLocked) {
                     val width = playerView.width.coerceAtLeast(1)
                     if (e.x < width * 0.45f) {
-                        seekByDeltaMs(engine, -15_000L, "-15s")
+                        showControlsWithFade()
+                        pulseRedCircleFeedback(btnRewind15BgCircle)
+                        seekByDeltaMs(engine, -15_000L)
                     } else if (e.x > width * 0.55f) {
-                        seekByDeltaMs(engine, 15_000L, "+15s")
+                        showControlsWithFade()
+                        pulseRedCircleFeedback(btnForward15BgCircle)
+                        seekByDeltaMs(engine, 15_000L)
                     }
                 }
                 return true
@@ -928,7 +1024,7 @@ class MovieInlinePlayerController(
                     engine.player?.playbackParameters = PlaybackParameters(2.0f)
                     holdSpeed2xPill.alpha = 0f
                     holdSpeed2xPill.visibility = View.VISIBLE
-                    holdSpeed2xPill.animate().alpha(1f).setDuration(140L).start()
+                    holdSpeed2xPill.animate().alpha(1f).setDuration(150L).start()
                 }
             }
         })
@@ -952,9 +1048,9 @@ class MovieInlinePlayerController(
                     if (!isControlsLocked && !isHold2xActive) {
                         val dy = swipeStartY - ev.y
                         val dx = abs(ev.x - swipeStartX)
-                        val touchSlop = dp(18)
+                        val touchSlop = dp(16)
 
-                        if (swipeMode == 0 && abs(dy) > touchSlop && abs(dy) > dx * 1.4f) {
+                        if (swipeMode == 0 && abs(dy) > touchSlop && abs(dy) > dx * 1.35f) {
                             v.parent?.requestDisallowInterceptTouchEvent(true)
                             val width = playerView.width.coerceAtLeast(1)
                             swipeMode = if (swipeStartX < width * 0.5f) 1 else 2
@@ -966,7 +1062,6 @@ class MovieInlinePlayerController(
                             val deltaPercent = (swipeStartY - ev.y) / (height * 0.72f)
 
                             if (swipeMode == 1) {
-                                // اليسار: التحكم في الإضاءة (Brightness)
                                 currentGestureValue = (initialBrightness + deltaPercent).coerceIn(0.05f, 1.0f)
                                 val lp = activity.window.attributes
                                 lp.screenBrightness = currentGestureValue
@@ -976,7 +1071,6 @@ class MovieInlinePlayerController(
                                     percent = (currentGestureValue * 100).toInt()
                                 )
                             } else if (swipeMode == 2) {
-                                // اليمين: التحكم في الصوت (Sound)
                                 currentGestureValue = (initialVolume + deltaPercent).coerceIn(0f, 1.0f)
                                 val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
                                 val targetVol = (currentGestureValue * maxVol).toInt().coerceIn(0, maxVol)
@@ -1000,7 +1094,7 @@ class MovieInlinePlayerController(
                     if (isHold2xActive) {
                         isHold2xActive = false
                         engine.player?.playbackParameters = PlaybackParameters(currentPlaybackSpeed)
-                        holdSpeed2xPill.animate().alpha(0f).setDuration(140L).withEndAction {
+                        holdSpeed2xPill.animate().alpha(0f).setDuration(150L).withEndAction {
                             holdSpeed2xPill.visibility = View.GONE
                         }.start()
                     }
@@ -1018,9 +1112,9 @@ class MovieInlinePlayerController(
         val clamped = percent.coerceIn(0, 100)
         ivGestureIcon.setImageDrawable(
             if (isBrightness) {
-                VectorIcons.createBrightnessSunIcon(activity, "#FFD700".toColorInt())
+                VectorIcons.createBrightnessSunIcon(activity, Color.WHITE)
             } else {
-                VectorIcons.createAudioSpeakerIcon(activity, "#38BDF8".toColorInt())
+                VectorIcons.createAudioSpeakerIcon(activity, Color.WHITE)
             }
         )
         pbGestureLevel.progress = clamped
@@ -1033,12 +1127,10 @@ class MovieInlinePlayerController(
 
     fun startProgressAndNetworkLoop(engine: PrimePlayerEngine) {
         progressJob?.cancel()
-        lastRxBytes = getSafeTotalRxBytes()
-        lastRxTimestamp = System.currentTimeMillis()
 
         progressJob = scope.launch {
             while (isActive) {
-                delay(400)
+                delay(350)
                 if (!playerContainer.isVisible) continue
 
                 val p = engine.player
@@ -1049,13 +1141,9 @@ class MovieInlinePlayerController(
                     updatePlayPauseVectorIcon(p.isPlaying)
                 }
 
-                if (loadingContainer.isVisible) {
-                    updateLiveLoaderPercentAndSpeed(p)
-                }
-
                 if (p == null) continue
-                if (p.isPlaying && loadingContainer.isVisible) {
-                    loadingContainer.visibility = View.GONE
+                if (p.isPlaying && isBufferingNow && p.playbackState == Player.STATE_READY) {
+                    setBufferingState(false)
                 }
 
                 val pos = p.currentPosition.coerceAtLeast(0L)
@@ -1064,16 +1152,19 @@ class MovieInlinePlayerController(
                 if (dur > 0) {
                     if (!isUserSeeking && controlsOverlay.isVisible) {
                         seekBar.progress = ((pos * 1000L) / dur).toInt().coerceIn(0, 1000)
+                        seekBar.secondaryProgress = (p.bufferedPercentage * 10).coerceIn(0, 1000)
                         tvElapsed.text = formatTimeMs(pos)
                         tvDuration.text = formatTimeMs(dur)
                     }
 
-                    // زر Skip Intro لا يظهر أبداً في وضع PiP
-                    val shouldShowSkipIntro = !isInPipMode &&
+                    // إظهار Skip Intro فقط إذا كان مسلسلاً (أو تم اكتشاف مقدمة فعلية)
+                    val hasValidIntroWindow = detectedIntroStartMs >= 0L && detectedIntroEndMs > detectedIntroStartMs
+                    val shouldShowSkipIntro = hasValidIntroWindow &&
+                            !isInPipMode &&
                             !activity.isInPictureInPictureMode &&
                             !hasSkippedIntroForCurrentMedia &&
-                            dur > 240_000L &&
-                            pos in INTRO_START_MS..INTRO_END_MS
+                            dur > 180_000L &&
+                            pos in detectedIntroStartMs..detectedIntroEndMs
 
                     if (shouldShowSkipIntro && btnSkipIntro.visibility != View.VISIBLE) {
                         btnSkipIntro.alpha = 0f
@@ -1084,7 +1175,7 @@ class MovieInlinePlayerController(
                     }
 
                     lastSavedTick++
-                    if (lastSavedTick >= 12 && pos > 5000L) {
+                    if (lastSavedTick >= 14 && pos > 5000L) {
                         lastSavedTick = 0
                         onSaveProgressTick(pos, dur)
                     }
@@ -1109,60 +1200,24 @@ class MovieInlinePlayerController(
         }
     }
 
-    private fun getSafeTotalRxBytes(): Long {
-        val uidBytes = TrafficStats.getUidRxBytes(Process.myUid())
-        return if (uidBytes != TrafficStats.UNSUPPORTED.toLong() && uidBytes > 0L) {
-            uidBytes
-        } else {
-            TrafficStats.getTotalRxBytes().coerceAtLeast(0L)
-        }
-    }
-
-    private fun updateLiveLoaderPercentAndSpeed(player: Player?) {
-        val now = System.currentTimeMillis()
-        val currentBytes = getSafeTotalRxBytes()
-        val elapsedMs = (now - lastRxTimestamp).coerceAtLeast(1L)
-        if (elapsedMs >= 400L) {
-            val deltaBytes = (currentBytes - lastRxBytes).coerceAtLeast(0L)
-            val bytesPerSec = (deltaBytes * 1000L) / elapsedMs
-            lastRxBytes = currentBytes
-            lastRxTimestamp = now
-
-            val speedStr = when {
-                bytesPerSec >= 1_048_576L -> String.format(Locale.US, "%.1f MB/s", bytesPerSec / 1_048_576.0)
-                bytesPerSec >= 1024L -> String.format(Locale.US, "%d KB/s", bytesPerSec / 1024L)
-                else -> "0 KB/s"
-            }
-            tvNetworkSpeedBadge.text = speedStr
-
-            val realBuf = player?.bufferedPercentage ?: 0
-            simulatedBufferPct = if (realBuf in 1..99) {
-                realBuf
-            } else {
-                (simulatedBufferPct + if (bytesPerSec > 8000L) 14 else 6).coerceAtMost(96)
-            }
-            tvLoadingPercent.text = "$simulatedBufferPct%"
-        }
-    }
-
     /**
-     * 1. نافذة اختيار السيرفر فقط (تظهر في المشغل الكبير)
+     * 1. نافذة اختيار السيرفر بتصميم زجاجي داكن فخم
      */
     private fun showServersOnlyPopup(providers: List<StreamSource>, currentIdx: Int) {
         val dialog = Dialog(activity)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
-        val widthPx = dp(280)
+        val widthPx = dp(275)
         val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = makeRoundedBg("#141720".toColorInt(), 16f, "#2C3242".toColorInt(), 1f)
-            setPadding(dp(18), dp(14), dp(18), dp(14))
+            background = makeRoundedBg("#EE10131A".toColorInt(), 18f, "#33FFFFFF".toColorInt(), 1f)
+            setPadding(dp(18), dp(16), dp(18), dp(14))
             layoutParams = ViewGroup.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
 
         val header = TextView(activity).apply {
-            text = "Select Server"
+            text = "Servers"
             setTextColor(Color.WHITE)
             textSize = 15f
             typeface = fontBold
@@ -1171,7 +1226,7 @@ class MovieInlinePlayerController(
         card.addView(header)
 
         val divider = View(activity).apply {
-            setBackgroundColor("#24FFFFFF".toColorInt())
+            setBackgroundColor("#22FFFFFF".toColorInt())
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
                 bottomMargin = dp(8)
             }
@@ -1193,7 +1248,7 @@ class MovieInlinePlayerController(
             val row = LinearLayout(activity).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = if (isSel) makeRoundedBg("#26E50914".toColorInt(), 10f, "#80E50914".toColorInt(), 1f) else null
+                background = if (isSel) makeRoundedBg("#26FFFFFF".toColorInt(), 10f, "#55FFFFFF".toColorInt(), 1f) else null
                 setPadding(dp(12), dp(10), dp(12), dp(10))
                 setOnClickListener {
                     btnTopServerOnly.text = srv.label.take(12)
@@ -1212,7 +1267,7 @@ class MovieInlinePlayerController(
             row.addView(nameTv)
             if (isSel) {
                 val ivCheck = ImageView(activity).apply {
-                    setImageDrawable(VectorIcons.createCheckMarkIcon(activity, "#E50914".toColorInt()))
+                    setImageDrawable(VectorIcons.createCheckMarkIcon(activity, Color.WHITE))
                     layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
                 }
                 row.addView(ivCheck)
@@ -1226,23 +1281,23 @@ class MovieInlinePlayerController(
     }
 
     /**
-     * 2. نافذة اختيار الجودة فقط (تظهر في المشغل الكبير)
+     * 2. نافذة اختيار الجودة بتصميم زجاجي داكن فخم
      */
     private fun showQualityOnlyPopup(engine: PrimePlayerEngine) {
         val dialog = Dialog(activity)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
-        val widthPx = dp(265)
+        val widthPx = dp(260)
         val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = makeRoundedBg("#141720".toColorInt(), 16f, "#2C3242".toColorInt(), 1f)
-            setPadding(dp(18), dp(14), dp(18), dp(14))
+            background = makeRoundedBg("#EE10131A".toColorInt(), 18f, "#33FFFFFF".toColorInt(), 1f)
+            setPadding(dp(18), dp(16), dp(18), dp(14))
             layoutParams = ViewGroup.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
 
         val header = TextView(activity).apply {
-            text = "Stream Quality"
+            text = "Quality"
             setTextColor(Color.WHITE)
             textSize = 15f
             typeface = fontBold
@@ -1251,7 +1306,7 @@ class MovieInlinePlayerController(
         card.addView(header)
 
         val divider = View(activity).apply {
-            setBackgroundColor("#24FFFFFF".toColorInt())
+            setBackgroundColor("#22FFFFFF".toColorInt())
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
                 bottomMargin = dp(8)
             }
@@ -1264,10 +1319,10 @@ class MovieInlinePlayerController(
         val isAutoSelected = selectedQualityHeight == null
         val autoRow = TextView(activity).apply {
             text = "Auto ($detectedBadge)"
-            setTextColor(if (isAutoSelected) "#E50914".toColorInt() else Color.WHITE)
+            setTextColor(if (isAutoSelected) Color.WHITE else "#CBD5E1".toColorInt())
             textSize = 13.5f
             typeface = fontBold
-            background = if (isAutoSelected) makeRoundedBg("#24E50914".toColorInt(), 10f) else null
+            background = if (isAutoSelected) makeRoundedBg("#26FFFFFF".toColorInt(), 10f, "#55FFFFFF".toColorInt(), 1f) else null
             setPadding(dp(12), dp(10), dp(12), dp(10))
             setOnClickListener {
                 selectedQualityHeight = null
@@ -1300,10 +1355,10 @@ class MovieInlinePlayerController(
             val isSel = selectedQualityHeight == qTrack.height
             val row = TextView(activity).apply {
                 text = qLabel
-                setTextColor(if (isSel) "#E50914".toColorInt() else "#CBD5E1".toColorInt())
+                setTextColor(if (isSel) Color.WHITE else "#CBD5E1".toColorInt())
                 textSize = 13.5f
                 typeface = fontBold
-                background = if (isSel) makeRoundedBg("#24E50914".toColorInt(), 10f) else null
+                background = if (isSel) makeRoundedBg("#26FFFFFF".toColorInt(), 10f, "#55FFFFFF".toColorInt(), 1f) else null
                 setPadding(dp(12), dp(10), dp(12), dp(10))
                 setOnClickListener {
                     selectedQualityHeight = qTrack.height
@@ -1321,7 +1376,7 @@ class MovieInlinePlayerController(
     }
 
     /**
-     * 3. نافذة اختيار المسارات الصوتية (Audio Tracks)
+     * 3. نافذة اختيار الصوت بتصميم زجاجي داكن فخم
      */
     private fun showAudioTracksDialog(engine: PrimePlayerEngine) {
         val exo = engine.player
@@ -1329,16 +1384,16 @@ class MovieInlinePlayerController(
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
-        val widthPx = dp(280)
+        val widthPx = dp(275)
         val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = makeRoundedBg("#141720".toColorInt(), 16f, "#2C3242".toColorInt(), 1f)
-            setPadding(dp(18), dp(14), dp(18), dp(14))
+            background = makeRoundedBg("#EE10131A".toColorInt(), 18f, "#33FFFFFF".toColorInt(), 1f)
+            setPadding(dp(18), dp(16), dp(18), dp(14))
             layoutParams = ViewGroup.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
 
         val header = TextView(activity).apply {
-            text = "Audio Tracks"
+            text = "Audio Track"
             setTextColor(Color.WHITE)
             textSize = 15f
             typeface = fontBold
@@ -1354,14 +1409,13 @@ class MovieInlinePlayerController(
                 val format = group.getTrackFormat(tIdx)
                 val langCode = format.language.orEmpty()
                 val label = format.label
-                    ?: (if (langCode.isNotEmpty()) Locale(langCode).displayLanguage else "Audio Track ${addedCount + 1}")
-                val channels = if (format.channelCount > 0) " • ${format.channelCount}ch" else ""
+                    ?: (if (langCode.isNotEmpty()) Locale(langCode).displayLanguage else "Track ${addedCount + 1}")
                 val isSelected = group.isTrackSelected(tIdx)
 
                 val row = LinearLayout(activity).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    background = if (isSelected) makeRoundedBg("#24E50914".toColorInt(), 10f) else null
+                    background = if (isSelected) makeRoundedBg("#26FFFFFF".toColorInt(), 10f, "#55FFFFFF".toColorInt(), 1f) else null
                     setPadding(dp(12), dp(10), dp(12), dp(10))
                     setOnClickListener {
                         exo?.let { player ->
@@ -1375,7 +1429,7 @@ class MovieInlinePlayerController(
                     }
                 }
                 val tv = TextView(activity).apply {
-                    text = "$label$channels"
+                    text = label
                     setTextColor(if (isSelected) Color.WHITE else "#CBD5E1".toColorInt())
                     textSize = 13.5f
                     typeface = fontBold
@@ -1384,7 +1438,7 @@ class MovieInlinePlayerController(
                 row.addView(tv)
                 if (isSelected) {
                     val ivCheck = ImageView(activity).apply {
-                        setImageDrawable(VectorIcons.createCheckMarkIcon(activity, "#E50914".toColorInt()))
+                        setImageDrawable(VectorIcons.createCheckMarkIcon(activity, Color.WHITE))
                         layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
                     }
                     row.addView(ivCheck)
@@ -1396,10 +1450,11 @@ class MovieInlinePlayerController(
 
         if (addedCount == 0) {
             val defaultRow = TextView(activity).apply {
-                text = "Default Stream Audio"
-                setTextColor("#E50914".toColorInt())
+                text = "Original Audio Track"
+                setTextColor(Color.WHITE)
                 textSize = 13.5f
                 typeface = fontBold
+                background = makeRoundedBg("#26FFFFFF".toColorInt(), 10f, "#55FFFFFF".toColorInt(), 1f)
                 setPadding(dp(12), dp(10), dp(12), dp(10))
                 setOnClickListener { dialog.dismiss() }
             }
@@ -1412,10 +1467,10 @@ class MovieInlinePlayerController(
     }
 
     /**
-     * 4. نافذة الترجمة المبنية من الصفر (10/10):
-     * حجم مدمج وأنيق يناسب الوضع الصغير ووضع الشاشة الكاملة (Fullscreen) مع تبويبين واضحين:
-     * [Tracks] لاختيار لغة الترجمة أو إيقافها أو رفع ملف خارجي
-     * [Settings] للتحكم في حجم الخط ولونه وخلفيته ومزامنة الوقت
+     * 4. نافذة الترجمة بتصميم زجاجي داكن موحد وفخم (Monochrome Dark Frosted Glass):
+     * - بدون أي ألوان مختلطة
+     * - بدون أي نص WEB-DL أو أسماء ملفات طويلة (تعرض اسم اللغة النظيف فقط)
+     * - تحتوي على خيار Shadow (خلفية شفافة مع ظل أسود قوي حول النص)
      */
     private fun showSubtitlesDialog() {
         val dialog = Dialog(activity)
@@ -1424,17 +1479,17 @@ class MovieInlinePlayerController(
 
         val screenW = activity.resources.displayMetrics.widthPixels
         val screenH = activity.resources.displayMetrics.heightPixels
-        val dialogWidthPx = min((screenW * 0.90f).toInt(), dp(380))
-        val listHeightPx = min((screenH * 0.46f).toInt(), dp(195))
+        val dialogWidthPx = min((screenW * 0.88f).toInt(), dp(360))
+        val listHeightPx = min((screenH * 0.44f).toInt(), dp(185))
 
         val root = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = makeRoundedBg("#12151E".toColorInt(), 18f, "#2E364A".toColorInt(), 1f)
+            background = makeRoundedBg("#F0101218".toColorInt(), 20f, "#33FFFFFF".toColorInt(), 1f)
             setPadding(dp(16), dp(14), dp(16), dp(14))
             layoutParams = ViewGroup.LayoutParams(dialogWidthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
 
-        // الشريط العلوي: التبويبان [Tracks] و [Settings] + زر الإغلاق
+        // شريط التبويبين الزجاجي الموحد
         val topHeaderRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1443,30 +1498,30 @@ class MovieInlinePlayerController(
 
         val tabSwitchBox = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
-            background = makeRoundedBg("#1A1F2C".toColorInt(), 12f, "#2B3245".toColorInt(), 1f)
+            background = makeRoundedBg("#14FFFFFF".toColorInt(), 12f, "#22FFFFFF".toColorInt(), 1f)
             setPadding(dp(3), dp(3), dp(3), dp(3))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         val tabTracksBtn = TextView(activity).apply {
-            text = "Subtitles (${availableSubtitles.size})"
+            text = "Languages"
             textSize = 12.5f
             typeface = fontBold
-            setTextColor(Color.WHITE)
+            setTextColor("#0E1015".toColorInt())
             gravity = Gravity.CENTER
-            background = makeRoundedBg("#E50914".toColorInt(), 10f)
-            setPadding(dp(10), dp(7), dp(10), dp(7))
+            background = makeRoundedBg(Color.WHITE, 10f)
+            setPadding(dp(10), dp(6), dp(10), dp(6))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         val tabSettingsBtn = TextView(activity).apply {
-            text = "Style & Sync"
+            text = "Appearance"
             textSize = 12.5f
             typeface = fontBold
-            setTextColor("#94A3B8".toColorInt())
+            setTextColor("#B0BAC9".toColorInt())
             gravity = Gravity.CENTER
             background = null
-            setPadding(dp(10), dp(7), dp(10), dp(7))
+            setPadding(dp(10), dp(6), dp(10), dp(6))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
@@ -1475,12 +1530,12 @@ class MovieInlinePlayerController(
 
         val btnClosePopup = TextView(activity).apply {
             text = "✕"
-            setTextColor("#CBD5E1".toColorInt())
-            textSize = 14f
+            setTextColor(Color.WHITE)
+            textSize = 13f
             typeface = fontBold
             gravity = Gravity.CENTER
-            background = makeRoundedBg("#1E2433".toColorInt(), 16f)
-            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginStart = dp(10) }
+            background = makeRoundedBg("#1FFFFFFF".toColorInt(), 16f)
+            layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginStart = dp(10) }
             setOnClickListener { dialog.dismiss() }
         }
 
@@ -1489,14 +1544,13 @@ class MovieInlinePlayerController(
         root.addView(topHeaderRow)
 
         // =====================================================
-        // القسم الأول: قائمة الترجمات (Tracks Section)
+        // التبويب 1: قائمة اللغات النظيفة (بدون WEB-DL1080p...)
         // =====================================================
         val tracksPanel = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.VISIBLE
         }
 
-        // شريط الإجراءات السريعة: Off | Upload SRT | Refresh
         val quickActionsRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -1505,17 +1559,17 @@ class MovieInlinePlayerController(
 
         val btnDisableSubs = TextView(activity).apply {
             val isOff = selectedSubtitleId == "NONE"
-            text = "No Subtitles"
+            text = "Off"
             textSize = 11.5f
             typeface = fontBold
-            setTextColor(if (isOff) Color.WHITE else "#F87171".toColorInt())
+            setTextColor(if (isOff) "#0E1015".toColorInt() else Color.WHITE)
             background = makeRoundedBg(
-                if (isOff) "#E50914".toColorInt() else "#24F87171".toColorInt(),
+                if (isOff) Color.WHITE else "#1AFFFFFF".toColorInt(),
                 10f,
-                "#66F87171".toColorInt(),
+                "#33FFFFFF".toColorInt(),
                 0.8f
             )
-            setPadding(dp(11), dp(6), dp(11), dp(6))
+            setPadding(dp(14), dp(6), dp(14), dp(6))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1523,18 +1577,17 @@ class MovieInlinePlayerController(
             setOnClickListener {
                 selectedSubtitleId = "NONE"
                 tvSubtitleOverlay.visibility = View.GONE
-                Toast.makeText(activity, "Subtitles Disabled", Toast.LENGTH_SHORT).show()
                 dialog.dismiss()
             }
         }
 
         val btnUploadSrt = TextView(activity).apply {
-            text = "+ Upload SRT/VTT"
+            text = "+ Local File"
             textSize = 11.5f
             typeface = fontBold
-            setTextColor("#38BDF8".toColorInt())
-            background = makeRoundedBg("#1A38BDF8".toColorInt(), 10f, "#6638BDF8".toColorInt(), 0.8f)
-            setPadding(dp(11), dp(6), dp(11), dp(6))
+            setTextColor(Color.WHITE)
+            background = makeRoundedBg("#1AFFFFFF".toColorInt(), 10f, "#33FFFFFF".toColorInt(), 0.8f)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                 marginEnd = dp(6)
             }
@@ -1546,12 +1599,12 @@ class MovieInlinePlayerController(
         }
 
         val btnRefreshSubs = TextView(activity).apply {
-            text = "Refresh"
+            text = "Reload"
             textSize = 11.5f
             typeface = fontBold
             setTextColor(Color.WHITE)
-            background = makeRoundedBg("#24FFFFFF".toColorInt(), 10f)
-            setPadding(dp(11), dp(6), dp(11), dp(6))
+            background = makeRoundedBg("#1AFFFFFF".toColorInt(), 10f, "#33FFFFFF".toColorInt(), 0.8f)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
         }
 
         quickActionsRow.addView(btnDisableSubs)
@@ -1578,7 +1631,7 @@ class MovieInlinePlayerController(
         root.addView(tracksPanel)
 
         // =====================================================
-        // القسم الثاني: إعدادات الخط واللون والمزامنة (Style & Sync Section)
+        // التبويب 2: المظهر والمزامنة (Appearance & Sync)
         // =====================================================
         val settingsPanel = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
@@ -1586,9 +1639,8 @@ class MovieInlinePlayerController(
             setPadding(dp(2), dp(4), dp(2), dp(4))
         }
 
-        // 1. حجم الخط (Font Size)
         val lblSize = TextView(activity).apply {
-            text = "TEXT SIZE"
+            text = "FONT SIZE"
             setTextColor("#94A3B8".toColorInt())
             textSize = 10.5f
             typeface = fontBold
@@ -1607,7 +1659,7 @@ class MovieInlinePlayerController(
             13f to "Small",
             16f to "Normal",
             20f to "Large",
-            24f to "Extra"
+            24f to "Max"
         )
 
         fun rebuildSizePills() {
@@ -1619,11 +1671,11 @@ class MovieInlinePlayerController(
                     textSize = 12f
                     typeface = fontBold
                     gravity = Gravity.CENTER
-                    setTextColor(Color.WHITE)
+                    setTextColor(if (isSel) "#0E1015".toColorInt() else Color.WHITE)
                     background = makeRoundedBg(
-                        if (isSel) "#E50914".toColorInt() else "#1C2230".toColorInt(),
+                        if (isSel) Color.WHITE else "#1AFFFFFF".toColorInt(),
                         10f,
-                        if (isSel) "#FF6B72".toColorInt() else "#33FFFFFF".toColorInt()
+                        "#33FFFFFF".toColorInt()
                     )
                     setPadding(dp(6), dp(7), dp(6), dp(7))
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -1641,65 +1693,8 @@ class MovieInlinePlayerController(
         rebuildSizePills()
         settingsPanel.addView(sizeOptionsRow)
 
-        // 2. لون النص (Text Color)
-        val lblColor = TextView(activity).apply {
-            text = "TEXT COLOR"
-            setTextColor("#94A3B8".toColorInt())
-            textSize = 10.5f
-            typeface = fontBold
-            setPadding(0, 0, 0, dp(6))
-        }
-        settingsPanel.addView(lblColor)
-
-        val colorOptionsRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(12) }
-        }
-        val colorPresets = listOf(
-            Color.WHITE to "White",
-            "#FFD700".toColorInt() to "Yellow",
-            "#38BDF8".toColorInt() to "Cyan",
-            "#4ADE80".toColorInt() to "Green"
-        )
-
-        fun rebuildColorPills() {
-            colorOptionsRow.removeAllViews()
-            colorPresets.forEach { (cVal, label) ->
-                val isSel = subtitleTextColor == cVal
-                val pill = TextView(activity).apply {
-                    text = label
-                    textSize = 12f
-                    typeface = fontBold
-                    gravity = Gravity.CENTER
-                    setTextColor(cVal)
-                    background = makeRoundedBg(
-                        if (isSel) "#28FFFFFF".toColorInt() else "#1C2230".toColorInt(),
-                        10f,
-                        if (isSel) cVal else "#33FFFFFF".toColorInt(),
-                        if (isSel) 1.5f else 1f
-                    )
-                    setPadding(dp(6), dp(7), dp(6), dp(7))
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        marginEnd = dp(5)
-                    }
-                    setOnClickListener {
-                        subtitleTextColor = cVal
-                        saveAndApplySubtitleStyle()
-                        rebuildColorPills()
-                    }
-                }
-                colorOptionsRow.addView(pill)
-            }
-        }
-        rebuildColorPills()
-        settingsPanel.addView(colorOptionsRow)
-
-        // 3. خلفية الترجمة (Background Opacity)
         val lblBg = TextView(activity).apply {
-            text = "BACKGROUND STYLE"
+            text = "TEXT BACKGROUND STYLE"
             setTextColor("#94A3B8".toColorInt())
             textSize = 10.5f
             typeface = fontBold
@@ -1714,10 +1709,11 @@ class MovieInlinePlayerController(
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { bottomMargin = dp(12) }
         }
+        // خيار Shadow (شفاف + ظل أسود واضح حول الحروف) + Frosted Glass + Dark Box
         val bgPresets = listOf(
-            0 to "Transparent",
-            135 to "Semi-Dark",
-            220 to "Solid Box"
+            0 to "Shadow",
+            130 to "Glass",
+            215 to "Dark Box"
         )
 
         fun rebuildBgPills() {
@@ -1729,11 +1725,11 @@ class MovieInlinePlayerController(
                     textSize = 12f
                     typeface = fontBold
                     gravity = Gravity.CENTER
-                    setTextColor(Color.WHITE)
+                    setTextColor(if (isSel) "#0E1015".toColorInt() else Color.WHITE)
                     background = makeRoundedBg(
-                        if (isSel) "#E50914".toColorInt() else "#1C2230".toColorInt(),
+                        if (isSel) Color.WHITE else "#1AFFFFFF".toColorInt(),
                         10f,
-                        if (isSel) "#FF6B72".toColorInt() else "#33FFFFFF".toColorInt()
+                        "#33FFFFFF".toColorInt()
                     )
                     setPadding(dp(6), dp(7), dp(6), dp(7))
                     layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -1751,60 +1747,59 @@ class MovieInlinePlayerController(
         rebuildBgPills()
         settingsPanel.addView(bgOptionsRow)
 
-        // 4. مزامنة التوقيت (Time Sync Offset)
         val syncRow = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#191F2D".toColorInt(), 12f, "#2C354D".toColorInt(), 1f)
+            background = makeRoundedBg("#14FFFFFF".toColorInt(), 12f, "#28FFFFFF".toColorInt(), 1f)
             setPadding(dp(12), dp(8), dp(12), dp(8))
         }
         val tvSyncStatus = TextView(activity).apply {
-            text = String.format(Locale.US, "Sync: %+.1fs", subtitleOffsetMs / 1000.0)
-            setTextColor("#38BDF8".toColorInt())
-            textSize = 12.5f
+            text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
+            setTextColor(Color.WHITE)
+            textSize = 12f
             typeface = fontBold
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val btnMinusHalf = TextView(activity).apply {
             text = "-0.5s"
             setTextColor(Color.WHITE)
-            textSize = 12f
+            textSize = 11.5f
             typeface = fontBold
-            background = makeRoundedBg("#283044".toColorInt(), 8f)
-            setPadding(dp(11), dp(5), dp(11), dp(5))
+            background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = dp(6)
             }
             setOnClickListener {
                 subtitleOffsetMs -= 500L
-                tvSyncStatus.text = String.format(Locale.US, "Sync: %+.1fs", subtitleOffsetMs / 1000.0)
+                tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
             }
         }
         val btnResetSync = TextView(activity).apply {
-            text = "0.0s"
-            setTextColor(Color.WHITE)
-            textSize = 12f
+            text = "Reset"
+            setTextColor("#0E1015".toColorInt())
+            textSize = 11.5f
             typeface = fontBold
-            background = makeRoundedBg("#E50914".toColorInt(), 8f)
-            setPadding(dp(11), dp(5), dp(11), dp(5))
+            background = makeRoundedBg(Color.WHITE, 8f)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = dp(6)
             }
             setOnClickListener {
                 subtitleOffsetMs = 0L
-                tvSyncStatus.text = "Sync: +0.0s"
+                tvSyncStatus.text = "Offset: +0.0s"
             }
         }
         val btnPlusHalf = TextView(activity).apply {
             text = "+0.5s"
             setTextColor(Color.WHITE)
-            textSize = 12f
+            textSize = 11.5f
             typeface = fontBold
-            background = makeRoundedBg("#283044".toColorInt(), 8f)
-            setPadding(dp(11), dp(5), dp(11), dp(5))
+            background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
             setOnClickListener {
                 subtitleOffsetMs += 500L
-                tvSyncStatus.text = String.format(Locale.US, "Sync: %+.1fs", subtitleOffsetMs / 1000.0)
+                tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
             }
         }
         syncRow.addView(tvSyncStatus)
@@ -1815,47 +1810,51 @@ class MovieInlinePlayerController(
 
         root.addView(settingsPanel)
 
-        // التبديل السلس بين التبويبين
         tabTracksBtn.setOnClickListener {
             tracksPanel.visibility = View.VISIBLE
             settingsPanel.visibility = View.GONE
-            tabTracksBtn.background = makeRoundedBg("#E50914".toColorInt(), 10f)
-            tabTracksBtn.setTextColor(Color.WHITE)
+            tabTracksBtn.background = makeRoundedBg(Color.WHITE, 10f)
+            tabTracksBtn.setTextColor("#0E1015".toColorInt())
             tabSettingsBtn.background = null
-            tabSettingsBtn.setTextColor("#94A3B8".toColorInt())
+            tabSettingsBtn.setTextColor("#B0BAC9".toColorInt())
         }
         tabSettingsBtn.setOnClickListener {
             tracksPanel.visibility = View.GONE
             settingsPanel.visibility = View.VISIBLE
-            tabSettingsBtn.background = makeRoundedBg("#E50914".toColorInt(), 10f)
-            tabSettingsBtn.setTextColor(Color.WHITE)
+            tabSettingsBtn.background = makeRoundedBg(Color.WHITE, 10f)
+            tabSettingsBtn.setTextColor("#0E1015".toColorInt())
             tabTracksBtn.background = null
-            tabTracksBtn.setTextColor("#94A3B8".toColorInt())
+            tabTracksBtn.setTextColor("#B0BAC9".toColorInt())
         }
 
         var selectedLangFilter = "ALL"
 
+        fun getCleanLanguageName(codeRaw: String, fallbackLabel: String): String {
+            return when (codeRaw.take(2).lowercase(Locale.ROOT)) {
+                "ar" -> "Arabic"
+                "en" -> "English"
+                "fr" -> "French"
+                "es" -> "Spanish"
+                "tr" -> "Turkish"
+                "de" -> "German"
+                "it" -> "Italian"
+                "pt" -> "Portuguese"
+                "ru" -> "Russian"
+                else -> fallbackLabel.substringBefore("(").substringBefore("-").trim().ifEmpty { "Subtitle" }
+            }
+        }
+
         fun renderAvailableLanguageChipsAndTracks() {
             filterRow.removeAllViews()
             tracksContainer.removeAllViews()
-            tabTracksBtn.text = "Subtitles (${availableSubtitles.size})"
 
-            // إظهار اللغات المتوفرة فعلياً فقط
             val groupedLangs = availableSubtitles.groupBy {
                 it.languageCode.take(2).lowercase(Locale.ROOT).ifEmpty { "en" }
             }
-            val dynamicFilters = mutableListOf("ALL" to "All (${availableSubtitles.size})")
+            val dynamicFilters = mutableListOf("ALL" to "All")
             groupedLangs.forEach { (code, list) ->
-                val readableName = when (code) {
-                    "ar" -> "Arabic"
-                    "en" -> "English"
-                    "fr" -> "French"
-                    "es" -> "Spanish"
-                    "tr" -> "Turkish"
-                    "de" -> "German"
-                    else -> list.first().languageLabel.substringBefore(" ").ifEmpty { code.uppercase() }
-                }
-                dynamicFilters.add(code to "$readableName (${list.size})")
+                val cleanName = getCleanLanguageName(code, list.first().languageLabel)
+                dynamicFilters.add(code to cleanName)
             }
 
             dynamicFilters.forEach { (code, label) ->
@@ -1864,13 +1863,13 @@ class MovieInlinePlayerController(
                     text = label
                     textSize = 11f
                     typeface = fontBold
-                    setTextColor(Color.WHITE)
+                    setTextColor(if (isCurrent) "#0E1015".toColorInt() else Color.WHITE)
                     background = makeRoundedBg(
-                        if (isCurrent) "#E50914".toColorInt() else "#1C2230".toColorInt(),
+                        if (isCurrent) Color.WHITE else "#16FFFFFF".toColorInt(),
                         14f,
-                        if (isCurrent) "#FF6B72".toColorInt() else "#2EFFFFFF".toColorInt()
+                        "#2EFFFFFF".toColorInt()
                     )
-                    setPadding(dp(11), dp(5), dp(11), dp(5))
+                    setPadding(dp(12), dp(5), dp(12), dp(5))
                     layoutParams = LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
@@ -1889,7 +1888,7 @@ class MovieInlinePlayerController(
 
             if (filtered.isEmpty()) {
                 val emptyTv = TextView(activity).apply {
-                    text = "No subtitle tracks found. Tap Refresh or Upload SRT."
+                    text = "No subtitles available."
                     setTextColor("#94A3B8".toColorInt())
                     textSize = 12.5f
                     typeface = fontRegular
@@ -1898,14 +1897,19 @@ class MovieInlinePlayerController(
                 }
                 tracksContainer.addView(emptyTv)
             } else {
+                val langCounter = mutableMapOf<String, Int>()
                 filtered.forEach { track ->
                     val isSelected = track.id == selectedSubtitleId
-                    val isWebDl = track.releaseName.contains("WEB", true) || track.releaseName.contains("Stream", true)
+                    val baseLang = getCleanLanguageName(track.languageCode, track.languageLabel)
+                    val count = (langCounter[baseLang] ?: 0) + 1
+                    langCounter[baseLang] = count
+                    val cleanDisplayTitle = if (count == 1) baseLang else "$baseLang  #$count"
+
                     val itemLayout = LinearLayout(activity).apply {
                         orientation = LinearLayout.HORIZONTAL
                         gravity = Gravity.CENTER_VERTICAL
-                        background = if (isSelected) makeRoundedBg("#26E50914".toColorInt(), 10f, "#E50914".toColorInt()) else null
-                        setPadding(dp(12), dp(8), dp(12), dp(8))
+                        background = if (isSelected) makeRoundedBg("#26FFFFFF".toColorInt(), 10f, "#55FFFFFF".toColorInt(), 1f) else null
+                        setPadding(dp(14), dp(10), dp(14), dp(10))
                         setOnClickListener {
                             selectedSubtitleId = track.id
                             subtitleOffsetMs = 0L
@@ -1914,42 +1918,25 @@ class MovieInlinePlayerController(
                                 if (parsed.isNotEmpty()) {
                                     activeSubtitleCues = parsed
                                     tvSubtitleOverlay.visibility = View.VISIBLE
-                                    Toast.makeText(activity, "Subtitle: ${track.languageLabel}", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(activity, "Try another subtitle track", Toast.LENGTH_SHORT).show()
                                 }
                             }
                             dialog.dismiss()
                         }
                     }
 
-                    val textCol = LinearLayout(activity).apply {
-                        orientation = LinearLayout.VERTICAL
+                    val langTv = TextView(activity).apply {
+                        text = cleanDisplayTitle
+                        setTextColor(if (isSelected) Color.WHITE else "#D0D7E2".toColorInt())
+                        textSize = 13.5f
+                        typeface = fontBold
                         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                     }
-                    val langTv = TextView(activity).apply {
-                        text = track.languageLabel
-                        setTextColor(Color.WHITE)
-                        textSize = 13f
-                        typeface = fontBold
-                    }
-                    val badgeText = if (isWebDl) "100% Synced" else "OpenSubtitles"
-                    val relTv = TextView(activity).apply {
-                        text = "${track.releaseName} • $badgeText"
-                        setTextColor(if (isWebDl) "#34D399".toColorInt() else "#94A3B8".toColorInt())
-                        textSize = 10.5f
-                        typeface = fontRegular
-                        maxLines = 1
-                        ellipsize = TextUtils.TruncateAt.END
-                    }
-                    textCol.addView(langTv)
-                    textCol.addView(relTv)
-                    itemLayout.addView(textCol)
+                    itemLayout.addView(langTv)
 
                     if (isSelected) {
                         val ivCheck = ImageView(activity).apply {
-                            setImageDrawable(VectorIcons.createCheckMarkIcon(activity, "#E50914".toColorInt()))
-                            layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginStart = dp(8) }
+                            setImageDrawable(VectorIcons.createCheckMarkIcon(activity, Color.WHITE))
+                            layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
                         }
                         itemLayout.addView(ivCheck)
                     }
@@ -1962,7 +1949,7 @@ class MovieInlinePlayerController(
             btnRefreshSubs.text = "..."
             onRequestRefreshSubtitles { freshSubs ->
                 availableSubtitles = freshSubs
-                btnRefreshSubs.text = "Refresh"
+                btnRefreshSubs.text = "Reload"
                 renderAvailableLanguageChipsAndTracks()
             }
         }
@@ -1987,13 +1974,21 @@ class MovieInlinePlayerController(
         applySubtitleStyleToOverlay()
     }
 
+    /**
+     * تطبيق ستايل الترجمة: في وضع Shadow (Transparent) نضع ظل أسود قوي وواضح حول النص بدون خلفية
+     */
     private fun applySubtitleStyleToOverlay() {
         tvSubtitleOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
         tvSubtitleOverlay.setTextColor(subtitleTextColor)
-        tvSubtitleOverlay.background = if (subtitleBgAlpha <= 5) {
-            null
+        if (subtitleBgAlpha <= 10) {
+            tvSubtitleOverlay.background = null
+            tvSubtitleOverlay.setShadowLayer(12f, 0f, 3.5f, Color.BLACK)
         } else {
-            makeRoundedBg(ColorUtils.setAlphaComponent(Color.BLACK, subtitleBgAlpha), 8f)
+            tvSubtitleOverlay.setShadowLayer(6f, 0f, 2f, Color.BLACK)
+            tvSubtitleOverlay.background = makeRoundedBg(
+                ColorUtils.setAlphaComponent("#0B0D13".toColorInt(), subtitleBgAlpha),
+                8f
+            )
         }
     }
 
@@ -2006,8 +2001,8 @@ class MovieInlinePlayerController(
                 val localTrack = SubtitleTrack(
                     id = "local_user_sub_${System.currentTimeMillis()}",
                     languageCode = "custom",
-                    languageLabel = "Local File (${parsedCues.size} lines)",
-                    releaseName = "Uploaded from Device",
+                    languageLabel = "Custom Subtitle",
+                    releaseName = "",
                     url = uri.toString()
                 )
                 availableSubtitles = listOf(localTrack) + availableSubtitles
@@ -2015,9 +2010,9 @@ class MovieInlinePlayerController(
                 activeSubtitleCues = parsedCues
                 subtitleOffsetMs = 0L
                 tvSubtitleOverlay.visibility = View.VISIBLE
-                Toast.makeText(activity, "Local Subtitle Loaded (${parsedCues.size} lines)", Toast.LENGTH_SHORT).show()
+                Toast.makeText(activity, "Custom Subtitle Loaded", Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(activity, "Could not parse .SRT / .VTT file", Toast.LENGTH_LONG).show()
+                Toast.makeText(activity, "Invalid .SRT / .VTT file", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -2101,6 +2096,7 @@ class MovieInlinePlayerController(
                     btnSkipIntro.visibility = View.GONE
                     holdSpeed2xPill.visibility = View.GONE
                     gestureIndicatorCard.visibility = View.GONE
+                    animateSubtitlePositionForControls(controlsVisible = false, animate = false)
                     val params = PictureInPictureParams.Builder()
                         .setAspectRatio(Rational(16, 9))
                         .build()
@@ -2122,8 +2118,9 @@ class MovieInlinePlayerController(
             btnSkipIntro.visibility = View.GONE
             holdSpeed2xPill.visibility = View.GONE
             gestureIndicatorCard.visibility = View.GONE
+            animateSubtitlePositionForControls(controlsVisible = false, animate = false)
         } else {
-            showControlsImmediately()
+            showControlsWithFade()
         }
     }
 
@@ -2143,7 +2140,7 @@ class MovieInlinePlayerController(
 
         val card = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
-            background = makeRoundedBg("#141720".toColorInt(), 14f, "#2C3242".toColorInt())
+            background = makeRoundedBg("#EE10131A".toColorInt(), 16f, "#33FFFFFF".toColorInt(), 1f)
             setPadding(dp(22), dp(14), dp(22), dp(14))
         }
 
@@ -2153,7 +2150,8 @@ class MovieInlinePlayerController(
                 text = label
                 textSize = 13.5f
                 typeface = fontBold
-                setTextColor(if (isSel) "#E50914".toColorInt() else Color.WHITE)
+                setTextColor(if (isSel) Color.WHITE else "#94A3B8".toColorInt())
+                background = if (isSel) makeRoundedBg("#24FFFFFF".toColorInt(), 8f) else null
                 setPadding(dp(14), dp(9), dp(24), dp(9))
                 setOnClickListener {
                     currentPlaybackSpeed = spd
@@ -2170,9 +2168,6 @@ class MovieInlinePlayerController(
         dialog.show()
     }
 
-    /**
-     * التبديل السلس بين المشغل الصغير (يعرض CC و PiP فقط) والمشغل الكبير (يعرض Server, Quality, Audio, Speed, Scale, Lock)
-     */
     fun applyFullscreenState(enterFullscreen: Boolean) {
         isFullscreen = enterFullscreen
         btnInlineFullscreen.setImageDrawable(
@@ -2185,6 +2180,7 @@ class MovieInlinePlayerController(
             btnTopQualityOnly.visibility = View.VISIBLE
             btnTopLock.visibility = View.VISIBLE
             fullscreenBottomActionsRow.visibility = View.VISIBLE
+            vBottomPlayerSeparator.visibility = View.GONE
 
             playerContainer.layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -2203,11 +2199,11 @@ class MovieInlinePlayerController(
             WindowCompat.setDecorFitsSystemWindows(activity.window, true)
             WindowInsetsControllerCompat(activity.window, playerContainer).show(WindowInsetsCompat.Type.systemBars())
 
-            // في المشغل الصغير، نخفي Server و Quality و Lock ونعيد الأبعاد إلى FIT غير المقربة
             btnTopServerOnly.visibility = View.GONE
             btnTopQualityOnly.visibility = View.GONE
             btnTopLock.visibility = View.GONE
             fullscreenBottomActionsRow.visibility = View.GONE
+            vBottomPlayerSeparator.visibility = View.VISIBLE
 
             resizeModeIndex = 0
             playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -2215,10 +2211,11 @@ class MovieInlinePlayerController(
 
             playerContainer.layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(210)
+                dp(215)
             )
         }
         playerContainer.requestLayout()
+        animateSubtitlePositionForControls(controlsVisible = controlsOverlay.isVisible, animate = false)
         resetAutoHide()
     }
 
@@ -2235,28 +2232,33 @@ class MovieInlinePlayerController(
     }
 
     fun setLoadingState(visible: Boolean) {
-        if (visible && !isInPipMode) {
-            simulatedBufferPct = 15
-            tvLoadingPercent.text = "15%"
-            loadingContainer.visibility = View.VISIBLE
-        } else {
-            loadingContainer.visibility = View.GONE
-        }
+        setBufferingState(visible)
     }
 
-    fun resetForNewStream(isActiveMode: Boolean) {
+    /**
+     * تهيئة المشغل لفيلم أو حلقة جديدة مع تحديد نافذة الـ Intro بدقة (تتفعل للمسلسلات فقط أو عند اكتشاف مقدمة)
+     */
+    fun resetForNewStream(isActiveMode: Boolean, isSeries: Boolean = false) {
+        isCurrentMediaSeries = isSeries
         hasSkippedIntroForCurrentMedia = false
         selectedQualityHeight = null
-        simulatedBufferPct = 12
         btnSkipIntro.visibility = View.GONE
-        tvElapsed.text = "0:00"
-        tvDuration.text = "--:--"
+
+        if (isSeries) {
+            detectedIntroStartMs = 15_000L
+            detectedIntroEndMs = 90_000L
+        } else {
+            detectedIntroStartMs = -1L
+            detectedIntroEndMs = -1L
+        }
+
+        tvElapsed.text = "00:00"
+        tvDuration.text = "00:00"
         seekBar.progress = 0
+        seekBar.secondaryProgress = 0
         tvSubtitleOverlay.text = ""
         tvSubtitleOverlay.visibility = View.GONE
-        loadingContainer.visibility = if (isActiveMode && !isInPipMode) View.VISIBLE else View.GONE
-        tvLoadingPercent.text = "12%"
-        tvNetworkSpeedBadge.text = "0 KB/s"
+        setBufferingState(isActiveMode)
     }
 
     fun updateAvailableSubtitles(
@@ -2265,7 +2267,22 @@ class MovieInlinePlayerController(
         selectedId: String? = null
     ) {
         availableSubtitles = subs
-        if (activeCues != null) activeSubtitleCues = activeCues
+        if (activeCues != null) {
+            activeSubtitleCues = activeCues
+            // فحص ما إذا كانت الترجمة تحتوي على إشارة مقدمة [Intro] أو موسيقى البداية في الدقائق الأولى
+            if (!isCurrentMediaSeries) {
+                val introCue = activeCues.firstOrNull { cue ->
+                    cue.startMs in 5_000L..120_000L &&
+                            (cue.text.contains("intro", ignoreCase = true) ||
+                                    cue.text.contains("theme", ignoreCase = true) ||
+                                    cue.text.contains("opening", ignoreCase = true))
+                }
+                if (introCue != null) {
+                    detectedIntroStartMs = introCue.startMs
+                    detectedIntroEndMs = (introCue.endMs + 45_000L).coerceAtMost(130_000L)
+                }
+            }
+        }
         if (selectedId != null) selectedSubtitleId = selectedId
     }
 
@@ -2279,12 +2296,14 @@ class MovieInlinePlayerController(
         )
     }
 
-    fun showControlsImmediately() {
+    /**
+     * إظهار التحكم بـ Fade-In ناعم + رفع الترجمة فوق شريط التقدم
+     */
+    fun showControlsWithFade() {
         if (isInPipMode) return
         controlsOverlay.removeCallbacks(autoHideRunnable)
         controlsOverlay.animate().cancel()
-        controlsOverlay.alpha = 1f
-        controlsOverlay.visibility = View.VISIBLE
+
         val p = attachedPlayer
         if (p != null) {
             updatePlayPauseVectorIcon(p.isPlaying)
@@ -2292,18 +2311,39 @@ class MovieInlinePlayerController(
             val pos = p.currentPosition.coerceAtLeast(0L)
             if (dur > 0 && !isUserSeeking) {
                 seekBar.progress = ((pos * 1000L) / dur).toInt().coerceIn(0, 1000)
+                seekBar.secondaryProgress = (p.bufferedPercentage * 10).coerceIn(0, 1000)
                 tvElapsed.text = formatTimeMs(pos)
                 tvDuration.text = formatTimeMs(dur)
             }
         }
-        controlsOverlay.postDelayed(autoHideRunnable, 3200)
+
+        if (!controlsOverlay.isVisible) {
+            controlsOverlay.alpha = 0f
+            controlsOverlay.visibility = View.VISIBLE
+        }
+        controlsOverlay.animate()
+            .alpha(1f)
+            .setDuration(220L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+
+        animateSubtitlePositionForControls(controlsVisible = true, animate = true)
+        controlsOverlay.postDelayed(autoHideRunnable, 3400)
     }
 
+    /**
+     * إخفاء التحكم بـ Fade-Out ناعم + إعادة الترجمة لمكانها الطبيعي في الأسفل
+     */
     fun hideControlsSmoothly() {
         controlsOverlay.removeCallbacks(autoHideRunnable)
+        if (!controlsOverlay.isVisible) return
+
+        animateSubtitlePositionForControls(controlsVisible = false, animate = true)
+        controlsOverlay.animate().cancel()
         controlsOverlay.animate()
             .alpha(0f)
-            .setDuration(140L)
+            .setDuration(220L)
+            .setInterpolator(DecelerateInterpolator())
             .withEndAction {
                 controlsOverlay.visibility = View.GONE
                 controlsOverlay.alpha = 1f
@@ -2314,44 +2354,24 @@ class MovieInlinePlayerController(
     private fun resetAutoHide() {
         if (isInPipMode) return
         controlsOverlay.removeCallbacks(autoHideRunnable)
-        controlsOverlay.alpha = 1f
-        controlsOverlay.visibility = View.VISIBLE
-        controlsOverlay.postDelayed(autoHideRunnable, 3200)
+        if (!controlsOverlay.isVisible || controlsOverlay.alpha < 0.9f) {
+            showControlsWithFade()
+        } else {
+            controlsOverlay.postDelayed(autoHideRunnable, 3400)
+        }
     }
 
-    private fun seekByDeltaMs(engine: PrimePlayerEngine, deltaMs: Long, badgeLabel: String) {
+    private fun seekByDeltaMs(engine: PrimePlayerEngine, deltaMs: Long) {
         val exo = engine.player ?: return
         val dur = exo.duration
         val target = (exo.currentPosition + deltaMs).coerceAtLeast(0L)
         val newPos = if (dur > 0) min(target, dur) else target
+        setBufferingState(true)
         exo.seekTo(newPos)
         if (dur > 0) {
             seekBar.progress = ((newPos * 1000L) / dur).toInt().coerceIn(0, 1000)
             tvElapsed.text = formatTimeMs(newPos)
         }
-        showSeekFeedbackToast(badgeLabel)
-    }
-
-    private fun showSeekFeedbackToast(text: String) {
-        tvSeekFeedbackBadge.text = text
-        tvSeekFeedbackBadge.visibility = View.VISIBLE
-        tvSeekFeedbackBadge.alpha = 1f
-        tvSeekFeedbackBadge.scaleX = 0.88f
-        tvSeekFeedbackBadge.scaleY = 0.88f
-        tvSeekFeedbackBadge.animate().cancel()
-        tvSeekFeedbackBadge.animate()
-            .scaleX(1f)
-            .scaleY(1f)
-            .setDuration(120L)
-            .withEndAction {
-                tvSeekFeedbackBadge.animate()
-                    .alpha(0f)
-                    .setStartDelay(400L)
-                    .setDuration(180L)
-                    .withEndAction { tvSeekFeedbackBadge.visibility = View.GONE }
-                    .start()
-            }
-            .start()
     }
 
     private fun createPlayerBottomActionChip(
@@ -2362,7 +2382,7 @@ class MovieInlinePlayerController(
         return LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#26FFFFFF".toColorInt(), 16f, "#45FFFFFF".toColorInt(), 0.8f)
+            background = makeRoundedBg("#24FFFFFF".toColorInt(), 16f, "#40FFFFFF".toColorInt(), 0.8f)
             setPadding(dp(14), dp(6), dp(14), dp(6))
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -2394,9 +2414,9 @@ class MovieInlinePlayerController(
         val mins = (totalSecs % 3600) / 60
         val secs = totalSecs % 60
         return if (hours > 0) {
-            String.format(Locale.US, "%d:%02d:%02d", hours, mins, secs)
+            String.format(Locale.US, "%02d:%02d:%02d", hours, mins, secs)
         } else {
-            String.format(Locale.US, "%d:%02d", mins, secs)
+            String.format(Locale.US, "%02d:%02d", mins, secs)
         }
     }
 
