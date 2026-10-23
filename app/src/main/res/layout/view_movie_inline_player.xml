@@ -8,13 +8,14 @@
     android:clipChildren="true"
     android:visibility="gone">
 
-    <!-- 1. Media3 PlayerView (يبدأ بوضع fit بدون زوم) -->
+    <!-- 1. Media3 PlayerView مع shutter أسود لمنع بقاء أي صورة قديمة -->
     <androidx.media3.ui.PlayerView
         android:id="@+id/playerView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:layout_gravity="center"
         app:resize_mode="fit"
+        app:shutter_background_color="#000000"
         app:use_controller="false" />
 
     <!-- تدرج علوي ناعم -->
@@ -24,7 +25,7 @@
         android:layout_height="42dp"
         android:layout_gravity="top" />
 
-    <!-- 2. نص الترجمة (يرتفع تلقائياً عند ظهور شريط التحكم) -->
+    <!-- 2. نص الترجمة (يرتفع تلقائياً فوق الشريط عند ظهور التحكم، ويمكن رفعه وإنزاله من الإعدادات) -->
     <TextView
         android:id="@+id/tvSubtitleOverlay"
         android:layout_width="wrap_content"
@@ -145,14 +146,14 @@
             android:layout_marginStart="5dp" />
     </LinearLayout>
 
-    <!-- 6. واجهة التحكم (تظهر وتختفي بـ Fade ناعم) -->
+    <!-- 6. واجهة التحكم (تظهر وتختفي بـ Fade ناعم، وتبقى ظاهرة أثناء التحميل) -->
     <FrameLayout
         android:id="@+id/controlsOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:visibility="visible">
 
-        <!-- الشريط العلوي -->
+        <!-- الشريط العلوي (بدون سهم الرجوع في المشغل الصغير + مع وجود زر Server دائماً) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -167,8 +168,10 @@
                 android:id="@+id/btnMinimizePlayer"
                 android:layout_width="32dp"
                 android:layout_height="32dp"
+                android:layout_marginEnd="8dp"
                 android:padding="7dp"
-                android:src="@drawable/ic_back_chevron" />
+                android:src="@drawable/ic_back_chevron"
+                android:visibility="gone" />
 
             <TextView
                 android:id="@+id/tvTopPlayerTitle"
@@ -178,7 +181,6 @@
                 android:ellipsize="end"
                 android:fontFamily="@font/product_sans_bold"
                 android:maxLines="1"
-                android:paddingStart="10dp"
                 android:paddingEnd="8dp"
                 android:textColor="#FFFFFF"
                 android:textSize="13.5sp" />
@@ -194,7 +196,7 @@
                 android:text="Server"
                 android:textColor="#FFFFFF"
                 android:textSize="11.5sp"
-                android:visibility="gone" />
+                android:visibility="visible" />
 
             <TextView
                 android:id="@+id/btnTopQualityOnly"
@@ -204,7 +206,7 @@
                 android:fontFamily="@font/product_sans_bold"
                 android:paddingHorizontal="10dp"
                 android:paddingVertical="5dp"
-                android:text="FHD"
+                android:text="Auto"
                 android:textColor="#FFFFFF"
                 android:textSize="11.5sp"
                 android:visibility="gone" />
@@ -231,7 +233,7 @@
                 android:visibility="gone" />
         </LinearLayout>
 
-        <!-- أزرار الوسط: Rewind | Play/Pause + Loader في نفس المكان | Forward مع الدوائر الحمراء -->
+        <!-- أزرار الوسط: Rewind 15s | Play/Pause أو Loader في نفس المكان | Forward 15s -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -256,7 +258,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:layout_gravity="center"
-                    android:padding="15dp" />
+                    android:padding="11dp" />
             </FrameLayout>
 
             <FrameLayout
@@ -304,7 +306,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:layout_gravity="center"
-                    android:padding="15dp" />
+                    android:padding="11dp" />
             </FrameLayout>
         </LinearLayout>
 

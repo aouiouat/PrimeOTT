@@ -63,7 +63,7 @@
             android:textSize="13sp" />
     </LinearLayout>
 
-    <!-- القسم 1: قائمة اللغات المتوفرة (بدون WEB-DL1080p...) -->
+    <!-- القسم 1: قائمة اللغات المتوفرة (نظيفة بدون WEB-DL...) -->
     <LinearLayout
         android:id="@+id/tracksPanel"
         android:layout_width="match_parent"
@@ -132,7 +132,7 @@
         <ScrollView
             android:id="@+id/tracksScroll"
             android:layout_width="match_parent"
-            android:layout_height="185dp">
+            android:layout_height="180dp">
 
             <LinearLayout
                 android:id="@+id/tracksContainer"
@@ -142,7 +142,7 @@
         </ScrollView>
     </LinearLayout>
 
-    <!-- القسم 2: إعدادات الحجم والخلفية والمزامنة (Shadow | Glass | Dark Box) -->
+    <!-- القسم 2: إعدادات الحجم والخلفية ومكان الترجمة (رفع/إنزال) والمزامنة -->
     <LinearLayout
         android:id="@+id/settingsPanel"
         android:layout_width="match_parent"
@@ -165,7 +165,7 @@
             android:id="@+id/sizeOptionsRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="10dp"
             android:orientation="horizontal" />
 
         <TextView
@@ -181,9 +181,67 @@
             android:id="@+id/bgOptionsRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="10dp"
             android:orientation="horizontal" />
 
+        <!-- التحكم في رفع وإنزال مكان الترجمة على الشاشة -->
+        <LinearLayout
+            android:id="@+id/positionRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="7dp">
+
+            <TextView
+                android:id="@+id/tvPositionStatus"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="@font/product_sans_bold"
+                android:text="Position: +0dp"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/btnSubPosDown"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:fontFamily="@font/product_sans_bold"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp"
+                android:text="Down ↓"
+                android:textColor="#FFFFFF"
+                android:textSize="11.5sp" />
+
+            <TextView
+                android:id="@+id/btnSubPosReset"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:fontFamily="@font/product_sans_bold"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp"
+                android:text="Reset"
+                android:textColor="#0E1015"
+                android:textSize="11.5sp" />
+
+            <TextView
+                android:id="@+id/btnSubPosUp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/product_sans_bold"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp"
+                android:text="Up ↑"
+                android:textColor="#FFFFFF"
+                android:textSize="11.5sp" />
+        </LinearLayout>
+
+        <!-- التحكم في مزامنة توقيت الترجمة -->
         <LinearLayout
             android:id="@+id/syncRow"
             android:layout_width="match_parent"
@@ -191,7 +249,7 @@
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingHorizontal="12dp"
-            android:paddingVertical="8dp">
+            android:paddingVertical="7dp">
 
             <TextView
                 android:id="@+id/tvSyncStatus"

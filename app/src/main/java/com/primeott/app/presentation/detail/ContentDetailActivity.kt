@@ -330,14 +330,12 @@ class ContentDetailActivity : AppCompatActivity() {
             },
             onRealQualityDetected = { qualityBadge, _ ->
                 runOnUiThread {
-                    moviePlayerController.setQualityBadgeLabel(qualityBadge)
+                    moviePlayerController.onEngineQualityDetected(qualityBadge)
                 }
             },
             onFirstFrameRendered = {
                 runOnUiThread {
-                    moviePlayerController.setLoadingState(false)
-                    moviePlayerController.hideControlsSmoothly()
-                    moviePlayerController.updatePlayPauseVectorIcon(true)
+                    moviePlayerController.onFirstFrameRendered()
                 }
             },
             onPlaybackExhausted = {
@@ -519,7 +517,6 @@ class ContentDetailActivity : AppCompatActivity() {
         AnimUtils.attachPressBounce(btnTrailerBox)
         AnimUtils.attachPressBounce(btnDownloadBox)
 
-        // ربط عناصر صفحة الممثل الكاملة من XML
         actorPageOverlay = findViewById(R.id.actorPageOverlay)
         val btnActorBack = findViewById<ImageView>(R.id.btnActorBack)
         val actorAvatarWrap = findViewById<FrameLayout>(R.id.actorAvatarWrap)
@@ -623,6 +620,9 @@ class ContentDetailActivity : AppCompatActivity() {
 
     private fun startCoverColorExtractionAnimation(targetLeftColor: Int, targetRightColor: Int) {
         colorExtractionAnimator?.cancel()
+
+        // تمرير اللون المستخرج إلى المشغل ليتلون تأثير ضغط Play/Pause و 15s بنفس لون الثيم
+        moviePlayerController.setDynamicThemeColor(targetLeftColor)
 
         val evaluator = ArgbEvaluator()
         val startLeft = FLIX_INITIAL_LEFT_COLOR
@@ -886,6 +886,9 @@ class ContentDetailActivity : AppCompatActivity() {
         renderOverviewWithInlineMore(fullOverviewRawText, isOverviewExpanded)
     }
 
+    /**
+     * فتح المشغل بدون تحريك alpha على حاوية الـ SurfaceView لمنع تجمّد الصورة نهائياً
+     */
     private fun activateInlinePlayerSmoothly() {
         isPlayerModeActive = true
         fullScreenAmbientDrawable.setPlayerModeActive(true)
@@ -901,27 +904,20 @@ class ContentDetailActivity : AppCompatActivity() {
 
         heroBackdropFixedContainer.animate()
             .alpha(0f)
-            .setDuration(240L)
+            .setDuration(220L)
             .withEndAction { heroBackdropFixedContainer.visibility = View.GONE }
             .start()
 
         val pContainer = moviePlayerController.playerContainer
-        pContainer.animate().cancel()
-        pContainer.alpha = 0f
-        pContainer.translationY = -dpF(14f)
+        pContainer.alpha = 1f
+        pContainer.translationY = 0f
         pContainer.visibility = View.VISIBLE
-        pContainer.animate()
-            .alpha(1f)
-            .translationY(0f)
-            .setDuration(260L)
-            .setInterpolator(DecelerateInterpolator(1.4f))
-            .start()
+        moviePlayerController.showControlsWithFade()
 
         detailsScrollView.smoothScrollTo(0, 0)
 
         if (resolvedDirectStreams.isNotEmpty()) {
-            moviePlayerController.setLoadingState(false)
-            moviePlayerController.updatePlayPauseVectorIcon(true)
+            moviePlayerController.setLoadingState(true)
             playerEngine.playSources(
                 moviePlayerController.playerView,
                 resolvedDirectStreams.toList(),
@@ -956,7 +952,6 @@ class ContentDetailActivity : AppCompatActivity() {
         fullScreenAmbientDrawable.setPlayerModeActive(false)
 
         val pContainer = moviePlayerController.playerContainer
-        pContainer.animate().cancel()
         pContainer.visibility = View.GONE
         vHeroTopSpacer.visibility = View.VISIBLE
 
@@ -976,7 +971,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 .alpha(1f)
                 .scaleX(1f)
                 .scaleY(1f)
-                .setDuration(260L)
+                .setDuration(240L)
                 .setInterpolator(DecelerateInterpolator())
                 .start()
 
@@ -984,7 +979,7 @@ class ContentDetailActivity : AppCompatActivity() {
             heroTopActionsRow.visibility = View.VISIBLE
             heroTopActionsRow.animate()
                 .alpha(1f)
-                .setDuration(240L)
+                .setDuration(220L)
                 .start()
         } else {
             heroBackdropFixedContainer.alpha = 1f
@@ -1146,17 +1141,11 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * منطق التقاط البث الأصلي المستقر مع دعم السيرفرات الاحتياطية بسلاسة
+     */
     private fun onRawStreamIntercepted(url: String, referer: String, origin: String, userAgent: String) {
         runOnUiThread {
-            if (hasLockedPrimaryStream) return@runOnUiThread
-            hasLockedPrimaryStream = true
-
-            snifferTimeoutJob?.cancel()
-            headlessSnifferWebView.stopLoading()
-            headlessSnifferWebView.loadUrl("about:blank")
-            headlessSnifferWebView.onPause()
-            headlessSnifferWebView.pauseTimers()
-
             val providerLabel = providerTargets.getOrNull(currentProviderIndex)?.label ?: "Server 1"
             val newDirectSource = StreamSource(
                 label = providerLabel,
@@ -1167,17 +1156,28 @@ class ContentDetailActivity : AppCompatActivity() {
                 isDirectStream = true
             )
 
-            resolvedDirectStreams.clear()
-            resolvedDirectStreams.add(newDirectSource)
-            moviePlayerController.setServerBadgeLabel(providerLabel)
+            if (!hasLockedPrimaryStream) {
+                hasLockedPrimaryStream = true
+                snifferTimeoutJob?.cancel()
+                headlessSnifferWebView.stopLoading()
+                headlessSnifferWebView.loadUrl("about:blank")
+                headlessSnifferWebView.onPause()
+                headlessSnifferWebView.pauseTimers()
 
-            if (isPlayerModeActive) {
-                playerEngine.playSources(
-                    moviePlayerController.playerView,
-                    resolvedDirectStreams.toList(),
-                    0,
-                    pendingResumePositionMs
-                )
+                resolvedDirectStreams.add(0, newDirectSource)
+                moviePlayerController.setServerBadgeLabel(providerLabel)
+
+                if (isPlayerModeActive) {
+                    playerEngine.playSources(
+                        moviePlayerController.playerView,
+                        resolvedDirectStreams.toList(),
+                        0,
+                        pendingResumePositionMs
+                    )
+                }
+            } else {
+                resolvedDirectStreams.add(newDirectSource)
+                playerEngine.appendBackupSourcesSilently(listOf(newDirectSource))
             }
         }
     }
@@ -1216,16 +1216,14 @@ class ContentDetailActivity : AppCompatActivity() {
                     episode = episode,
                     onFastestDirectReady = { fastestServer ->
                         runOnUiThread {
-                            if (!hasLockedPrimaryStream) {
-                                val idx = providerTargets.indexOfFirst { it.label == fastestServer.label }.coerceAtLeast(0)
-                                currentProviderIndex = idx
-                                onRawStreamIntercepted(
-                                    url = fastestServer.url,
-                                    referer = fastestServer.referer,
-                                    origin = fastestServer.origin,
-                                    userAgent = fastestServer.userAgent
-                                )
-                            }
+                            val idx = providerTargets.indexOfFirst { it.label == fastestServer.label }.coerceAtLeast(0)
+                            currentProviderIndex = idx
+                            onRawStreamIntercepted(
+                                url = fastestServer.url,
+                                referer = fastestServer.referer,
+                                origin = fastestServer.origin,
+                                userAgent = fastestServer.userAgent
+                            )
                         }
                     }
                 )
@@ -1266,7 +1264,7 @@ class ContentDetailActivity : AppCompatActivity() {
 
         snifferTimeoutJob?.cancel()
         snifferTimeoutJob = lifecycleScope.launch {
-            delay(5500L)
+            delay(6500L)
             if (!hasLockedPrimaryStream && !playerEngine.isPlaying()) {
                 tryNextProviderInBackground()
             }
@@ -1288,10 +1286,14 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * تفريغ صورة الغلاف السابقة فوراً (ivHeroBackdrop.setImageDrawable(null)) حتى لا تبقى صورة الفيلم القديم عالقة
+     */
     private fun loadPosterAndExtractPalette(vod: VodItem) {
         val targetUrl = vod.posterUrl.ifEmpty { vod.backdropUrl }
 
         colorExtractionAnimator?.cancel()
+        ivHeroBackdrop.setImageDrawable(null)
         fullScreenAmbientDrawable.updateColors(
             leftBright = FLIX_INITIAL_LEFT_COLOR,
             rightDark = FLIX_INITIAL_RIGHT_COLOR,
@@ -1309,6 +1311,7 @@ class ContentDetailActivity : AppCompatActivity() {
             .dontAnimate()
             .into(object : CustomTarget<Bitmap>() {
                 override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
+                    if (currentVod?.id != vod.id) return
                     ivHeroBackdrop.setImageBitmap(resource)
                     val extracted = cachedPalette ?: extractFlixVisionPalette(resource).also {
                         paletteCache[vod.id] = it
@@ -1316,7 +1319,9 @@ class ContentDetailActivity : AppCompatActivity() {
                     startCoverColorExtractionAnimation(extracted.first, extracted.second)
                 }
 
-                override fun onLoadCleared(placeholder: Drawable?) {}
+                override fun onLoadCleared(placeholder: Drawable?) {
+                    ivHeroBackdrop.setImageDrawable(null)
+                }
             })
     }
 
@@ -1339,6 +1344,7 @@ class ContentDetailActivity : AppCompatActivity() {
 
         isPlayerModeActive = false
         playerEngine.pauseAndReleaseSocket()
+        moviePlayerController.playerView.player = null
         switchToPosterShowcaseMode(saveCurrentPlayerPos = false, animateTransition = false)
 
         currentVod = vod
@@ -1394,14 +1400,14 @@ class ContentDetailActivity : AppCompatActivity() {
 
         if (animatePageEntry) {
             ivHeroBackdrop.alpha = 0f
-            ivHeroBackdrop.animate().alpha(1f).setDuration(300L).start()
+            ivHeroBackdrop.animate().alpha(1f).setDuration(280L).start()
 
             contentSheetColumn.alpha = 0f
-            contentSheetColumn.translationY = dpF(24f)
+            contentSheetColumn.translationY = dpF(22f)
             contentSheetColumn.animate()
                 .alpha(1f)
                 .translationY(0f)
-                .setDuration(300L)
+                .setDuration(280L)
                 .setInterpolator(DecelerateInterpolator(1.5f))
                 .start()
         }
@@ -1982,26 +1988,35 @@ object VectorIcons {
         }
     }
 
+    /**
+     * أيقونة السهم الدائري للتقديم والترجيع مكتوب داخلها "15s" بوضوح
+     */
     fun createCircularSeekArrowIcon(context: Context, isForward: Boolean): Drawable {
         val d = context.resources.displayMetrics.density
-        val sizePx = (28 * d).toInt()
+        val sizePx = (36 * d).toInt()
         return object : Drawable() {
             private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 style = Paint.Style.STROKE
-                strokeWidth = 2.2f * d
+                strokeWidth = 2.1f * d
                 strokeCap = Paint.Cap.ROUND
             }
             private val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
                 style = Paint.Style.FILL
             }
+            private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                textSize = 8.5f * d
+                typeface = Typeface.create("sans-serif", Typeface.BOLD)
+                textAlign = Paint.Align.CENTER
+            }
 
             override fun draw(canvas: Canvas) {
                 val b = bounds
                 val w = b.width().toFloat()
                 val h = b.height().toFloat()
-                val pad = w * 0.14f
+                val pad = w * 0.10f
                 val rect = RectF(pad, pad, w - pad, h - pad)
 
                 if (isForward) {
@@ -2009,9 +2024,9 @@ object VectorIcons {
                     val tipX = w * 0.68f
                     val tipY = pad
                     val arrow = Path().apply {
-                        moveTo(w * 0.45f, tipY - w * 0.14f)
+                        moveTo(w * 0.46f, tipY - w * 0.12f)
                         lineTo(tipX, tipY)
-                        lineTo(w * 0.45f, tipY + w * 0.14f)
+                        lineTo(w * 0.46f, tipY + w * 0.12f)
                         close()
                     }
                     canvas.drawPath(arrow, arrowPaint)
@@ -2020,13 +2035,16 @@ object VectorIcons {
                     val tipX = w * 0.32f
                     val tipY = pad
                     val arrow = Path().apply {
-                        moveTo(w * 0.55f, tipY - w * 0.14f)
+                        moveTo(w * 0.54f, tipY - w * 0.12f)
                         lineTo(tipX, tipY)
-                        lineTo(w * 0.55f, tipY + w * 0.14f)
+                        lineTo(w * 0.54f, tipY + w * 0.12f)
                         close()
                     }
                     canvas.drawPath(arrow, arrowPaint)
                 }
+
+                val textY = (h / 2f) - ((textPaint.descent() + textPaint.ascent()) / 2f) + (0.5f * d)
+                canvas.drawText("15s", w / 2f, textY, textPaint)
             }
 
             override fun getIntrinsicWidth(): Int = sizePx
@@ -2034,10 +2052,12 @@ object VectorIcons {
             override fun setAlpha(alpha: Int) {
                 arcPaint.alpha = alpha
                 arrowPaint.alpha = alpha
+                textPaint.alpha = alpha
             }
             override fun setColorFilter(colorFilter: ColorFilter?) {
                 arcPaint.colorFilter = colorFilter
                 arrowPaint.colorFilter = colorFilter
+                textPaint.colorFilter = colorFilter
             }
             @Deprecated("Deprecated in Java")
             override fun getOpacity(): Int = PixelFormat.TRANSLUCENT

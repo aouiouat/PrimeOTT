@@ -7,6 +7,7 @@ import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
@@ -145,7 +146,11 @@ class MovieInlinePlayerController(
     private var isUserSeeking: Boolean = false
     private var isHold2xActive: Boolean = false
     private var isBufferingNow: Boolean = true
+    private var hasRenderedInitialFrameForStream: Boolean = false
     private var currentPlaybackSpeed: Float = 1.0f
+
+    // اللون الديناميكي المأخوذ من ثيم الغلاف لتأثير ضغط الأزرار
+    private var dynamicThemeAccentColor: Int = "#E50914".toColorInt()
 
     private var isCurrentMediaSeries: Boolean = false
     private var detectedIntroStartMs: Long = -1L
@@ -160,6 +165,7 @@ class MovieInlinePlayerController(
     private var subtitleTextSizeSp: Float = 16f
     private var subtitleTextColor: Int = Color.WHITE
     private var subtitleBgAlpha: Int = 0
+    private var subtitleExtraLiftDp: Int = 0
 
     private var resizeModeIndex: Int = 0
     private val resizeModes = listOf(
@@ -186,17 +192,27 @@ class MovieInlinePlayerController(
     private val playerStateListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             updatePlayPauseVectorIcon(isPlaying)
-            if (isPlaying) {
+            if (isPlaying && attachedPlayer?.playbackState == Player.STATE_READY) {
                 setBufferingState(false)
+                scheduleAutoHideIfPlaying()
+            } else if (!isPlaying) {
+                // عند الإيقاف المؤقت لا نخفي الأزرار تلقائياً
+                controlsOverlay.removeCallbacks(autoHideRunnable)
             }
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             when (playbackState) {
-                Player.STATE_BUFFERING -> setBufferingState(true)
+                Player.STATE_BUFFERING -> {
+                    setBufferingState(true)
+                }
                 Player.STATE_READY -> {
                     setBufferingState(false)
-                    updatePlayPauseVectorIcon(attachedPlayer?.isPlaying == true)
+                    val playing = attachedPlayer?.isPlaying == true
+                    updatePlayPauseVectorIcon(playing)
+                    if (playing) {
+                        scheduleAutoHideIfPlaying()
+                    }
                 }
                 Player.STATE_ENDED -> {
                     setBufferingState(false)
@@ -208,7 +224,10 @@ class MovieInlinePlayerController(
     }
 
     private val autoHideRunnable = Runnable {
-        hideControlsSmoothly()
+        // لا نخفي التحكم أبداً إذا كان الفيديو ما يزال في طور التحميل (Buffering)
+        if (!isBufferingNow && attachedPlayer?.isPlaying == true && !isUserSeeking) {
+            hideControlsSmoothly()
+        }
     }
 
     private val hideGestureIndicatorRunnable = Runnable {
@@ -243,6 +262,7 @@ class MovieInlinePlayerController(
         subtitleTextSizeSp = prefs.getFloat("sub_size_sp", 16f).coerceIn(12f, 26f)
         subtitleTextColor = prefs.getInt("sub_text_color", Color.WHITE)
         subtitleBgAlpha = prefs.getInt("sub_bg_alpha", 0)
+        subtitleExtraLiftDp = prefs.getInt("sub_extra_lift_dp", 0).coerceIn(-10, 90)
 
         playerContainer = rootPlayerFrame
         playerView = rootPlayerFrame.findViewById(R.id.playerView)
@@ -291,7 +311,6 @@ class MovieInlinePlayerController(
         vBottomPlayerSeparator = rootPlayerFrame.findViewById(R.id.vBottomPlayerSeparator)
         btnUnlockScreenOnly = rootPlayerFrame.findViewById(R.id.btnUnlockScreenOnly)
 
-        // تطبيق الخلفيات والأيقونات المرسومة بدقة (Vector Drawables)
         vTopEdgeSoftGradient.background = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf("#75000000".toColorInt(), Color.TRANSPARENT)
@@ -326,7 +345,7 @@ class MovieInlinePlayerController(
         }
 
         btnTopServerOnly.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.9f)
-        btnTopQualityOnly.background = makeRoundedBg("#33E50914".toColorInt(), 8f, "#88FF4757".toColorInt(), 1f)
+        btnTopQualityOnly.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.9f)
 
         btnTopSubtitles.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
         btnTopSubtitles.setImageDrawable(VectorIcons.createSubtitlesCcIcon(activity, Color.WHITE))
@@ -343,16 +362,9 @@ class MovieInlinePlayerController(
             btnUnlockScreenOnly.visibility = View.VISIBLE
         }
 
-        val redCircleMaker = {
-            GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor("#B38B0000".toColorInt())
-            }
-        }
-        btnRewind15BgCircle.background = redCircleMaker()
-        btnCenterPlayPauseBgCircle.background = redCircleMaker()
-        btnForward15BgCircle.background = redCircleMaker()
+        updateTouchCirclesThemeColor(dynamicThemeAccentColor)
 
+        // أيقونات التقديم والترجيع مكتوب داخلها 15s بوضوح
         btnRewind15.setImageDrawable(VectorIcons.createCircularSeekArrowIcon(activity, isForward = false))
         btnCenterPlayPause.setImageDrawable(VectorIcons.createPlayPauseIcon(activity, isPlaying = true))
         btnForward15.setImageDrawable(VectorIcons.createCircularSeekArrowIcon(activity, isForward = true))
@@ -392,13 +404,41 @@ class MovieInlinePlayerController(
         animateSubtitlePositionForControls(controlsVisible = true, animate = false)
     }
 
+    /**
+     * تحديث لون الدوائر التفاعلية (Play/Pause و 15s) وشريط التقدم ليتطابق مع لون الثيم الديناميكي تحت المشغل
+     */
+    fun setDynamicThemeColor(themeColor: Int) {
+        val vividAccent = ColorUtils.blendARGB(themeColor, Color.WHITE, 0.15f)
+        dynamicThemeAccentColor = vividAccent
+        if (this::btnCenterPlayPauseBgCircle.isInitialized) {
+            updateTouchCirclesThemeColor(vividAccent)
+        }
+    }
+
+    private fun updateTouchCirclesThemeColor(color: Int) {
+        val circleAlphaColor = ColorUtils.setAlphaComponent(color, 195)
+        val makeCircle = {
+            GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(circleAlphaColor)
+            }
+        }
+        btnRewind15BgCircle.background = makeCircle()
+        btnCenterPlayPauseBgCircle.background = makeCircle()
+        btnForward15BgCircle.background = makeCircle()
+    }
+
     private fun setBufferingState(buffering: Boolean) {
         isBufferingNow = buffering
         if (buffering) {
             btnCenterPlayPause.visibility = View.INVISIBLE
             centerBufferingSpinner.visibility = View.VISIBLE
+            // إبقاء واجهة التحكم والـ Loader ظاهرة طوال فترة التحميل وعدم إخفائها
+            controlsOverlay.removeCallbacks(autoHideRunnable)
             if (!controlsOverlay.isVisible && !isInPipMode && !isControlsLocked) {
-                showControlsWithFade()
+                controlsOverlay.alpha = 1f
+                controlsOverlay.visibility = View.VISIBLE
+                animateSubtitlePositionForControls(controlsVisible = true, animate = true)
             }
         } else {
             centerBufferingSpinner.visibility = View.GONE
@@ -406,7 +446,25 @@ class MovieInlinePlayerController(
         }
     }
 
-    private fun pulseRedCircleFeedback(circleView: View) {
+    fun onFirstFrameRendered() {
+        setBufferingState(false)
+        updatePlayPauseVectorIcon(true)
+        // نخفي الأزرار تلقائياً فقط عند بداية اشتغال الفيلم لأول مرة، وليس عند التقديم بـ 15s
+        if (!hasRenderedInitialFrameForStream) {
+            hasRenderedInitialFrameForStream = true
+            controlsOverlay.removeCallbacks(autoHideRunnable)
+            controlsOverlay.postDelayed(autoHideRunnable, 1200L)
+        }
+    }
+
+    private fun scheduleAutoHideIfPlaying() {
+        controlsOverlay.removeCallbacks(autoHideRunnable)
+        if (!isBufferingNow && attachedPlayer?.isPlaying == true && !isUserSeeking) {
+            controlsOverlay.postDelayed(autoHideRunnable, 3400L)
+        }
+    }
+
+    private fun pulseCircleFeedback(circleView: View) {
         circleView.animate().cancel()
         circleView.alpha = 0.95f
         circleView.scaleX = 0.78f
@@ -415,17 +473,20 @@ class MovieInlinePlayerController(
             .scaleX(1.06f)
             .scaleY(1.06f)
             .alpha(0f)
-            .setDuration(340L)
+            .setDuration(320L)
             .setInterpolator(DecelerateInterpolator())
             .start()
     }
 
     private fun animateSubtitlePositionForControls(controlsVisible: Boolean, animate: Boolean = true) {
-        val targetLiftY = if (controlsVisible) {
-            if (isFullscreen) -dpF(64f) else -dpF(34f)
+        val baseControlsLift = if (controlsVisible) {
+            if (isFullscreen) -dpF(62f) else -dpF(34f)
         } else {
             0f
         }
+        val userCustomLift = -dpF(subtitleExtraLiftDp.toFloat())
+        val targetLiftY = baseControlsLift + userCustomLift
+
         tvSubtitleOverlay.animate().cancel()
         if (animate) {
             tvSubtitleOverlay.animate()
@@ -445,27 +506,28 @@ class MovieInlinePlayerController(
         getCurrentProviderIdx: () -> Int
     ) {
         centerActionSlot.setOnClickListener {
-            resetAutoHide()
-            pulseRedCircleFeedback(btnCenterPlayPauseBgCircle)
+            pulseCircleFeedback(btnCenterPlayPauseBgCircle)
             val exo = engine.player
             if (exo != null && exo.isPlaying) {
                 engine.pause()
                 updatePlayPauseVectorIcon(false)
+                controlsOverlay.removeCallbacks(autoHideRunnable)
             } else {
                 engine.resume()
                 updatePlayPauseVectorIcon(true)
+                resetAutoHide()
             }
         }
 
         btnRewind15Container.setOnClickListener {
             resetAutoHide()
-            pulseRedCircleFeedback(btnRewind15BgCircle)
+            pulseCircleFeedback(btnRewind15BgCircle)
             seekByDeltaMs(engine, -15_000L)
         }
 
         btnForward15Container.setOnClickListener {
             resetAutoHide()
-            pulseRedCircleFeedback(btnForward15BgCircle)
+            pulseCircleFeedback(btnForward15BgCircle)
             seekByDeltaMs(engine, 15_000L)
         }
 
@@ -481,7 +543,6 @@ class MovieInlinePlayerController(
             }.let { t ->
                 if (dur > 0) min(t, (dur - 5000L).coerceAtLeast(0L)) else t
             }
-            setBufferingState(true)
             exo.seekTo(targetPos)
             if (dur > 0) {
                 seekBar.progress = ((targetPos * 1000L) / dur).toInt().coerceIn(0, 1000)
@@ -524,16 +585,16 @@ class MovieInlinePlayerController(
             }
             override fun onStartTrackingTouch(s: SeekBar?) {
                 isUserSeeking = true
-                resetAutoHide()
+                controlsOverlay.removeCallbacks(autoHideRunnable)
             }
             override fun onStopTrackingTouch(s: SeekBar?) {
                 isUserSeeking = false
                 val exo = engine.player ?: return
                 val dur = exo.duration
                 if (dur > 0) {
-                    setBufferingState(true)
                     exo.seekTo((dur * (s?.progress ?: 0)) / 1000L)
                 }
+                resetAutoHide()
             }
         })
 
@@ -542,7 +603,7 @@ class MovieInlinePlayerController(
                 if (isControlsLocked) {
                     btnUnlockScreenOnly.isVisible = !btnUnlockScreenOnly.isVisible
                 } else {
-                    if (controlsOverlay.isVisible && controlsOverlay.alpha > 0.5f) {
+                    if (controlsOverlay.isVisible && controlsOverlay.alpha > 0.5f && !isBufferingNow) {
                         hideControlsSmoothly()
                     } else {
                         showControlsWithFade()
@@ -555,12 +616,12 @@ class MovieInlinePlayerController(
                 if (!isControlsLocked) {
                     val width = playerView.width.coerceAtLeast(1)
                     if (e.x < width * 0.45f) {
-                        showControlsWithFade()
-                        pulseRedCircleFeedback(btnRewind15BgCircle)
+                        resetAutoHide()
+                        pulseCircleFeedback(btnRewind15BgCircle)
                         seekByDeltaMs(engine, -15_000L)
                     } else if (e.x > width * 0.55f) {
-                        showControlsWithFade()
-                        pulseRedCircleFeedback(btnForward15BgCircle)
+                        resetAutoHide()
+                        pulseCircleFeedback(btnForward15BgCircle)
                         seekByDeltaMs(engine, 15_000L)
                     }
                 }
@@ -679,7 +740,7 @@ class MovieInlinePlayerController(
 
         progressJob = scope.launch {
             while (isActive) {
-                delay(350)
+                delay(300)
                 if (!playerContainer.isVisible) continue
 
                 val p = engine.player
@@ -723,7 +784,7 @@ class MovieInlinePlayerController(
                     }
 
                     lastSavedTick++
-                    if (lastSavedTick >= 14 && pos > 5000L) {
+                    if (lastSavedTick >= 15 && pos > 5000L) {
                         lastSavedTick = 0
                         onSaveProgressTick(pos, dur)
                     }
@@ -820,6 +881,9 @@ class MovieInlinePlayerController(
         dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
+    /**
+     * نافذة اختيار الجودة مع قفل صارم للجودة المختارة (4K / 1080p / 720p) لكي لا تعود لـ 720p
+     */
     private fun showQualityOnlyPopup(engine: PrimePlayerEngine) {
         val dialog = Dialog(activity)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -867,6 +931,7 @@ class MovieInlinePlayerController(
                     exo.trackSelectionParameters = exo.trackSelectionParameters
                         .buildUpon()
                         .clearVideoSizeConstraints()
+                        .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
                         .build()
                 }
                 btnTopQualityOnly.text = detectedBadge
@@ -900,6 +965,14 @@ class MovieInlinePlayerController(
                 setOnClickListener {
                     selectedQualityHeight = qTrack.height
                     engine.selectVideoQualityHeight(qTrack.height)
+                    // قفل الحد الأدنى والأعلى للجودة على ExoPlayer مباشرة لضمان عدم الرجوع لـ 720p
+                    engine.player?.let { exo ->
+                        exo.trackSelectionParameters = exo.trackSelectionParameters
+                            .buildUpon()
+                            .setMinVideoSize(qTrack.width.coerceAtLeast(1), qTrack.height)
+                            .setMaxVideoSize(qTrack.width.coerceAtLeast(3840), qTrack.height)
+                            .build()
+                    }
                     btnTopQualityOnly.text = shortBadge
                     dialog.dismiss()
                 }
@@ -1000,9 +1073,6 @@ class MovieInlinePlayerController(
         dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    /**
-     * نافذة الترجمة مربوطة بملف res/layout/dialog_subtitles_sheet.xml
-     */
     private fun showSubtitlesDialog() {
         val dialog = Dialog(activity)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -1032,6 +1102,13 @@ class MovieInlinePlayerController(
 
         val sizeOptionsRow = root.findViewById<LinearLayout>(R.id.sizeOptionsRow)
         val bgOptionsRow = root.findViewById<LinearLayout>(R.id.bgOptionsRow)
+
+        val positionRow = root.findViewById<LinearLayout>(R.id.positionRow)
+        val tvPositionStatus = root.findViewById<TextView>(R.id.tvPositionStatus)
+        val btnSubPosDown = root.findViewById<TextView>(R.id.btnSubPosDown)
+        val btnSubPosReset = root.findViewById<TextView>(R.id.btnSubPosReset)
+        val btnSubPosUp = root.findViewById<TextView>(R.id.btnSubPosUp)
+
         val syncRow = root.findViewById<LinearLayout>(R.id.syncRow)
         val tvSyncStatus = root.findViewById<TextView>(R.id.tvSyncStatus)
         val btnMinusHalf = root.findViewById<TextView>(R.id.btnMinusHalf)
@@ -1135,6 +1212,30 @@ class MovieInlinePlayerController(
         }
         rebuildBgPills()
 
+        // التحكم في رفع وإنزال الترجمة (Vertical Position)
+        positionRow.background = makeRoundedBg("#14FFFFFF".toColorInt(), 12f, "#28FFFFFF".toColorInt(), 1f)
+        tvPositionStatus.text = String.format(Locale.US, "Position: %+ddp", subtitleExtraLiftDp)
+        btnSubPosDown.background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
+        btnSubPosReset.background = makeRoundedBg(Color.WHITE, 8f)
+        btnSubPosUp.background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
+
+        btnSubPosDown.setOnClickListener {
+            subtitleExtraLiftDp = (subtitleExtraLiftDp - 6).coerceIn(-10, 90)
+            tvPositionStatus.text = String.format(Locale.US, "Position: %+ddp", subtitleExtraLiftDp)
+            saveAndApplySubtitleStyle()
+        }
+        btnSubPosReset.setOnClickListener {
+            subtitleExtraLiftDp = 0
+            tvPositionStatus.text = "Position: +0dp"
+            saveAndApplySubtitleStyle()
+        }
+        btnSubPosUp.setOnClickListener {
+            subtitleExtraLiftDp = (subtitleExtraLiftDp + 6).coerceIn(-10, 90)
+            tvPositionStatus.text = String.format(Locale.US, "Position: %+ddp", subtitleExtraLiftDp)
+            saveAndApplySubtitleStyle()
+        }
+
+        // التحكم في مزامنة الوقت (Time Sync)
         syncRow.background = makeRoundedBg("#14FFFFFF".toColorInt(), 12f, "#28FFFFFF".toColorInt(), 1f)
         tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
         btnMinusHalf.background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
@@ -1314,8 +1415,10 @@ class MovieInlinePlayerController(
             .putFloat("sub_size_sp", subtitleTextSizeSp)
             .putInt("sub_text_color", subtitleTextColor)
             .putInt("sub_bg_alpha", subtitleBgAlpha)
+            .putInt("sub_extra_lift_dp", subtitleExtraLiftDp)
             .apply()
         applySubtitleStyleToOverlay()
+        animateSubtitlePositionForControls(controlsVisible = controlsOverlay.isVisible, animate = true)
     }
 
     private fun applySubtitleStyleToOverlay() {
@@ -1517,6 +1620,7 @@ class MovieInlinePlayerController(
         onFullscreenChanged(enterFullscreen)
 
         if (enterFullscreen) {
+            btnMinimizePlayer.visibility = View.VISIBLE
             btnTopServerOnly.visibility = View.VISIBLE
             btnTopQualityOnly.visibility = View.VISIBLE
             btnTopLock.visibility = View.VISIBLE
@@ -1540,7 +1644,9 @@ class MovieInlinePlayerController(
             WindowCompat.setDecorFitsSystemWindows(activity.window, true)
             WindowInsetsControllerCompat(activity.window, playerContainer).show(WindowInsetsCompat.Type.systemBars())
 
-            btnTopServerOnly.visibility = View.GONE
+            // في المشغل الصغير: نخفي سهم الرجوع، ونبقي زر Server ظاهراً
+            btnMinimizePlayer.visibility = View.GONE
+            btnTopServerOnly.visibility = View.VISIBLE
             btnTopQualityOnly.visibility = View.GONE
             btnTopLock.visibility = View.GONE
             fullscreenBottomActionsRow.visibility = View.GONE
@@ -1568,8 +1674,13 @@ class MovieInlinePlayerController(
         btnTopServerOnly.text = serverName.take(12)
     }
 
-    fun setQualityBadgeLabel(qualityBadge: String) {
-        btnTopQualityOnly.text = qualityBadge
+    /**
+     * تحديث شارة الجودة الحقيقية للسيرفر (لا نقوم بالكتابة فوقها إذا اختار المستخدم جودة محددة يدوياً)
+     */
+    fun onEngineQualityDetected(qualityBadge: String) {
+        if (selectedQualityHeight == null) {
+            btnTopQualityOnly.text = qualityBadge
+        }
     }
 
     fun setLoadingState(visible: Boolean) {
@@ -1579,8 +1690,12 @@ class MovieInlinePlayerController(
     fun resetForNewStream(isActiveMode: Boolean, isSeries: Boolean = false) {
         isCurrentMediaSeries = isSeries
         hasSkippedIntroForCurrentMedia = false
+        hasRenderedInitialFrameForStream = false
         selectedQualityHeight = null
         btnSkipIntro.visibility = View.GONE
+
+        // مسح سطح الفيديو القديم فوراً حتى لا تبقى أي صورة قديمة عالقة
+        playerView.player = null
 
         if (isSeries) {
             detectedIntroStartMs = 15_000L
@@ -1662,12 +1777,12 @@ class MovieInlinePlayerController(
             .start()
 
         animateSubtitlePositionForControls(controlsVisible = true, animate = true)
-        controlsOverlay.postDelayed(autoHideRunnable, 3400)
+        scheduleAutoHideIfPlaying()
     }
 
     fun hideControlsSmoothly() {
         controlsOverlay.removeCallbacks(autoHideRunnable)
-        if (!controlsOverlay.isVisible) return
+        if (!controlsOverlay.isVisible || isBufferingNow) return
 
         animateSubtitlePositionForControls(controlsVisible = false, animate = true)
         controlsOverlay.animate().cancel()
@@ -1688,21 +1803,24 @@ class MovieInlinePlayerController(
         if (!controlsOverlay.isVisible || controlsOverlay.alpha < 0.9f) {
             showControlsWithFade()
         } else {
-            controlsOverlay.postDelayed(autoHideRunnable, 3400)
+            scheduleAutoHideIfPlaying()
         }
     }
 
+    /**
+     * التقديم والترجيع بـ 15 ثانية دون إخفاء الأزرار (يعيد ضبط المؤقت ليبقى ظاهراً 3.4 ثوانٍ إضافية)
+     */
     private fun seekByDeltaMs(engine: PrimePlayerEngine, deltaMs: Long) {
         val exo = engine.player ?: return
         val dur = exo.duration
         val target = (exo.currentPosition + deltaMs).coerceAtLeast(0L)
         val newPos = if (dur > 0) min(target, dur) else target
-        setBufferingState(true)
         exo.seekTo(newPos)
         if (dur > 0) {
             seekBar.progress = ((newPos * 1000L) / dur).toInt().coerceIn(0, 1000)
             tvElapsed.text = formatTimeMs(newPos)
         }
+        resetAutoHide()
     }
 
     private fun formatTimeMs(ms: Long): String {
