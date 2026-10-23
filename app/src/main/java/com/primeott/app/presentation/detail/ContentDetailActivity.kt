@@ -890,33 +890,27 @@ class ContentDetailActivity : AppCompatActivity() {
      * فتح المشغل بدون تحريك alpha على حاوية الـ SurfaceView لمنع تجمّد الصورة نهائياً
      */
     private fun activateInlinePlayerSmoothly() {
+        val alreadyPrepared = playerEngine.player != null && resolvedDirectStreams.isNotEmpty()
         isPlayerModeActive = true
         fullScreenAmbientDrawable.setPlayerModeActive(true)
 
         btnPlayNowMain.visibility = View.GONE
         vHeroTopSpacer.visibility = View.GONE
-
-        heroTopActionsRow.animate()
-            .alpha(0f)
-            .setDuration(180L)
-            .withEndAction { heroTopActionsRow.visibility = View.GONE }
-            .start()
-
-        heroBackdropFixedContainer.animate()
-            .alpha(0f)
-            .setDuration(220L)
-            .withEndAction { heroBackdropFixedContainer.visibility = View.GONE }
-            .start()
+        heroTopActionsRow.visibility = View.GONE
+        heroBackdropFixedContainer.visibility = View.GONE
 
         val pContainer = moviePlayerController.playerContainer
         pContainer.alpha = 1f
         pContainer.translationY = 0f
         pContainer.visibility = View.VISIBLE
-        moviePlayerController.showControlsWithFade()
-
         detailsScrollView.smoothScrollTo(0, 0)
 
-        if (resolvedDirectStreams.isNotEmpty()) {
+        if (alreadyPrepared && moviePlayerController.playerView.player != null) {
+            moviePlayerController.setLoadingState(false)
+            playerEngine.resume()
+            moviePlayerController.updatePlayPauseVectorIcon(true)
+            moviePlayerController.showControlsWithFade()
+        } else if (resolvedDirectStreams.isNotEmpty()) {
             moviePlayerController.setLoadingState(true)
             playerEngine.playSources(
                 moviePlayerController.playerView,
@@ -924,6 +918,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 0,
                 pendingResumePositionMs
             )
+            playerEngine.resume()
         } else {
             moviePlayerController.setLoadingState(true)
             val vod = currentVod ?: return
@@ -2438,6 +2433,57 @@ object VectorIcons {
                 }
             }
 
+            override fun getIntrinsicWidth(): Int = sizePx
+            override fun getIntrinsicHeight(): Int = sizePx
+            override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+            override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+        }
+    }
+
+    fun createSmallServerStackIcon(context: Context, tintColor: Int): Drawable {
+        val d = context.resources.displayMetrics.density
+        val sizePx = (13 * d).toInt()
+        return object : Drawable() {
+            private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tintColor
+                style = Paint.Style.STROKE
+                strokeWidth = 1.4f * d
+            }
+            override fun draw(canvas: Canvas) {
+                val w = bounds.width().toFloat()
+                val h = bounds.height().toFloat()
+                canvas.drawRoundRect(RectF(w * 0.12f, h * 0.16f, w * 0.88f, h * 0.45f), w * 0.1f, w * 0.1f, paint)
+                canvas.drawRoundRect(RectF(w * 0.12f, h * 0.55f, w * 0.88f, h * 0.84f), w * 0.1f, w * 0.1f, paint)
+            }
+            override fun getIntrinsicWidth(): Int = sizePx
+            override fun getIntrinsicHeight(): Int = sizePx
+            override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+            override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+            @Deprecated("Deprecated in Java")
+            override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+        }
+    }
+
+    fun createSmallQualitySparkIcon(context: Context, tintColor: Int): Drawable {
+        val d = context.resources.displayMetrics.density
+        val sizePx = (13 * d).toInt()
+        return object : Drawable() {
+            private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = tintColor
+                style = Paint.Style.STROKE
+                strokeWidth = 1.5f * d
+                strokeCap = Paint.Cap.ROUND
+            }
+            override fun draw(canvas: Canvas) {
+                val w = bounds.width().toFloat()
+                val h = bounds.height().toFloat()
+                canvas.drawLine(w * 0.15f, h * 0.30f, w * 0.85f, h * 0.30f, paint)
+                canvas.drawLine(w * 0.15f, h * 0.70f, w * 0.85f, h * 0.70f, paint)
+                canvas.drawCircle(w * 0.38f, h * 0.30f, w * 0.12f, paint)
+                canvas.drawCircle(w * 0.65f, h * 0.70f, w * 0.12f, paint)
+            }
             override fun getIntrinsicWidth(): Int = sizePx
             override fun getIntrinsicHeight(): Int = sizePx
             override fun setAlpha(alpha: Int) { paint.alpha = alpha }

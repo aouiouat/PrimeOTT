@@ -183,33 +183,35 @@
                 android:maxLines="1"
                 android:paddingEnd="8dp"
                 android:textColor="#FFFFFF"
-                android:textSize="13.5sp" />
+                android:textSize="11.5sp" />
 
             <TextView
                 android:id="@+id/btnTopServerOnly"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="8dp"
+                android:layout_height="28dp"
+                android:layout_marginEnd="6dp"
                 android:fontFamily="@font/product_sans_bold"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="5dp"
-                android:text="Server"
+                android:gravity="center"
+                android:drawablePadding="4dp"
+                android:paddingHorizontal="8dp"
+                android:text="SRV"
                 android:textColor="#FFFFFF"
-                android:textSize="11.5sp"
+                android:textSize="10sp"
                 android:visibility="visible" />
 
             <TextView
                 android:id="@+id/btnTopQualityOnly"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="8dp"
+                android:layout_height="28dp"
+                android:layout_marginEnd="6dp"
                 android:fontFamily="@font/product_sans_bold"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="5dp"
-                android:text="Auto"
+                android:gravity="center"
+                android:drawablePadding="4dp"
+                android:paddingHorizontal="8dp"
+                android:text="FHD"
                 android:textColor="#FFFFFF"
-                android:textSize="11.5sp"
-                android:visibility="gone" />
+                android:textSize="10sp"
+                android:visibility="visible" />
 
             <ImageView
                 android:id="@+id/btnTopSubtitles"
@@ -308,6 +310,88 @@
                     android:layout_gravity="center"
                     android:padding="11dp" />
             </FrameLayout>
+        </LinearLayout>
+
+        <!-- شريط الإضاءة الثابت على اليسار في المشغل الكبير -->
+        <LinearLayout
+            android:id="@+id/fullscreenLeftBrightnessBar"
+            android:layout_width="34dp"
+            android:layout_height="135dp"
+            android:layout_gravity="start|center_vertical"
+            android:layout_marginStart="14dp"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:paddingVertical="8dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/ivSideBrightnessIcon"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:layout_marginBottom="6dp" />
+
+            <ProgressBar
+                android:id="@+id/pbSideBrightness"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="75dp"
+                android:layout_height="4dp"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="60"
+                android:progressBackgroundTint="#38FFFFFF"
+                android:progressTint="#FFFFFF"
+                android:rotation="270" />
+
+            <TextView
+                android:id="@+id/tvSideBrightnessPct"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:fontFamily="@font/product_sans_bold"
+                android:text="60%"
+                android:textColor="#FFFFFF"
+                android:textSize="9.5sp" />
+        </LinearLayout>
+
+        <!-- شريط الصوت الثابت على اليمين في المشغل الكبير -->
+        <LinearLayout
+            android:id="@+id/fullscreenRightVolumeBar"
+            android:layout_width="34dp"
+            android:layout_height="135dp"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="14dp"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:paddingVertical="8dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/ivSideVolumeIcon"
+                android:layout_width="16dp"
+                android:layout_height="16dp"
+                android:layout_marginBottom="6dp" />
+
+            <ProgressBar
+                android:id="@+id/pbSideVolume"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="75dp"
+                android:layout_height="4dp"
+                android:layout_weight="1"
+                android:max="100"
+                android:progress="70"
+                android:progressBackgroundTint="#38FFFFFF"
+                android:progressTint="#FFFFFF"
+                android:rotation="270" />
+
+            <TextView
+                android:id="@+id/tvSideVolumePct"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:fontFamily="@font/product_sans_bold"
+                android:text="70%"
+                android:textColor="#FFFFFF"
+                android:textSize="9.5sp" />
         </LinearLayout>
 
         <!-- الشريط السفلي (SeekBar + أزرار Fullscreen) -->

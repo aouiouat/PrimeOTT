@@ -122,6 +122,12 @@ class MovieInlinePlayerController(
     private lateinit var btnSkipIntro: LinearLayout
 
     private lateinit var gestureIndicatorCard: LinearLayout
+    private lateinit var fullscreenLeftBrightnessBar: LinearLayout
+    private lateinit var pbSideBrightness: ProgressBar
+    private lateinit var tvSideBrightnessPct: TextView
+    private lateinit var fullscreenRightVolumeBar: LinearLayout
+    private lateinit var pbSideVolume: ProgressBar
+    private lateinit var tvSideVolumePct: TextView
     private lateinit var ivGestureIcon: ImageView
     private lateinit var pbGestureLevel: ProgressBar
     private lateinit var tvGesturePercent: TextView
@@ -344,8 +350,30 @@ class MovieInlinePlayerController(
             if (isFullscreen) applyFullscreenState(false) else onMinimizeToCover()
         }
 
+        fullscreenLeftBrightnessBar = rootPlayerFrame.findViewById(R.id.fullscreenLeftBrightnessBar)
+        pbSideBrightness = rootPlayerFrame.findViewById(R.id.pbSideBrightness)
+        tvSideBrightnessPct = rootPlayerFrame.findViewById(R.id.tvSideBrightnessPct)
+        fullscreenRightVolumeBar = rootPlayerFrame.findViewById(R.id.fullscreenRightVolumeBar)
+        pbSideVolume = rootPlayerFrame.findViewById(R.id.pbSideVolume)
+        tvSideVolumePct = rootPlayerFrame.findViewById(R.id.tvSideVolumePct)
+
+        fullscreenLeftBrightnessBar.background = makeRoundedBg("#B310131C".toColorInt(), 18f, "#33FFFFFF".toColorInt(), 1f)
+        fullscreenRightVolumeBar.background = makeRoundedBg("#B310131C".toColorInt(), 18f, "#33FFFFFF".toColorInt(), 1f)
+        rootPlayerFrame.findViewById<ImageView>(R.id.ivSideBrightnessIcon)
+            .setImageDrawable(VectorIcons.createBrightnessSunIcon(activity, Color.WHITE))
+        rootPlayerFrame.findViewById<ImageView>(R.id.ivSideVolumeIcon)
+            .setImageDrawable(VectorIcons.createAudioSpeakerIcon(activity, Color.WHITE))
+
         btnTopServerOnly.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.9f)
         btnTopQualityOnly.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.9f)
+        val srvIcon = VectorIcons.createSmallServerStackIcon(activity, Color.WHITE).apply {
+            setBounds(0, 0, intrinsicWidth, intrinsicHeight)
+        }
+        val qIcon = VectorIcons.createSmallQualitySparkIcon(activity, Color.WHITE).apply {
+            setBounds(0, 0, intrinsicWidth, intrinsicHeight)
+        }
+        btnTopServerOnly.setCompoundDrawables(srvIcon, null, null, null)
+        btnTopQualityOnly.setCompoundDrawables(qIcon, null, null, null)
 
         btnTopSubtitles.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
         btnTopSubtitles.setImageDrawable(VectorIcons.createSubtitlesCcIcon(activity, Color.WHITE))
@@ -614,12 +642,12 @@ class MovieInlinePlayerController(
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 if (!isControlsLocked) {
-                    val width = playerView.width.coerceAtLeast(1)
-                    if (e.x < width * 0.45f) {
+                    val width = playerContainer.width.coerceAtLeast(1)
+                    if (e.x < width * 0.48f) {
                         resetAutoHide()
                         pulseCircleFeedback(btnRewind15BgCircle)
                         seekByDeltaMs(engine, -15_000L)
-                    } else if (e.x > width * 0.55f) {
+                    } else {
                         resetAutoHide()
                         pulseCircleFeedback(btnForward15BgCircle)
                         seekByDeltaMs(engine, 15_000L)
@@ -729,6 +757,13 @@ class MovieInlinePlayerController(
         )
         pbGestureLevel.progress = clamped
         tvGesturePercent.text = "$clamped%"
+        if (isBrightness) {
+            pbSideBrightness.progress = clamped
+            tvSideBrightnessPct.text = "$clamped%"
+        } else {
+            pbSideVolume.progress = clamped
+            tvSideVolumePct.text = "$clamped%"
+        }
         if (!gestureIndicatorCard.isVisible) {
             gestureIndicatorCard.alpha = 1f
             gestureIndicatorCard.visibility = View.VISIBLE
@@ -1219,20 +1254,40 @@ class MovieInlinePlayerController(
         btnSubPosReset.background = makeRoundedBg(Color.WHITE, 8f)
         btnSubPosUp.background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
 
+        fun flashTap(v: TextView, isWhiteRest: Boolean = false, action: () -> Unit) {
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+            v.animate().scaleX(0.90f).scaleY(0.90f).setDuration(65L).withEndAction {
+                v.animate().scaleX(1f).scaleY(1f).setDuration(95L).start()
+            }.start()
+            v.background = makeRoundedBg(Color.WHITE, 8f)
+            v.setTextColor("#0E1015".toColorInt())
+            v.postDelayed({
+                v.background = makeRoundedBg(if (isWhiteRest) Color.WHITE else "#24FFFFFF".toColorInt(), 8f)
+                v.setTextColor(if (isWhiteRest) "#0E1015".toColorInt() else Color.WHITE)
+            }, 130L)
+            action()
+        }
+
         btnSubPosDown.setOnClickListener {
-            subtitleExtraLiftDp = (subtitleExtraLiftDp - 6).coerceIn(-10, 90)
-            tvPositionStatus.text = String.format(Locale.US, "Position: %+ddp", subtitleExtraLiftDp)
-            saveAndApplySubtitleStyle()
+            flashTap(btnSubPosDown) {
+                subtitleExtraLiftDp = (subtitleExtraLiftDp - 6).coerceIn(-10, 90)
+                tvPositionStatus.text = String.format(Locale.US, "Position: %+ddp", subtitleExtraLiftDp)
+                saveAndApplySubtitleStyle()
+            }
         }
         btnSubPosReset.setOnClickListener {
-            subtitleExtraLiftDp = 0
-            tvPositionStatus.text = "Position: +0dp"
-            saveAndApplySubtitleStyle()
+            flashTap(btnSubPosReset, isWhiteRest = true) {
+                subtitleExtraLiftDp = 0
+                tvPositionStatus.text = "Position: +0dp"
+                saveAndApplySubtitleStyle()
+            }
         }
         btnSubPosUp.setOnClickListener {
-            subtitleExtraLiftDp = (subtitleExtraLiftDp + 6).coerceIn(-10, 90)
-            tvPositionStatus.text = String.format(Locale.US, "Position: %+ddp", subtitleExtraLiftDp)
-            saveAndApplySubtitleStyle()
+            flashTap(btnSubPosUp) {
+                subtitleExtraLiftDp = (subtitleExtraLiftDp + 6).coerceIn(-10, 90)
+                tvPositionStatus.text = String.format(Locale.US, "Position: %+ddp", subtitleExtraLiftDp)
+                saveAndApplySubtitleStyle()
+            }
         }
 
         // التحكم في مزامنة الوقت (Time Sync)
@@ -1243,16 +1298,22 @@ class MovieInlinePlayerController(
         btnPlusHalf.background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
 
         btnMinusHalf.setOnClickListener {
-            subtitleOffsetMs -= 500L
-            tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
+            flashTap(btnMinusHalf) {
+                subtitleOffsetMs -= 500L
+                tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
+            }
         }
         btnResetSync.setOnClickListener {
-            subtitleOffsetMs = 0L
-            tvSyncStatus.text = "Offset: +0.0s"
+            flashTap(btnResetSync, isWhiteRest = true) {
+                subtitleOffsetMs = 0L
+                tvSyncStatus.text = "Offset: +0.0s"
+            }
         }
         btnPlusHalf.setOnClickListener {
-            subtitleOffsetMs += 500L
-            tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
+            flashTap(btnPlusHalf) {
+                subtitleOffsetMs += 500L
+                tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
+            }
         }
 
         tabTracksBtn.setOnClickListener {
@@ -1562,8 +1623,20 @@ class MovieInlinePlayerController(
             btnSkipIntro.visibility = View.GONE
             holdSpeed2xPill.visibility = View.GONE
             gestureIndicatorCard.visibility = View.GONE
+            tvSubtitleOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.5f)
+            tvSubtitleOverlay.setPadding(dp(6), dp(1), dp(6), dp(1))
+            (tvSubtitleOverlay.layoutParams as? FrameLayout.LayoutParams)?.apply {
+                setMargins(dp(6), 0, dp(6), dp(4))
+                tvSubtitleOverlay.layoutParams = this
+            }
             animateSubtitlePositionForControls(controlsVisible = false, animate = false)
         } else {
+            tvSubtitleOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
+            tvSubtitleOverlay.setPadding(dp(12), dp(4), dp(12), dp(4))
+            (tvSubtitleOverlay.layoutParams as? FrameLayout.LayoutParams)?.apply {
+                setMargins(dp(20), 0, dp(20), dp(14))
+                tvSubtitleOverlay.layoutParams = this
+            }
             showControlsWithFade()
         }
     }
@@ -1625,6 +1698,8 @@ class MovieInlinePlayerController(
             btnTopQualityOnly.visibility = View.VISIBLE
             btnTopLock.visibility = View.VISIBLE
             fullscreenBottomActionsRow.visibility = View.VISIBLE
+            fullscreenLeftBrightnessBar.visibility = View.VISIBLE
+            fullscreenRightVolumeBar.visibility = View.VISIBLE
             vBottomPlayerSeparator.visibility = View.GONE
 
             playerContainer.layoutParams = LinearLayout.LayoutParams(
@@ -1647,9 +1722,11 @@ class MovieInlinePlayerController(
             // في المشغل الصغير: نخفي سهم الرجوع، ونبقي زر Server ظاهراً
             btnMinimizePlayer.visibility = View.GONE
             btnTopServerOnly.visibility = View.VISIBLE
-            btnTopQualityOnly.visibility = View.GONE
+            btnTopQualityOnly.visibility = View.VISIBLE
             btnTopLock.visibility = View.GONE
             fullscreenBottomActionsRow.visibility = View.GONE
+            fullscreenLeftBrightnessBar.visibility = View.GONE
+            fullscreenRightVolumeBar.visibility = View.GONE
             vBottomPlayerSeparator.visibility = View.VISIBLE
 
             resizeModeIndex = 0
