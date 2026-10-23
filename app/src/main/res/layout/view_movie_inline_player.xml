@@ -1,0 +1,511 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/playerContainer"
+    android:layout_width="match_parent"
+    android:layout_height="215dp"
+    android:background="#000000"
+    android:clipChildren="true"
+    android:visibility="gone">
+
+    <!-- 1. Media3 PlayerView (يبدأ بوضع fit بدون زوم) -->
+    <androidx.media3.ui.PlayerView
+        android:id="@+id/playerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="center"
+        app:resize_mode="fit"
+        app:use_controller="false" />
+
+    <!-- تدرج علوي ناعم -->
+    <View
+        android:id="@+id/vTopEdgeSoftGradient"
+        android:layout_width="match_parent"
+        android:layout_height="42dp"
+        android:layout_gravity="top" />
+
+    <!-- 2. نص الترجمة (يرتفع تلقائياً عند ظهور شريط التحكم) -->
+    <TextView
+        android:id="@+id/tvSubtitleOverlay"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginHorizontal="20dp"
+        android:layout_marginBottom="14dp"
+        android:fontFamily="@font/product_sans_bold"
+        android:gravity="center"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="4dp"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:visibility="gone" />
+
+    <!-- 3. شارة السرعة المضاعفة (2x Speed) في الأعلى -->
+    <LinearLayout
+        android:id="@+id/holdSpeed2xPill"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="10dp"
+        android:elevation="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="5dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/ivHoldFastIcon"
+            android:layout_width="14dp"
+            android:layout_height="14dp"
+            android:layout_marginEnd="5dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/product_sans_bold"
+            android:text="2x Speed"
+            android:textColor="#FFFFFF"
+            android:textSize="11.5sp" />
+    </LinearLayout>
+
+    <!-- 4. مؤشر الصوت والإضاءة في أعلى المشغل (topMargin = 10dp) -->
+    <LinearLayout
+        android:id="@+id/gestureIndicatorCard"
+        android:layout_width="155dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="10dp"
+        android:elevation="10dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="6dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/ivGestureIcon"
+            android:layout_width="17dp"
+            android:layout_height="17dp"
+            android:layout_marginEnd="8dp" />
+
+        <ProgressBar
+            android:id="@+id/pbGestureLevel"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="0dp"
+            android:layout_height="4dp"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:max="100"
+            android:progress="50"
+            android:progressBackgroundTint="#38FFFFFF"
+            android:progressTint="#FFFFFF" />
+
+        <TextView
+            android:id="@+id/tvGesturePercent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/product_sans_bold"
+            android:text="50%"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <!-- 5. زر Skip Intro -->
+    <LinearLayout
+        android:id="@+id/btnSkipIntro"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="14dp"
+        android:layout_marginBottom="44dp"
+        android:elevation="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="6dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/product_sans_bold"
+            android:text="Skip Intro"
+            android:textColor="#FFFFFF"
+            android:textSize="11.5sp" />
+
+        <ImageView
+            android:id="@+id/ivSkipIntroArrow"
+            android:layout_width="14dp"
+            android:layout_height="14dp"
+            android:layout_marginStart="5dp" />
+    </LinearLayout>
+
+    <!-- 6. واجهة التحكم (تظهر وتختفي بـ Fade ناعم) -->
+    <FrameLayout
+        android:id="@+id/controlsOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="visible">
+
+        <!-- الشريط العلوي -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingTop="10dp"
+            android:paddingBottom="6dp">
+
+            <ImageView
+                android:id="@+id/btnMinimizePlayer"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="7dp"
+                android:src="@drawable/ic_back_chevron" />
+
+            <TextView
+                android:id="@+id/tvTopPlayerTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:fontFamily="@font/product_sans_bold"
+                android:maxLines="1"
+                android:paddingStart="10dp"
+                android:paddingEnd="8dp"
+                android:textColor="#FFFFFF"
+                android:textSize="13.5sp" />
+
+            <TextView
+                android:id="@+id/btnTopServerOnly"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:fontFamily="@font/product_sans_bold"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp"
+                android:text="Server"
+                android:textColor="#FFFFFF"
+                android:textSize="11.5sp"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnTopQualityOnly"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:fontFamily="@font/product_sans_bold"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp"
+                android:text="FHD"
+                android:textColor="#FFFFFF"
+                android:textSize="11.5sp"
+                android:visibility="gone" />
+
+            <ImageView
+                android:id="@+id/btnTopSubtitles"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginEnd="8dp"
+                android:padding="6dp" />
+
+            <ImageView
+                android:id="@+id/btnTopPip"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:padding="6dp" />
+
+            <ImageView
+                android:id="@+id/btnTopLock"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginStart="8dp"
+                android:padding="6dp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- أزرار الوسط: Rewind | Play/Pause + Loader في نفس المكان | Forward مع الدوائر الحمراء -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <FrameLayout
+                android:id="@+id/btnRewind15Container"
+                android:layout_width="58dp"
+                android:layout_height="58dp"
+                android:layout_marginEnd="24dp">
+
+                <View
+                    android:id="@+id/btnRewind15BgCircle"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:alpha="0" />
+
+                <ImageView
+                    android:id="@+id/btnRewind15"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_gravity="center"
+                    android:padding="15dp" />
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/centerActionSlot"
+                android:layout_width="74dp"
+                android:layout_height="74dp">
+
+                <View
+                    android:id="@+id/btnCenterPlayPauseBgCircle"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:alpha="0" />
+
+                <ImageView
+                    android:id="@+id/btnCenterPlayPause"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_gravity="center"
+                    android:padding="18dp"
+                    android:visibility="invisible" />
+
+                <ProgressBar
+                    android:id="@+id/centerBufferingSpinner"
+                    android:layout_width="42dp"
+                    android:layout_height="42dp"
+                    android:layout_gravity="center"
+                    android:indeterminateTint="#FFFFFF"
+                    android:visibility="visible" />
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/btnForward15Container"
+                android:layout_width="58dp"
+                android:layout_height="58dp"
+                android:layout_marginStart="24dp">
+
+                <View
+                    android:id="@+id/btnForward15BgCircle"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:alpha="0" />
+
+                <ImageView
+                    android:id="@+id/btnForward15"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_gravity="center"
+                    android:padding="15dp" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <!-- الشريط السفلي (SeekBar + أزرار Fullscreen) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:orientation="vertical"
+            android:paddingHorizontal="12dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="8dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tvElapsed"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/product_sans_bold"
+                    android:text="00:00"
+                    android:textColor="#FFFFFF"
+                    android:textSize="11.5sp" />
+
+                <SeekBar
+                    android:id="@+id/seekBar"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="1000"
+                    android:progress="0"
+                    android:progressTint="#E50914"
+                    android:secondaryProgressTint="#55FFFFFF"
+                    android:thumbTint="#E50914" />
+
+                <TextView
+                    android:id="@+id/tvDuration"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="@font/product_sans_bold"
+                    android:text="00:00"
+                    android:textColor="#CBD5E1"
+                    android:textSize="11.5sp" />
+
+                <ImageView
+                    android:id="@+id/btnInlineFullscreen"
+                    android:layout_width="30dp"
+                    android:layout_height="30dp"
+                    android:layout_marginStart="6dp"
+                    android:padding="6dp" />
+            </LinearLayout>
+
+            <!-- أزرار التحكم الإضافية في وضع Fullscreen -->
+            <LinearLayout
+                android:id="@+id/fullscreenBottomActionsRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:orientation="horizontal"
+                android:paddingTop="6dp"
+                android:paddingBottom="2dp"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/btnBottomSubtitles"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="6dp">
+
+                    <ImageView
+                        android:id="@+id/ivBottomSubIcon"
+                        android:layout_width="15dp"
+                        android:layout_height="15dp"
+                        android:layout_marginEnd="6dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/product_sans_bold"
+                        android:text="Subtitles"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/btnBottomAudio"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="6dp">
+
+                    <ImageView
+                        android:id="@+id/ivBottomAudioIcon"
+                        android:layout_width="15dp"
+                        android:layout_height="15dp"
+                        android:layout_marginEnd="6dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/product_sans_bold"
+                        android:text="Audio"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/btnBottomSpeed"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="6dp">
+
+                    <TextView
+                        android:id="@+id/tvBottomSpeedLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/product_sans_bold"
+                        android:text="Speed: 1x"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/btnBottomAspect"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="6dp">
+
+                    <ImageView
+                        android:id="@+id/ivBottomAspectIcon"
+                        android:layout_width="15dp"
+                        android:layout_height="15dp"
+                        android:layout_marginEnd="6dp" />
+
+                    <TextView
+                        android:id="@+id/tvBottomAspectLabel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/product_sans_bold"
+                        android:text="Scale: Fit"
+                        android:textColor="#FFFFFF"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- 7. الفاصل الزجاجي السفلي بين المشغل واسم الفيلم -->
+    <View
+        android:id="@+id/vBottomPlayerSeparator"
+        android:layout_width="match_parent"
+        android:layout_height="2dp"
+        android:layout_gravity="bottom" />
+
+    <!-- 8. زر فتح القفل -->
+    <LinearLayout
+        android:id="@+id/btnUnlockScreenOnly"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_margin="16dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="12dp"
+        android:paddingTop="7dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="7dp"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/ivUnlockIcon"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_marginEnd="6dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/product_sans_bold"
+            android:text="Tap to Unlock"
+            android:textColor="#FFFFFF"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+</FrameLayout>

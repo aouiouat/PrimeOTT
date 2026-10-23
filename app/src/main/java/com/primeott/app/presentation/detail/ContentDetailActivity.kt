@@ -5,7 +5,6 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -46,7 +45,6 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -62,7 +60,6 @@ import androidx.core.content.res.ResourcesCompat
 import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.toColorInt
 import androidx.core.view.isVisible
-import androidx.core.widget.ImageViewCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.util.UnstableApi
 import androidx.recyclerview.widget.GridLayoutManager
@@ -252,6 +249,8 @@ class ContentDetailActivity : AppCompatActivity() {
         }
         currentVod = item
 
+        setContentView(R.layout.activity_content_detail)
+
         moviePlayerController = MovieInlinePlayerController(
             activity = this,
             scope = lifecycleScope,
@@ -314,7 +313,7 @@ class ContentDetailActivity : AppCompatActivity() {
             }
         )
 
-        buildPrimeTvDetailLayout()
+        bindXmlViewsAndListeners()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -416,6 +415,162 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
+    private fun bindXmlViewsAndListeners() {
+        fullScreenAmbientDrawable = FlixVisionFullScreenAmbientDrawable(
+            coverHeightPx = dpF(365f),
+            bottomFadeStartAtRestPx = dpF(175f),
+            fullOpaqueYAtRestPx = dpF(295f),
+            scrollToHideDistancePx = dpF(195f)
+        )
+
+        rootFrameWrapper = findViewById(R.id.rootFrameWrapper)
+        heroBackdropFixedContainer = findViewById(R.id.heroBackdropFixedContainer)
+        ivHeroBackdrop = findViewById(R.id.ivHeroBackdrop)
+        vFullDynamicAmbientBg = findViewById(R.id.vFullDynamicAmbientBg)
+        vFullDynamicAmbientBg.background = fullScreenAmbientDrawable
+
+        headlessSnifferWebView = findViewById(R.id.headlessSnifferWebView)
+        rootVerticalLayout = findViewById(R.id.rootVerticalLayout)
+
+        val includedPlayerFrame = findViewById<FrameLayout>(R.id.includedMoviePlayer)
+        moviePlayerController.bindFromXml(includedPlayerFrame)
+
+        detailsScrollView = findViewById(R.id.detailsScrollView)
+        detailsMasterColumn = findViewById(R.id.detailsMasterColumn)
+        vHeroTopSpacer = findViewById(R.id.vHeroTopSpacer)
+        contentSheetColumn = findViewById(R.id.contentSheetColumn)
+
+        tvMovieTitle = findViewById(R.id.tvMovieTitle)
+        tvMovieGenresLine = findViewById(R.id.tvMovieGenresLine)
+        metaPillsRow = findViewById(R.id.metaPillsRow)
+
+        btnPlayNowMain = findViewById(R.id.btnPlayNowMain)
+        tvPlayNowBtnLabel = findViewById(R.id.tvPlayNowBtnLabel)
+        btnWatchPartyBox = findViewById(R.id.btnWatchPartyBox)
+        btnTrailerBox = findViewById(R.id.btnTrailerBox)
+        btnDownloadBox = findViewById(R.id.btnDownloadBox)
+
+        seriesContainer = findViewById(R.id.seriesContainer)
+        seasonTabsRow = findViewById(R.id.seasonTabsRow)
+        rvEpisodes = findViewById(R.id.rvEpisodes)
+        rvEpisodes.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+
+        tvOverviewText = findViewById(R.id.tvOverviewText)
+        crewMetadataContainer = findViewById(R.id.crewMetadataContainer)
+        rowDirector = findViewById(R.id.rowDirector)
+        tvDirectorValue = findViewById(R.id.tvDirectorValue)
+        rowWriters = findViewById(R.id.rowWriters)
+        tvWritersValue = findViewById(R.id.tvWritersValue)
+
+        tvCastHeader = findViewById(R.id.tvCastHeader)
+        rvCast = findViewById(R.id.rvCast)
+        rvCast.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+        rvCast.setHasFixedSize(true)
+
+        tvRecommendedHeader = findViewById(R.id.tvRecommendedHeader)
+        rvRecommended = findViewById(R.id.rvRecommended)
+        rvRecommended.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+        rvRecommended.setHasFixedSize(true)
+
+        tvMoreLikeHeader = findViewById(R.id.tvMoreLikeHeader)
+        rvMoreLike = findViewById(R.id.rvMoreLike)
+        rvMoreLike.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+        rvMoreLike.setHasFixedSize(true)
+
+        heroTopActionsRow = findViewById(R.id.heroTopActionsRow)
+        btnTopBackHero = findViewById(R.id.btnTopBackHero)
+        btnFavBox = findViewById(R.id.btnFavBox)
+
+        btnTopBackHero.background = makeRoundedBg("#4D080A10".toColorInt(), 21f, "#36FFFFFF".toColorInt(), 1f)
+        btnFavBox.background = makeRoundedBg("#4D080A10".toColorInt(), 21f, "#36FFFFFF".toColorInt(), 1f)
+
+        btnTopBackHero.setOnClickListener { handleSmartBackNavigation() }
+        btnFavBox.setOnClickListener {
+            val vod = currentVod ?: return@setOnClickListener
+            OttRepository.toggleFavorite(vod.id, this)
+            val nowFav = OttRepository.isChannelFavorite(vod.id)
+            updateFavoriteIcon(vod.id)
+            val msg = if (nowFav) {
+                "Added \"${vod.title}\" to Favorites"
+            } else {
+                "Removed \"${vod.title}\" from Favorites"
+            }
+            Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        }
+
+        btnPlayNowMain.setOnClickListener { activateInlinePlayerSmoothly() }
+        btnWatchPartyBox.setOnClickListener { createWatchTogetherRoom() }
+        btnTrailerBox.setOnClickListener {
+            val key = fullDetails?.trailerYoutubeKey.orEmpty()
+            if (key.isNotEmpty()) {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$key")))
+            } else {
+                val q = Uri.encode("${currentVod?.title ?: ""} official trailer")
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$q")))
+            }
+        }
+        btnDownloadBox.setOnClickListener { handleDirectMovieDownload() }
+        tvOverviewText.setOnClickListener { toggleOverviewExpansion() }
+
+        AnimUtils.attachPressBounce(btnTopBackHero)
+        AnimUtils.attachPressBounce(btnFavBox)
+        AnimUtils.attachPressBounce(btnPlayNowMain)
+        AnimUtils.attachPressBounce(btnWatchPartyBox)
+        AnimUtils.attachPressBounce(btnTrailerBox)
+        AnimUtils.attachPressBounce(btnDownloadBox)
+
+        // ربط عناصر صفحة الممثل الكاملة من XML
+        actorPageOverlay = findViewById(R.id.actorPageOverlay)
+        val btnActorBack = findViewById<ImageView>(R.id.btnActorBack)
+        val actorAvatarWrap = findViewById<FrameLayout>(R.id.actorAvatarWrap)
+        ivActorPageAvatar = findViewById(R.id.ivActorPageAvatar)
+        tvActorPageName = findViewById(R.id.tvActorPageName)
+        tvActorMoviesTab = findViewById(R.id.tvActorMoviesTab)
+        tvActorSeriesTab = findViewById(R.id.tvActorSeriesTab)
+        btnActorSort = findViewById(R.id.btnActorSort)
+        actorPageSpinner = findViewById(R.id.actorPageSpinner)
+        rvActorCreditsGrid = findViewById(R.id.rvActorCreditsGrid)
+        rvActorCreditsGrid.layoutManager = GridLayoutManager(this, 3)
+
+        btnActorBack.background = makeRoundedBg("#1FFFFFFF".toColorInt(), 20f, "#33FFFFFF".toColorInt(), 1f)
+        btnActorBack.setOnClickListener { handleSmartBackNavigation() }
+
+        actorAvatarWrap.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor("#18202C".toColorInt())
+            setStroke(dp(2), "#E6FFFFFF".toColorInt())
+        }
+
+        btnActorSort.setImageDrawable(VectorIcons.createSortBarsIcon(this, Color.WHITE))
+        btnActorSort.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor("#1A202C".toColorInt())
+            setStroke(dp(1), "#33FFFFFF".toColorInt())
+        }
+
+        tvActorMoviesTab.setOnClickListener {
+            currentActorFilterMode = if (currentActorFilterMode == "MOVIES") "ALL" else "MOVIES"
+            refreshActorOverlayGrid()
+        }
+        tvActorSeriesTab.setOnClickListener {
+            currentActorFilterMode = if (currentActorFilterMode == "SERIES") "ALL" else "SERIES"
+            refreshActorOverlayGrid()
+        }
+        btnActorSort.setOnClickListener {
+            currentActorSortByYearDesc = !currentActorSortByYearDesc
+            Toast.makeText(
+                this,
+                if (currentActorSortByYearDesc) "Sorted by Release Year" else "Sorted by Rating",
+                Toast.LENGTH_SHORT
+            ).show()
+            refreshActorOverlayGrid()
+        }
+
+        detailsScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+            fullScreenAmbientDrawable.updateScrollOffset(scrollY.toFloat())
+        }
+    }
+
     private fun extractFlixVisionPalette(bitmap: Bitmap): Pair<Int, Int> {
         return try {
             val scaled = Bitmap.createScaledBitmap(bitmap, 40, 40, false)
@@ -466,9 +621,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * أنيميشن استخراج اللون المضبوطة على 2000L كما اعتمدتها
-     */
     private fun startCoverColorExtractionAnimation(targetLeftColor: Int, targetRightColor: Int) {
         colorExtractionAnimator?.cancel()
 
@@ -502,639 +654,6 @@ class ContentDetailActivity : AppCompatActivity() {
             }
             start()
         }
-    }
-
-    private fun buildPrimeTvDetailLayout() {
-        fullScreenAmbientDrawable = FlixVisionFullScreenAmbientDrawable(
-            coverHeightPx = dpF(365f),
-            bottomFadeStartAtRestPx = dpF(175f),
-            fullOpaqueYAtRestPx = dpF(295f),
-            scrollToHideDistancePx = dpF(195f)
-        )
-
-        rootFrameWrapper = FrameLayout(this).apply {
-            setBackgroundColor("#000000".toColorInt())
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        heroBackdropFixedContainer = FrameLayout(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(365),
-                Gravity.TOP
-            )
-        }
-
-        ivHeroBackdrop = ImageView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            scaleType = ImageView.ScaleType.CENTER_CROP
-        }
-        heroBackdropFixedContainer.addView(ivHeroBackdrop)
-        rootFrameWrapper.addView(heroBackdropFixedContainer)
-
-        vFullDynamicAmbientBg = View(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            background = fullScreenAmbientDrawable
-        }
-        rootFrameWrapper.addView(vFullDynamicAmbientBg)
-
-        rootVerticalLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.TRANSPARENT)
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        headlessSnifferWebView = WebView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(1, 1)
-            alpha = 0f
-            visibility = View.GONE
-        }
-        rootFrameWrapper.addView(headlessSnifferWebView)
-
-        rootVerticalLayout.addView(moviePlayerController.buildPlayerView())
-
-        detailsScrollView = ScrollView(this).apply {
-            setBackgroundColor(Color.TRANSPARENT)
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
-            isVerticalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-        }
-
-        detailsMasterColumn = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.TRANSPARENT)
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        // نفس ارتفاع المشغل (215dp) لكي لا يحدث أي قفزة أو Lag في الصفحة عند التبديل بين الغلاف والمشغل!
-        vHeroTopSpacer = View(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(215)
-            )
-        }
-        detailsMasterColumn.addView(vHeroTopSpacer)
-
-        contentSheetColumn = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(14), dp(18), dp(44))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        tvMovieTitle = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 26f
-            typeface = fontProductBold
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
-            setShadowLayer(10f, 0f, 3f, Color.BLACK)
-        }
-        contentSheetColumn.addView(tvMovieTitle)
-
-        tvMovieGenresLine = TextView(this).apply {
-            setTextColor("#D8E2EE".toColorInt())
-            textSize = 12.5f
-            typeface = fontProductRegular
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, dp(3), 0, dp(10))
-            setShadowLayer(6f, 0f, 2f, Color.BLACK)
-        }
-        contentSheetColumn.addView(tvMovieGenresLine)
-
-        val pillsScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(14)
-            }
-        }
-        metaPillsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        pillsScroll.addView(metaPillsRow)
-        contentSheetColumn.addView(pillsScroll)
-
-        val primaryActionsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dp(14)
-            }
-        }
-
-        val darkBtnContentTint = "#16181E".toColorInt()
-
-        btnPlayNowMain = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setBackgroundResource(R.drawable.bg_btn_play_white_luxury)
-            elevation = dpF(3f)
-            setPadding(dp(10), 0, dp(12), 0)
-            layoutParams = LinearLayout.LayoutParams(0, dp(44), 1.05f).apply {
-                marginEnd = dp(8)
-            }
-            setOnClickListener {
-                activateInlinePlayerSmoothly()
-            }
-        }
-        val ivPlayIcon = ImageView(this).apply {
-            setImageResource(R.drawable.ic_play_watch_now)
-            ImageViewCompat.setImageTintList(this, ColorStateList.valueOf(darkBtnContentTint))
-            layoutParams = LinearLayout.LayoutParams(dp(16), dp(16))
-        }
-        tvPlayNowBtnLabel = TextView(this).apply {
-            text = "PLAY"
-            setTextColor(darkBtnContentTint)
-            textSize = 13.5f
-            typeface = fontProductBold
-            isSingleLine = true
-            maxLines = 1
-            setPadding(dp(6), 0, 0, 0)
-        }
-        btnPlayNowMain.addView(ivPlayIcon)
-        btnPlayNowMain.addView(tvPlayNowBtnLabel)
-
-        btnWatchPartyBox = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setBackgroundResource(R.drawable.bg_btn_play_white_luxury)
-            elevation = dpF(3f)
-            setPadding(dp(10), 0, dp(10), 0)
-            layoutParams = LinearLayout.LayoutParams(0, dp(44), 0.98f).apply {
-                marginEnd = dp(8)
-            }
-            setOnClickListener { createWatchTogetherRoom() }
-        }
-        val ivPartyIcon = ImageView(this).apply {
-            setImageResource(R.drawable.ic_nav_events)
-            ImageViewCompat.setImageTintList(this, ColorStateList.valueOf(darkBtnContentTint))
-            layoutParams = LinearLayout.LayoutParams(dp(17), dp(17))
-        }
-        val tvPartyLabel = TextView(this).apply {
-            text = "Party"
-            setTextColor(darkBtnContentTint)
-            textSize = 13.5f
-            typeface = fontProductBold
-            isSingleLine = true
-            maxLines = 1
-            setPadding(dp(6), 0, 0, 0)
-        }
-        btnWatchPartyBox.addView(ivPartyIcon)
-        btnWatchPartyBox.addView(tvPartyLabel)
-
-        btnTrailerBox = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setBackgroundResource(R.drawable.bg_btn_play_white_luxury)
-            elevation = dpF(3f)
-            setPadding(dp(10), 0, dp(10), 0)
-            layoutParams = LinearLayout.LayoutParams(0, dp(44), 1.02f).apply {
-                marginEnd = dp(8)
-            }
-            setOnClickListener {
-                val key = fullDetails?.trailerYoutubeKey.orEmpty()
-                if (key.isNotEmpty()) {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$key")))
-                } else {
-                    val q = Uri.encode("${currentVod?.title ?: ""} official trailer")
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=$q")))
-                }
-            }
-        }
-        val ivTrailerIcon = ImageView(this).apply {
-            setImageResource(R.drawable.ic_trailer_film)
-            ImageViewCompat.setImageTintList(this, ColorStateList.valueOf(darkBtnContentTint))
-            layoutParams = LinearLayout.LayoutParams(dp(17), dp(17))
-        }
-        val tvTrailerLabel = TextView(this).apply {
-            text = "Trailer"
-            setTextColor(darkBtnContentTint)
-            textSize = 13.5f
-            typeface = fontProductBold
-            isSingleLine = true
-            maxLines = 1
-            setPadding(dp(6), 0, 0, 0)
-        }
-        btnTrailerBox.addView(ivTrailerIcon)
-        btnTrailerBox.addView(tvTrailerLabel)
-
-        btnDownloadBox = FrameLayout(this).apply {
-            setBackgroundResource(R.drawable.bg_btn_play_white_luxury)
-            elevation = dpF(3f)
-            layoutParams = LinearLayout.LayoutParams(dp(48), dp(44))
-            setOnClickListener {
-                handleDirectMovieDownload()
-            }
-        }
-        val ivDownloadIcon = ImageView(this).apply {
-            setImageResource(R.drawable.ic_download_cloud)
-            ImageViewCompat.setImageTintList(this, ColorStateList.valueOf(darkBtnContentTint))
-            layoutParams = FrameLayout.LayoutParams(dp(23), dp(23), Gravity.CENTER)
-        }
-        btnDownloadBox.addView(ivDownloadIcon)
-
-        AnimUtils.attachPressBounce(btnPlayNowMain)
-        AnimUtils.attachPressBounce(btnWatchPartyBox)
-        AnimUtils.attachPressBounce(btnTrailerBox)
-        AnimUtils.attachPressBounce(btnDownloadBox)
-
-        primaryActionsRow.addView(btnPlayNowMain)
-        primaryActionsRow.addView(btnWatchPartyBox)
-        primaryActionsRow.addView(btnTrailerBox)
-        primaryActionsRow.addView(btnDownloadBox)
-        contentSheetColumn.addView(primaryActionsRow)
-
-        seriesContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-            setPadding(0, 0, 0, dp(14))
-        }
-        val seasonScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-        }
-        seasonTabsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 0, 0, dp(10))
-        }
-        seasonScroll.addView(seasonTabsRow)
-        seriesContainer.addView(seasonScroll)
-
-        rvEpisodes = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@ContentDetailActivity, LinearLayoutManager.HORIZONTAL, false)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(112))
-        }
-        seriesContainer.addView(rvEpisodes)
-        contentSheetColumn.addView(seriesContainer)
-
-        tvOverviewText = TextView(this).apply {
-            setTextColor("#F1F5F9".toColorInt())
-            textSize = 14f
-            typeface = fontProductRegular
-            setLineSpacing(dpF(3.5f), 1.04f)
-            setPadding(0, dp(2), 0, dp(10))
-            setOnClickListener { toggleOverviewExpansion() }
-        }
-        contentSheetColumn.addView(tvOverviewText)
-
-        crewMetadataContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-            setPadding(0, dp(2), 0, dp(6))
-        }
-
-        rowDirector = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(4))
-        }
-        val tvDirectorLabel = TextView(this).apply {
-            text = "DIRECTOR"
-            setTextColor("#FFFFFF".toColorInt())
-            textSize = 10.5f
-            typeface = fontProductBold
-            layoutParams = LinearLayout.LayoutParams(dp(88), ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        tvDirectorValue = TextView(this).apply {
-            setTextColor("#FFFFFF".toColorInt())
-            textSize = 11.5f
-            typeface = fontProductRegular
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        rowDirector.addView(tvDirectorLabel)
-        rowDirector.addView(tvDirectorValue)
-
-        rowWriters = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        val tvWritersLabel = TextView(this).apply {
-            text = "WRITTEN BY"
-            setTextColor("#FFFFFF".toColorInt())
-            textSize = 10.5f
-            typeface = fontProductBold
-            layoutParams = LinearLayout.LayoutParams(dp(88), ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        tvWritersValue = TextView(this).apply {
-            setTextColor("#FFFFFF".toColorInt())
-            textSize = 11.5f
-            typeface = fontProductRegular
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        rowWriters.addView(tvWritersLabel)
-        rowWriters.addView(tvWritersValue)
-
-        crewMetadataContainer.addView(rowDirector)
-        crewMetadataContainer.addView(rowWriters)
-        contentSheetColumn.addView(crewMetadataContainer)
-
-        tvCastHeader = TextView(this).apply {
-            text = "CAST"
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            typeface = fontProductBold
-            letterSpacing = 0.04f
-            setPadding(0, dp(12), 0, dp(10))
-        }
-        contentSheetColumn.addView(tvCastHeader)
-
-        rvCast = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@ContentDetailActivity, LinearLayoutManager.HORIZONTAL, false)
-            clipToPadding = false
-            setHasFixedSize(true)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(124))
-        }
-        contentSheetColumn.addView(rvCast)
-
-        tvRecommendedHeader = TextView(this).apply {
-            text = "RECOMMENDED"
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            typeface = fontProductBold
-            letterSpacing = 0.04f
-            setPadding(0, dp(16), 0, dp(10))
-        }
-        contentSheetColumn.addView(tvRecommendedHeader)
-
-        rvRecommended = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@ContentDetailActivity, LinearLayoutManager.HORIZONTAL, false)
-            clipToPadding = false
-            setHasFixedSize(true)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(196))
-        }
-        contentSheetColumn.addView(rvRecommended)
-
-        tvMoreLikeHeader = TextView(this).apply {
-            text = "YOU MAY ALSO LIKE"
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            typeface = fontProductBold
-            letterSpacing = 0.04f
-            setPadding(0, dp(16), 0, dp(10))
-        }
-        contentSheetColumn.addView(tvMoreLikeHeader)
-
-        rvMoreLike = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@ContentDetailActivity, LinearLayoutManager.HORIZONTAL, false)
-            clipToPadding = false
-            setHasFixedSize(true)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(196))
-        }
-        contentSheetColumn.addView(rvMoreLike)
-
-        detailsMasterColumn.addView(contentSheetColumn)
-        detailsScrollView.addView(detailsMasterColumn)
-        rootVerticalLayout.addView(detailsScrollView)
-        rootFrameWrapper.addView(rootVerticalLayout)
-
-        heroTopActionsRow = FrameLayout(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP
-            )
-            setPadding(dp(16), dp(16), dp(16), dp(8))
-        }
-
-        btnTopBackHero = ImageView(this).apply {
-            setImageResource(R.drawable.ic_back_chevron)
-            background = makeRoundedBg("#4D080A10".toColorInt(), 21f, "#36FFFFFF".toColorInt(), 1f)
-            setPadding(dp(10), dp(10), dp(11), dp(10))
-            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40), Gravity.START or Gravity.CENTER_VERTICAL)
-            setOnClickListener { handleSmartBackNavigation() }
-        }
-
-        btnFavBox = ImageView(this).apply {
-            setImageResource(R.drawable.ic_heart_outline)
-            background = makeRoundedBg("#4D080A10".toColorInt(), 21f, "#36FFFFFF".toColorInt(), 1f)
-            setPadding(dp(9), dp(9), dp(9), dp(9))
-            layoutParams = FrameLayout.LayoutParams(dp(40), dp(40), Gravity.END or Gravity.CENTER_VERTICAL)
-            setOnClickListener {
-                val vod = currentVod ?: return@setOnClickListener
-                OttRepository.toggleFavorite(vod.id, this@ContentDetailActivity)
-                val nowFav = OttRepository.isChannelFavorite(vod.id)
-                updateFavoriteIcon(vod.id)
-                val msg = if (nowFav) {
-                    "Added \"${vod.title}\" to Favorites"
-                } else {
-                    "Removed \"${vod.title}\" from Favorites"
-                }
-                Toast.makeText(this@ContentDetailActivity, msg, Toast.LENGTH_SHORT).show()
-            }
-        }
-        AnimUtils.attachPressBounce(btnTopBackHero)
-        AnimUtils.attachPressBounce(btnFavBox)
-
-        heroTopActionsRow.addView(btnTopBackHero)
-        heroTopActionsRow.addView(btnFavBox)
-        rootFrameWrapper.addView(heroTopActionsRow)
-
-        buildFullScreenActorPageOverlay()
-        rootFrameWrapper.addView(actorPageOverlay)
-
-        detailsScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
-            fullScreenAmbientDrawable.updateScrollOffset(scrollY.toFloat())
-        }
-
-        setContentView(rootFrameWrapper)
-    }
-
-    private fun buildFullScreenActorPageOverlay() {
-        actorPageOverlay = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor("#0B0D12".toColorInt())
-            layoutDirection = View.LAYOUT_DIRECTION_LTR
-            visibility = View.GONE
-            elevation = dpF(24f)
-            isClickable = true
-            isFocusable = true
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        val topBar = FrameLayout(this).apply {
-            setPadding(dp(16), dp(16), dp(16), dp(4))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-        val btnActorBack = ImageView(this).apply {
-            setImageResource(R.drawable.ic_back_chevron)
-            background = makeRoundedBg("#1FFFFFFF".toColorInt(), 20f, "#33FFFFFF".toColorInt(), 1f)
-            setPadding(dp(9), dp(9), dp(10), dp(9))
-            layoutParams = FrameLayout.LayoutParams(dp(38), dp(38), Gravity.START or Gravity.CENTER_VERTICAL)
-            setOnClickListener { handleSmartBackNavigation() }
-        }
-        topBar.addView(btnActorBack)
-        actorPageOverlay.addView(topBar)
-
-        val avatarWrap = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(112), dp(112)).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = dp(2)
-            }
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor("#18202C".toColorInt())
-                setStroke(dp(2), "#E6FFFFFF".toColorInt())
-            }
-            setPadding(dp(3), dp(3), dp(3), dp(3))
-        }
-        ivActorPageAvatar = ImageView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            scaleType = ImageView.ScaleType.CENTER_CROP
-        }
-        avatarWrap.addView(ivActorPageAvatar)
-        actorPageOverlay.addView(avatarWrap)
-
-        tvActorPageName = TextView(this).apply {
-            setTextColor(Color.WHITE)
-            textSize = 23f
-            typeface = fontProductBold
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(12), dp(16), dp(8))
-        }
-        actorPageOverlay.addView(tvActorPageName)
-
-        val statsAndSortRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(24), dp(4), dp(20), dp(12))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        val tabsCenterBox = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
-        tvActorMoviesTab = TextView(this).apply {
-            text = "Movies • 0"
-            setTextColor(Color.WHITE)
-            textSize = 15f
-            typeface = fontProductBold
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-            setOnClickListener {
-                currentActorFilterMode = if (currentActorFilterMode == "MOVIES") "ALL" else "MOVIES"
-                refreshActorOverlayGrid()
-            }
-        }
-
-        tvActorSeriesTab = TextView(this).apply {
-            text = "Series • 0"
-            setTextColor("#94A3B8".toColorInt())
-            textSize = 15f
-            typeface = fontProductBold
-            setPadding(dp(18), dp(6), dp(12), dp(6))
-            setOnClickListener {
-                currentActorFilterMode = if (currentActorFilterMode == "SERIES") "ALL" else "SERIES"
-                refreshActorOverlayGrid()
-            }
-        }
-
-        tabsCenterBox.addView(tvActorMoviesTab)
-        tabsCenterBox.addView(tvActorSeriesTab)
-
-        btnActorSort = ImageView(this).apply {
-            setImageDrawable(VectorIcons.createSortBarsIcon(this@ContentDetailActivity, Color.WHITE))
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor("#1A202C".toColorInt())
-                setStroke(dp(1), "#33FFFFFF".toColorInt())
-            }
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            layoutParams = LinearLayout.LayoutParams(dp(42), dp(42))
-            setOnClickListener {
-                currentActorSortByYearDesc = !currentActorSortByYearDesc
-                Toast.makeText(
-                    this@ContentDetailActivity,
-                    if (currentActorSortByYearDesc) "Sorted by Release Year" else "Sorted by Rating",
-                    Toast.LENGTH_SHORT
-                ).show()
-                refreshActorOverlayGrid()
-            }
-        }
-
-        statsAndSortRow.addView(tabsCenterBox)
-        statsAndSortRow.addView(btnActorSort)
-        actorPageOverlay.addView(statsAndSortRow)
-
-        val divider = View(this).apply {
-            setBackgroundColor("#1FFFFFFF".toColorInt())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
-        }
-        actorPageOverlay.addView(divider)
-
-        val gridContainer = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
-        }
-
-        actorPageSpinner = ProgressBar(this).apply {
-            indeterminateTintList = ColorStateList.valueOf("#E50914".toColorInt())
-            layoutParams = FrameLayout.LayoutParams(dp(38), dp(38), Gravity.CENTER)
-        }
-        gridContainer.addView(actorPageSpinner)
-
-        rvActorCreditsGrid = RecyclerView(this).apply {
-            layoutManager = GridLayoutManager(this@ContentDetailActivity, 3)
-            clipToPadding = false
-            setPadding(dp(8), dp(12), dp(8), dp(28))
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-        gridContainer.addView(rvActorCreditsGrid)
-        actorPageOverlay.addView(gridContainer)
     }
 
     private fun openFlixVisionActorPage(actor: CastMember) {
@@ -1367,9 +886,6 @@ class ContentDetailActivity : AppCompatActivity() {
         renderOverviewWithInlineMore(fullOverviewRawText, isOverviewExpanded)
     }
 
-    /**
-     * أنيميشن فتح المشغل بسرعة 60fps بدون أي تقطيع أو Lag (باستخدام Cross-Fade + Slide بدون إعادة بناء تخطيط الصفحة)
-     */
     private fun activateInlinePlayerSmoothly() {
         isPlayerModeActive = true
         fullScreenAmbientDrawable.setPlayerModeActive(true)
@@ -1423,9 +939,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * أنيميشن إغلاق المشغل وعودة الغلاف بسرعة 60fps بدون أي Lag
-     */
     private fun switchToPosterShowcaseMode(saveCurrentPlayerPos: Boolean, animateTransition: Boolean) {
         if (saveCurrentPlayerPos && isPlayerModeActive) {
             playerEngine.player?.let { exo ->
@@ -2469,9 +1982,6 @@ object VectorIcons {
         }
     }
 
-    /**
-     * أيقونة السهم الدائري للتقديم والترجيع المطابقة للفيديو المرفق تماماً
-     */
     fun createCircularSeekArrowIcon(context: Context, isForward: Boolean): Drawable {
         val d = context.resources.displayMetrics.density
         val sizePx = (28 * d).toInt()

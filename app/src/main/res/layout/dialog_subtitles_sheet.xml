@@ -1,0 +1,243 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/subDialogRoot"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layoutDirection="ltr"
+    android:orientation="vertical"
+    android:paddingHorizontal="16dp"
+    android:paddingVertical="14dp">
+
+    <!-- الشريط العلوي: التبويبان (Languages | Appearance) + زر الإغلاق -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingBottom="10dp">
+
+        <LinearLayout
+            android:id="@+id/tabSwitchBox"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:padding="3dp">
+
+            <TextView
+                android:id="@+id/tabTracksBtn"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="@font/product_sans_bold"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="6dp"
+                android:text="Languages"
+                android:textColor="#0E1015"
+                android:textSize="12.5sp" />
+
+            <TextView
+                android:id="@+id/tabSettingsBtn"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="@font/product_sans_bold"
+                android:gravity="center"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="6dp"
+                android:text="Appearance"
+                android:textColor="#B0BAC9"
+                android:textSize="12.5sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/btnClosePopup"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginStart="10dp"
+            android:fontFamily="@font/product_sans_bold"
+            android:gravity="center"
+            android:text="✕"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- القسم 1: قائمة اللغات المتوفرة (بدون WEB-DL1080p...) -->
+    <LinearLayout
+        android:id="@+id/tracksPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="visible">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingBottom="8dp">
+
+            <TextView
+                android:id="@+id/btnDisableSubs"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:fontFamily="@font/product_sans_bold"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="6dp"
+                android:text="Off"
+                android:textColor="#FFFFFF"
+                android:textSize="11.5sp" />
+
+            <TextView
+                android:id="@+id/btnUploadSrt"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:fontFamily="@font/product_sans_bold"
+                android:gravity="center"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="6dp"
+                android:text="+ Local File"
+                android:textColor="#FFFFFF"
+                android:textSize="11.5sp" />
+
+            <TextView
+                android:id="@+id/btnRefreshSubs"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/product_sans_bold"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="6dp"
+                android:text="Reload"
+                android:textColor="#FFFFFF"
+                android:textSize="11.5sp" />
+        </LinearLayout>
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/filterRow"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingBottom="8dp" />
+        </HorizontalScrollView>
+
+        <ScrollView
+            android:id="@+id/tracksScroll"
+            android:layout_width="match_parent"
+            android:layout_height="185dp">
+
+            <LinearLayout
+                android:id="@+id/tracksContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- القسم 2: إعدادات الحجم والخلفية والمزامنة (Shadow | Glass | Dark Box) -->
+    <LinearLayout
+        android:id="@+id/settingsPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="2dp"
+        android:paddingVertical="4dp"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/product_sans_bold"
+            android:paddingBottom="6dp"
+            android:text="FONT SIZE"
+            android:textColor="#94A3B8"
+            android:textSize="10.5sp" />
+
+        <LinearLayout
+            android:id="@+id/sizeOptionsRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:orientation="horizontal" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="@font/product_sans_bold"
+            android:paddingBottom="6dp"
+            android:text="TEXT BACKGROUND STYLE"
+            android:textColor="#94A3B8"
+            android:textSize="10.5sp" />
+
+        <LinearLayout
+            android:id="@+id/bgOptionsRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:orientation="horizontal" />
+
+        <LinearLayout
+            android:id="@+id/syncRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="8dp">
+
+            <TextView
+                android:id="@+id/tvSyncStatus"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="@font/product_sans_bold"
+                android:text="Offset: +0.0s"
+                android:textColor="#FFFFFF"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/btnMinusHalf"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:fontFamily="@font/product_sans_bold"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp"
+                android:text="-0.5s"
+                android:textColor="#FFFFFF"
+                android:textSize="11.5sp" />
+
+            <TextView
+                android:id="@+id/btnResetSync"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:fontFamily="@font/product_sans_bold"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp"
+                android:text="Reset"
+                android:textColor="#0E1015"
+                android:textSize="11.5sp" />
+
+            <TextView
+                android:id="@+id/btnPlusHalf"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/product_sans_bold"
+                android:paddingHorizontal="10dp"
+                android:paddingVertical="5dp"
+                android:text="+0.5s"
+                android:textColor="#FFFFFF"
+                android:textSize="11.5sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+</LinearLayout>

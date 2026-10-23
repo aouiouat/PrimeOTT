@@ -7,28 +7,25 @@ import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Process
-import android.text.TextUtils
 import android.util.Rational
 import android.util.TypedValue
 import android.view.GestureDetector
 import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -107,7 +104,6 @@ class MovieInlinePlayerController(
     private lateinit var btnTopQualityOnly: TextView
     private lateinit var btnTopSubtitles: ImageView
 
-    // أزرار الوسط + الـ Loader الدائري في نفس مكان Play/Pause بالضبط كما في الفيديو
     private lateinit var btnRewind15Container: FrameLayout
     private lateinit var btnRewind15BgCircle: View
     private lateinit var btnRewind15: ImageView
@@ -124,7 +120,6 @@ class MovieInlinePlayerController(
     private lateinit var holdSpeed2xPill: LinearLayout
     private lateinit var btnSkipIntro: LinearLayout
 
-    // مؤشر الصوت والإضاءة في أعلى الشاشة
     private lateinit var gestureIndicatorCard: LinearLayout
     private lateinit var ivGestureIcon: ImageView
     private lateinit var pbGestureLevel: ProgressBar
@@ -152,7 +147,6 @@ class MovieInlinePlayerController(
     private var isBufferingNow: Boolean = true
     private var currentPlaybackSpeed: Float = 1.0f
 
-    // إعدادات Skip Intro الذكية
     private var isCurrentMediaSeries: Boolean = false
     private var detectedIntroStartMs: Long = -1L
     private var detectedIntroEndMs: Long = -1L
@@ -165,7 +159,6 @@ class MovieInlinePlayerController(
     private var subtitleOffsetMs: Long = 0L
     private var subtitleTextSizeSp: Float = 16f
     private var subtitleTextColor: Int = Color.WHITE
-    // 0 = Transparent + Strong Black Shadow, 130 = Frosted Glass, 215 = Dark Box
     private var subtitleBgAlpha: Int = 0
 
     private var resizeModeIndex: Int = 0
@@ -200,9 +193,7 @@ class MovieInlinePlayerController(
 
         override fun onPlaybackStateChanged(playbackState: Int) {
             when (playbackState) {
-                Player.STATE_BUFFERING -> {
-                    setBufferingState(true)
-                }
+                Player.STATE_BUFFERING -> setBufferingState(true)
                 Player.STATE_READY -> {
                     setBufferingState(false)
                     updatePlayPauseVectorIcon(attachedPlayer?.isPlaying == true)
@@ -247,595 +238,160 @@ class MovieInlinePlayerController(
         }
     }
 
-    @SuppressLint("ClickableViewAccessibility")
-    fun buildPlayerView(): FrameLayout {
+    fun bindFromXml(rootPlayerFrame: FrameLayout) {
         val prefs = activity.getSharedPreferences(PREFS_SUB_STYLE, Context.MODE_PRIVATE)
         subtitleTextSizeSp = prefs.getFloat("sub_size_sp", 16f).coerceIn(12f, 26f)
         subtitleTextColor = prefs.getInt("sub_text_color", Color.WHITE)
         subtitleBgAlpha = prefs.getInt("sub_bg_alpha", 0)
 
-        playerContainer = FrameLayout(activity).apply {
-            setBackgroundColor(Color.BLACK)
-            visibility = View.GONE
-            clipChildren = true
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(215)
+        playerContainer = rootPlayerFrame
+        playerView = rootPlayerFrame.findViewById(R.id.playerView)
+        vTopEdgeSoftGradient = rootPlayerFrame.findViewById(R.id.vTopEdgeSoftGradient)
+        tvSubtitleOverlay = rootPlayerFrame.findViewById(R.id.tvSubtitleOverlay)
+        holdSpeed2xPill = rootPlayerFrame.findViewById(R.id.holdSpeed2xPill)
+        gestureIndicatorCard = rootPlayerFrame.findViewById(R.id.gestureIndicatorCard)
+        ivGestureIcon = rootPlayerFrame.findViewById(R.id.ivGestureIcon)
+        pbGestureLevel = rootPlayerFrame.findViewById(R.id.pbGestureLevel)
+        tvGesturePercent = rootPlayerFrame.findViewById(R.id.tvGesturePercent)
+        btnSkipIntro = rootPlayerFrame.findViewById(R.id.btnSkipIntro)
+
+        controlsOverlay = rootPlayerFrame.findViewById(R.id.controlsOverlay)
+        btnMinimizePlayer = rootPlayerFrame.findViewById(R.id.btnMinimizePlayer)
+        tvTopPlayerTitle = rootPlayerFrame.findViewById(R.id.tvTopPlayerTitle)
+        btnTopServerOnly = rootPlayerFrame.findViewById(R.id.btnTopServerOnly)
+        btnTopQualityOnly = rootPlayerFrame.findViewById(R.id.btnTopQualityOnly)
+        btnTopSubtitles = rootPlayerFrame.findViewById(R.id.btnTopSubtitles)
+        btnTopPip = rootPlayerFrame.findViewById(R.id.btnTopPip)
+        btnTopLock = rootPlayerFrame.findViewById(R.id.btnTopLock)
+
+        btnRewind15Container = rootPlayerFrame.findViewById(R.id.btnRewind15Container)
+        btnRewind15BgCircle = rootPlayerFrame.findViewById(R.id.btnRewind15BgCircle)
+        btnRewind15 = rootPlayerFrame.findViewById(R.id.btnRewind15)
+
+        centerActionSlot = rootPlayerFrame.findViewById(R.id.centerActionSlot)
+        btnCenterPlayPauseBgCircle = rootPlayerFrame.findViewById(R.id.btnCenterPlayPauseBgCircle)
+        btnCenterPlayPause = rootPlayerFrame.findViewById(R.id.btnCenterPlayPause)
+        centerBufferingSpinner = rootPlayerFrame.findViewById(R.id.centerBufferingSpinner)
+
+        btnForward15Container = rootPlayerFrame.findViewById(R.id.btnForward15Container)
+        btnForward15BgCircle = rootPlayerFrame.findViewById(R.id.btnForward15BgCircle)
+        btnForward15 = rootPlayerFrame.findViewById(R.id.btnForward15)
+
+        tvElapsed = rootPlayerFrame.findViewById(R.id.tvElapsed)
+        seekBar = rootPlayerFrame.findViewById(R.id.seekBar)
+        tvDuration = rootPlayerFrame.findViewById(R.id.tvDuration)
+        btnInlineFullscreen = rootPlayerFrame.findViewById(R.id.btnInlineFullscreen)
+        fullscreenBottomActionsRow = rootPlayerFrame.findViewById(R.id.fullscreenBottomActionsRow)
+        btnBottomSubtitles = rootPlayerFrame.findViewById(R.id.btnBottomSubtitles)
+        btnBottomAudio = rootPlayerFrame.findViewById(R.id.btnBottomAudio)
+        btnBottomSpeed = rootPlayerFrame.findViewById(R.id.btnBottomSpeed)
+        tvBottomSpeedLabel = rootPlayerFrame.findViewById(R.id.tvBottomSpeedLabel)
+        btnBottomAspect = rootPlayerFrame.findViewById(R.id.btnBottomAspect)
+        tvBottomAspectLabel = rootPlayerFrame.findViewById(R.id.tvBottomAspectLabel)
+        vBottomPlayerSeparator = rootPlayerFrame.findViewById(R.id.vBottomPlayerSeparator)
+        btnUnlockScreenOnly = rootPlayerFrame.findViewById(R.id.btnUnlockScreenOnly)
+
+        // تطبيق الخلفيات والأيقونات المرسومة بدقة (Vector Drawables)
+        vTopEdgeSoftGradient.background = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf("#75000000".toColorInt(), Color.TRANSPARENT)
+        )
+        controlsOverlay.background = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf("#A6000000".toColorInt(), "#33000000".toColorInt(), "#BF000000".toColorInt())
+        )
+        vBottomPlayerSeparator.background = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(
+                Color.TRANSPARENT,
+                "#45FFFFFF".toColorInt(),
+                "#25FFFFFF".toColorInt(),
+                Color.TRANSPARENT
             )
+        )
+
+        holdSpeed2xPill.background = makeRoundedBg("#D910131C".toColorInt(), 20f, "#4DFFFFFF".toColorInt(), 1f)
+        rootPlayerFrame.findViewById<ImageView>(R.id.ivHoldFastIcon)
+            .setImageDrawable(VectorIcons.createFastForwardDoubleArrowIcon(activity, Color.WHITE))
+
+        gestureIndicatorCard.background = makeRoundedBg("#E010131C".toColorInt(), 20f, "#40FFFFFF".toColorInt(), 1f)
+
+        btnSkipIntro.background = makeRoundedBg("#E612151E".toColorInt(), 18f, "#CCFFFFFF".toColorInt(), 1.1f)
+        rootPlayerFrame.findViewById<ImageView>(R.id.ivSkipIntroArrow)
+            .setImageDrawable(VectorIcons.createSkipNextIcon(activity, Color.WHITE))
+
+        btnMinimizePlayer.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 18f)
+        btnMinimizePlayer.setOnClickListener {
+            if (isFullscreen) applyFullscreenState(false) else onMinimizeToCover()
         }
 
-        playerView = PlayerView(activity).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                Gravity.CENTER
-            )
-            useController = false
-            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-        }
-        playerContainer.addView(playerView)
+        btnTopServerOnly.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.9f)
+        btnTopQualityOnly.background = makeRoundedBg("#33E50914".toColorInt(), 8f, "#88FF4757".toColorInt(), 1f)
 
-        vTopEdgeSoftGradient = View(activity).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(42),
-                Gravity.TOP
-            )
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf("#75000000".toColorInt(), Color.TRANSPARENT)
-            )
-        }
-        playerContainer.addView(vTopEdgeSoftGradient)
+        btnTopSubtitles.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
+        btnTopSubtitles.setImageDrawable(VectorIcons.createSubtitlesCcIcon(activity, Color.WHITE))
 
-        // الترجمة (تتحرك للأعلى تلقائياً عند ظهور شريط التحكم وتعود للأسفل عند اختفائه)
-        tvSubtitleOverlay = TextView(activity).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            ).apply {
-                setMargins(dp(20), 0, dp(20), dp(14))
+        btnTopPip.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
+        btnTopPip.setImageDrawable(VectorIcons.createPipMiniPlayerIcon(activity, Color.WHITE))
+        btnTopPip.setOnClickListener { enterMiniPipMode() }
+
+        btnTopLock.background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
+        btnTopLock.setImageDrawable(VectorIcons.createLockIcon(activity, Color.WHITE, locked = false))
+        btnTopLock.setOnClickListener {
+            isControlsLocked = true
+            hideControlsSmoothly()
+            btnUnlockScreenOnly.visibility = View.VISIBLE
+        }
+
+        val redCircleMaker = {
+            GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor("#B38B0000".toColorInt())
             }
-            gravity = Gravity.CENTER
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
-            typeface = fontBold
-            setTextColor(subtitleTextColor)
-            setPadding(dp(12), dp(4), dp(12), dp(4))
-            visibility = View.GONE
         }
+        btnRewind15BgCircle.background = redCircleMaker()
+        btnCenterPlayPauseBgCircle.background = redCircleMaker()
+        btnForward15BgCircle.background = redCircleMaker()
+
+        btnRewind15.setImageDrawable(VectorIcons.createCircularSeekArrowIcon(activity, isForward = false))
+        btnCenterPlayPause.setImageDrawable(VectorIcons.createPlayPauseIcon(activity, isPlaying = true))
+        btnForward15.setImageDrawable(VectorIcons.createCircularSeekArrowIcon(activity, isForward = true))
+
+        btnInlineFullscreen.setImageDrawable(VectorIcons.createFullscreenIcon(activity, isFullscreen = false))
+        btnInlineFullscreen.setOnClickListener { applyFullscreenState(!isFullscreen) }
+
+        val chipBg = { makeRoundedBg("#24FFFFFF".toColorInt(), 16f, "#40FFFFFF".toColorInt(), 0.8f) }
+        btnBottomSubtitles.background = chipBg()
+        btnBottomAudio.background = chipBg()
+        btnBottomSpeed.background = chipBg()
+        btnBottomAspect.background = chipBg()
+
+        rootPlayerFrame.findViewById<ImageView>(R.id.ivBottomSubIcon)
+            .setImageDrawable(VectorIcons.createSubtitlesCcIcon(activity, Color.WHITE))
+        rootPlayerFrame.findViewById<ImageView>(R.id.ivBottomAudioIcon)
+            .setImageDrawable(VectorIcons.createAudioSpeakerIcon(activity, Color.WHITE))
+        rootPlayerFrame.findViewById<ImageView>(R.id.ivBottomAspectIcon)
+            .setImageDrawable(VectorIcons.createAspectRatioIcon(activity, Color.WHITE))
+
+        btnBottomAspect.setOnClickListener {
+            resizeModeIndex = (resizeModeIndex + 1) % resizeModes.size
+            playerView.resizeMode = resizeModes[resizeModeIndex]
+            tvBottomAspectLabel.text = "Scale: ${resizeLabels[resizeModeIndex]}"
+        }
+
+        btnUnlockScreenOnly.background = makeRoundedBg("#CC000000".toColorInt(), 20f, "#99FFFFFF".toColorInt(), 1f)
+        rootPlayerFrame.findViewById<ImageView>(R.id.ivUnlockIcon)
+            .setImageDrawable(VectorIcons.createLockIcon(activity, Color.WHITE, locked = true))
+        btnUnlockScreenOnly.setOnClickListener {
+            isControlsLocked = false
+            btnUnlockScreenOnly.visibility = View.GONE
+            showControlsWithFade()
+        }
+
         applySubtitleStyleToOverlay()
-        playerContainer.addView(tvSubtitleOverlay)
-
-        // كبسولة السرعة المضاعفة (2x Speed) في الأعلى
-        holdSpeed2xPill = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#D910131C".toColorInt(), 20f, "#4DFFFFFF".toColorInt(), 1f)
-            setPadding(dp(12), dp(5), dp(12), dp(5))
-            visibility = View.GONE
-            elevation = dpF(8f)
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            ).apply {
-                topMargin = dp(10)
-            }
-            val ivFast = ImageView(activity).apply {
-                setImageDrawable(VectorIcons.createFastForwardDoubleArrowIcon(activity, Color.WHITE))
-                layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginEnd = dp(5) }
-            }
-            val tvLabel = TextView(activity).apply {
-                text = "2x Speed"
-                setTextColor(Color.WHITE)
-                textSize = 11.5f
-                typeface = fontBold
-            }
-            addView(ivFast)
-            addView(tvLabel)
-        }
-        playerContainer.addView(holdSpeed2xPill)
-
-        // مؤشر الصوت (يمين) والإضاءة (يسار) مثبت في أعلى المشغل (topMargin = 10dp) لكي لا ينزل لوسط الشاشة
-        gestureIndicatorCard = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#E010131C".toColorInt(), 20f, "#40FFFFFF".toColorInt(), 1f)
-            setPadding(dp(12), dp(6), dp(14), dp(6))
-            visibility = View.GONE
-            elevation = dpF(10f)
-            layoutParams = FrameLayout.LayoutParams(
-                dp(155),
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            ).apply {
-                topMargin = dp(10)
-            }
-        }
-        ivGestureIcon = ImageView(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(17), dp(17)).apply { marginEnd = dp(8) }
-        }
-        pbGestureLevel = ProgressBar(activity, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = 50
-            progressTintList = ColorStateList.valueOf(Color.WHITE)
-            progressBackgroundTintList = ColorStateList.valueOf("#38FFFFFF".toColorInt())
-            layoutParams = LinearLayout.LayoutParams(0, dp(4), 1f).apply { marginEnd = dp(8) }
-        }
-        tvGesturePercent = TextView(activity).apply {
-            text = "50%"
-            setTextColor(Color.WHITE)
-            textSize = 11f
-            typeface = fontBold
-        }
-        gestureIndicatorCard.addView(ivGestureIcon)
-        gestureIndicatorCard.addView(pbGestureLevel)
-        gestureIndicatorCard.addView(tvGesturePercent)
-        playerContainer.addView(gestureIndicatorCard)
-
-        btnSkipIntro = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#E612151E".toColorInt(), 18f, "#CCFFFFFF".toColorInt(), 1.1f)
-            setPadding(dp(14), dp(6), dp(12), dp(6))
-            visibility = View.GONE
-            elevation = dpF(6f)
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.END
-            ).apply {
-                setMargins(0, 0, dp(14), dp(44))
-            }
-        }
-        val tvSkipIntroLabel = TextView(activity).apply {
-            text = "Skip Intro"
-            setTextColor(Color.WHITE)
-            textSize = 11.5f
-            typeface = fontBold
-        }
-        val ivSkipIntroArrow = ImageView(activity).apply {
-            setImageDrawable(VectorIcons.createSkipNextIcon(activity, Color.WHITE))
-            layoutParams = LinearLayout.LayoutParams(dp(14), dp(14)).apply {
-                marginStart = dp(5)
-            }
-        }
-        btnSkipIntro.addView(tvSkipIntroLabel)
-        btnSkipIntro.addView(ivSkipIntroArrow)
-        playerContainer.addView(btnSkipIntro)
-
-        // =========================================================================
-        // طبقة التحكم (تظهر وتختفي بـ Fade ناعم، وتحتوي على الـ Loader في مكان Play/Pause)
-        // =========================================================================
-        controlsOverlay = FrameLayout(activity).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf("#A6000000".toColorInt(), "#33000000".toColorInt(), "#BF000000".toColorInt())
-            )
-            visibility = View.VISIBLE
-        }
-
-        val topBar = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(6))
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP
-            )
-        }
-
-        btnMinimizePlayer = ImageView(activity).apply {
-            setImageResource(R.drawable.ic_back_chevron)
-            background = makeRoundedBg("#2EFFFFFF".toColorInt(), 18f)
-            setPadding(dp(7), dp(7), dp(8), dp(7))
-            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
-            setOnClickListener {
-                if (isFullscreen) {
-                    applyFullscreenState(false)
-                } else {
-                    onMinimizeToCover()
-                }
-            }
-        }
-
-        tvTopPlayerTitle = TextView(activity).apply {
-            setTextColor(Color.WHITE)
-            textSize = 13.5f
-            typeface = fontBold
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setPadding(dp(10), 0, dp(8), 0)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
-        btnTopServerOnly = TextView(activity).apply {
-            text = "Server"
-            textSize = 11.5f
-            typeface = fontBold
-            setTextColor(Color.WHITE)
-            background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#55FFFFFF".toColorInt(), 0.9f)
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginEnd = dp(8) }
-        }
-
-        btnTopQualityOnly = TextView(activity).apply {
-            text = "FHD"
-            textSize = 11.5f
-            typeface = fontBold
-            setTextColor(Color.WHITE)
-            background = makeRoundedBg("#33E50914".toColorInt(), 8f, "#88FF4757".toColorInt(), 1f)
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginEnd = dp(8) }
-        }
-
-        btnTopSubtitles = ImageView(activity).apply {
-            setImageDrawable(VectorIcons.createSubtitlesCcIcon(activity, Color.WHITE))
-            background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginEnd = dp(8) }
-        }
-
-        btnTopPip = ImageView(activity).apply {
-            setImageDrawable(VectorIcons.createPipMiniPlayerIcon(activity, Color.WHITE))
-            background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
-            setOnClickListener {
-                enterMiniPipMode()
-            }
-        }
-
-        btnTopLock = ImageView(activity).apply {
-            setImageDrawable(VectorIcons.createLockIcon(activity, Color.WHITE, locked = false))
-            background = makeRoundedBg("#2EFFFFFF".toColorInt(), 8f, "#4DFFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).apply { marginStart = dp(8) }
-            setOnClickListener {
-                isControlsLocked = true
-                hideControlsSmoothly()
-                btnUnlockScreenOnly.visibility = View.VISIBLE
-            }
-        }
-
-        topBar.addView(btnMinimizePlayer)
-        topBar.addView(tvTopPlayerTitle)
-        topBar.addView(btnTopServerOnly)
-        topBar.addView(btnTopQualityOnly)
-        topBar.addView(btnTopSubtitles)
-        topBar.addView(btnTopPip)
-        topBar.addView(btnTopLock)
-        controlsOverlay.addView(topBar)
-
-        // =========================================================================
-        // أزرار الوسط المطابقة للفيديو 100%:
-        // [Rewind]   |   [Play/Pause أو Loader دائري أبيض في نفس المكان]   |   [Forward]
-        // مع الدائرة الحمراء التفاعلية عند اللمس كما في الفيديو
-        // =========================================================================
-        val centerControlsRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            )
-        }
-
-        // 1. زر الترجيع (يسار)
-        btnRewind15Container = FrameLayout(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(58), dp(58)).apply {
-                marginEnd = dp(24)
-            }
-        }
-        btnRewind15BgCircle = View(activity).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor("#B38B0000".toColorInt())
-            }
-            alpha = 0f
-            scaleX = 0.7f
-            scaleY = 0.7f
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-        btnRewind15 = ImageView(activity).apply {
-            setImageDrawable(VectorIcons.createCircularSeekArrowIcon(activity, isForward = false))
-            setPadding(dp(15), dp(15), dp(15), dp(15))
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                Gravity.CENTER
-            )
-        }
-        btnRewind15Container.addView(btnRewind15BgCircle)
-        btnRewind15Container.addView(btnRewind15)
-
-        // 2. خانة الوسط الموحدة (يظهر فيها إما Play/Pause أو الـ Loader الأبيض الدائري، ولا يظهران معاً أبداً!)
-        centerActionSlot = FrameLayout(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(74), dp(74))
-        }
-        btnCenterPlayPauseBgCircle = View(activity).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor("#B38B0000".toColorInt())
-            }
-            alpha = 0f
-            scaleX = 0.7f
-            scaleY = 0.7f
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-        btnCenterPlayPause = ImageView(activity).apply {
-            setImageDrawable(VectorIcons.createPlayPauseIcon(activity, isPlaying = true))
-            setPadding(dp(18), dp(18), dp(18), dp(18))
-            visibility = View.INVISIBLE
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                Gravity.CENTER
-            )
-        }
-        centerBufferingSpinner = ProgressBar(activity).apply {
-            indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
-            visibility = View.VISIBLE
-            layoutParams = FrameLayout.LayoutParams(dp(42), dp(42), Gravity.CENTER)
-        }
-        centerActionSlot.addView(btnCenterPlayPauseBgCircle)
-        centerActionSlot.addView(btnCenterPlayPause)
-        centerActionSlot.addView(centerBufferingSpinner)
-
-        // 3. زر التقديم (يمين)
-        btnForward15Container = FrameLayout(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(58), dp(58)).apply {
-                marginStart = dp(24)
-            }
-        }
-        btnForward15BgCircle = View(activity).apply {
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor("#B38B0000".toColorInt())
-            }
-            alpha = 0f
-            scaleX = 0.7f
-            scaleY = 0.7f
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-        btnForward15 = ImageView(activity).apply {
-            setImageDrawable(VectorIcons.createCircularSeekArrowIcon(activity, isForward = true))
-            setPadding(dp(15), dp(15), dp(15), dp(15))
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                Gravity.CENTER
-            )
-        }
-        btnForward15Container.addView(btnForward15BgCircle)
-        btnForward15Container.addView(btnForward15)
-
-        centerControlsRow.addView(btnRewind15Container)
-        centerControlsRow.addView(centerActionSlot)
-        centerControlsRow.addView(btnForward15Container)
-        controlsOverlay.addView(centerControlsRow)
-
-        val bottomPlayerBar = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(4), dp(12), dp(8))
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM
-            )
-        }
-
-        val seekRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        tvElapsed = TextView(activity).apply {
-            text = "00:00"
-            setTextColor(Color.WHITE)
-            textSize = 11.5f
-            typeface = fontBold
-        }
-
-        seekBar = SeekBar(activity).apply {
-            max = 1000
-            progress = 0
-            progressTintList = ColorStateList.valueOf("#E50914".toColorInt())
-            secondaryProgressTintList = ColorStateList.valueOf("#55FFFFFF".toColorInt())
-            thumbTintList = ColorStateList.valueOf("#E50914".toColorInt())
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
-        tvDuration = TextView(activity).apply {
-            text = "00:00"
-            setTextColor("#CBD5E1".toColorInt())
-            textSize = 11.5f
-            typeface = fontBold
-        }
-
-        btnInlineFullscreen = ImageView(activity).apply {
-            setImageDrawable(VectorIcons.createFullscreenIcon(activity, isFullscreen = false))
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).apply {
-                marginStart = dp(6)
-            }
-            setOnClickListener { applyFullscreenState(!isFullscreen) }
-        }
-
-        seekRow.addView(tvElapsed)
-        seekRow.addView(seekBar)
-        seekRow.addView(tvDuration)
-        seekRow.addView(btnInlineFullscreen)
-        bottomPlayerBar.addView(seekRow)
-
-        fullscreenBottomActionsRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            visibility = View.GONE
-            setPadding(0, dp(6), 0, dp(2))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
-
-        btnBottomSubtitles = createPlayerBottomActionChip(
-            icon = VectorIcons.createSubtitlesCcIcon(activity, Color.WHITE),
-            label = "Subtitles"
-        ) {}
-
-        btnBottomAudio = createPlayerBottomActionChip(
-            icon = VectorIcons.createAudioSpeakerIcon(activity, Color.WHITE),
-            label = "Audio"
-        ) {}
-
-        tvBottomSpeedLabel = TextView(activity).apply {
-            text = "Speed: 1x"
-            setTextColor(Color.WHITE)
-            textSize = 12f
-            typeface = fontBold
-        }
-        btnBottomSpeed = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#24FFFFFF".toColorInt(), 16f, "#40FFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(14), dp(6), dp(14), dp(6))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                marginStart = dp(8)
-                marginEnd = dp(8)
-            }
-            addView(tvBottomSpeedLabel)
-        }
-
-        tvBottomAspectLabel = TextView(activity).apply {
-            text = "Scale: Fit"
-            setTextColor(Color.WHITE)
-            textSize = 12f
-            typeface = fontBold
-        }
-        btnBottomAspect = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#24FFFFFF".toColorInt(), 16f, "#40FFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(14), dp(6), dp(14), dp(6))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                marginStart = dp(8)
-                marginEnd = dp(8)
-            }
-            val ivScale = ImageView(activity).apply {
-                setImageDrawable(VectorIcons.createAspectRatioIcon(activity, Color.WHITE))
-                layoutParams = LinearLayout.LayoutParams(dp(15), dp(15)).apply { marginEnd = dp(6) }
-            }
-            addView(ivScale)
-            addView(tvBottomAspectLabel)
-            setOnClickListener {
-                resizeModeIndex = (resizeModeIndex + 1) % resizeModes.size
-                playerView.resizeMode = resizeModes[resizeModeIndex]
-                tvBottomAspectLabel.text = "Scale: ${resizeLabels[resizeModeIndex]}"
-            }
-        }
-
-        fullscreenBottomActionsRow.addView(btnBottomSubtitles)
-        fullscreenBottomActionsRow.addView(btnBottomAudio)
-        fullscreenBottomActionsRow.addView(btnBottomSpeed)
-        fullscreenBottomActionsRow.addView(btnBottomAspect)
-        bottomPlayerBar.addView(fullscreenBottomActionsRow)
-
-        controlsOverlay.addView(bottomPlayerBar)
-        playerContainer.addView(controlsOverlay)
-
-        // الخط الفاصل السفلي بين المشغل واسم الفيلم تحته
-        vBottomPlayerSeparator = View(activity).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(2),
-                Gravity.BOTTOM
-            )
-            background = GradientDrawable(
-                GradientDrawable.Orientation.LEFT_RIGHT,
-                intArrayOf(
-                    Color.TRANSPARENT,
-                    "#45FFFFFF".toColorInt(),
-                    "#25FFFFFF".toColorInt(),
-                    Color.TRANSPARENT
-                )
-            )
-        }
-        playerContainer.addView(vBottomPlayerSeparator)
-
-        btnUnlockScreenOnly = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#CC000000".toColorInt(), 20f, "#99FFFFFF".toColorInt(), 1f)
-            setPadding(dp(12), dp(7), dp(14), dp(7))
-            visibility = View.GONE
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.END
-            ).apply { setMargins(dp(16), dp(16), dp(16), dp(16)) }
-            val ivLock = ImageView(activity).apply {
-                setImageDrawable(VectorIcons.createLockIcon(activity, Color.WHITE, locked = true))
-                layoutParams = LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(6) }
-            }
-            val tvUnlock = TextView(activity).apply {
-                text = "Tap to Unlock"
-                setTextColor(Color.WHITE)
-                textSize = 12f
-                typeface = fontBold
-            }
-            addView(ivLock)
-            addView(tvUnlock)
-            setOnClickListener {
-                isControlsLocked = false
-                visibility = View.GONE
-                showControlsWithFade()
-            }
-        }
-        playerContainer.addView(btnUnlockScreenOnly)
-
         animateSubtitlePositionForControls(controlsVisible = true, animate = false)
-        return playerContainer
     }
 
-    /**
-     * تبديل سلس بين زر Play/Pause والـ Loader الدائري الأبيض في نفس المكان بالضبط كما في الفيديو
-     */
     private fun setBufferingState(buffering: Boolean) {
         isBufferingNow = buffering
         if (buffering) {
@@ -850,9 +406,6 @@ class MovieInlinePlayerController(
         }
     }
 
-    /**
-     * وميض الدائرة الحمراء خلف زر الوسط أو التقديم/الترجيع عند الضغط كما في الفيديو المرفق
-     */
     private fun pulseRedCircleFeedback(circleView: View) {
         circleView.animate().cancel()
         circleView.alpha = 0.95f
@@ -867,9 +420,6 @@ class MovieInlinePlayerController(
             .start()
     }
 
-    /**
-     * رفع الترجمة فوق شريط التقدم عند ظهور التحكم وإعادتها للأسفل عند اختفائه
-     */
     private fun animateSubtitlePositionForControls(controlsVisible: Boolean, animate: Boolean = true) {
         val targetLiftY = if (controlsVisible) {
             if (isFullscreen) -dpF(64f) else -dpF(34f)
@@ -919,7 +469,6 @@ class MovieInlinePlayerController(
             seekByDeltaMs(engine, 15_000L)
         }
 
-        // زر Skip Intro يقدم بدقة لنهاية المقدمة الفعلية
         btnSkipIntro.setOnClickListener {
             val exo = engine.player ?: return@setOnClickListener
             hasSkippedIntroForCurrentMedia = true
@@ -1157,7 +706,6 @@ class MovieInlinePlayerController(
                         tvDuration.text = formatTimeMs(dur)
                     }
 
-                    // إظهار Skip Intro فقط إذا كان مسلسلاً (أو تم اكتشاف مقدمة فعلية)
                     val hasValidIntroWindow = detectedIntroStartMs >= 0L && detectedIntroEndMs > detectedIntroStartMs
                     val shouldShowSkipIntro = hasValidIntroWindow &&
                             !isInPipMode &&
@@ -1200,9 +748,6 @@ class MovieInlinePlayerController(
         }
     }
 
-    /**
-     * 1. نافذة اختيار السيرفر بتصميم زجاجي داكن فخم
-     */
     private fun showServersOnlyPopup(providers: List<StreamSource>, currentIdx: Int) {
         val dialog = Dialog(activity)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -1233,12 +778,7 @@ class MovieInlinePlayerController(
         }
         card.addView(divider)
 
-        val scroll = ScrollView(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-        }
+        val scroll = ScrollView(activity)
         val listCol = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         scroll.addView(listCol)
         card.addView(scroll)
@@ -1280,9 +820,6 @@ class MovieInlinePlayerController(
         dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    /**
-     * 2. نافذة اختيار الجودة بتصميم زجاجي داكن فخم
-     */
     private fun showQualityOnlyPopup(engine: PrimePlayerEngine) {
         val dialog = Dialog(activity)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
@@ -1375,9 +912,6 @@ class MovieInlinePlayerController(
         dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    /**
-     * 3. نافذة اختيار الصوت بتصميم زجاجي داكن فخم
-     */
     private fun showAudioTracksDialog(engine: PrimePlayerEngine) {
         val exo = engine.player
         val dialog = Dialog(activity)
@@ -1467,10 +1001,7 @@ class MovieInlinePlayerController(
     }
 
     /**
-     * 4. نافذة الترجمة بتصميم زجاجي داكن موحد وفخم (Monochrome Dark Frosted Glass):
-     * - بدون أي ألوان مختلطة
-     * - بدون أي نص WEB-DL أو أسماء ملفات طويلة (تعرض اسم اللغة النظيف فقط)
-     * - تحتوي على خيار Shadow (خلفية شفافة مع ظل أسود قوي حول النص)
+     * نافذة الترجمة مربوطة بملف res/layout/dialog_subtitles_sheet.xml
      */
     private fun showSubtitlesDialog() {
         val dialog = Dialog(activity)
@@ -1478,190 +1009,67 @@ class MovieInlinePlayerController(
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val screenW = activity.resources.displayMetrics.widthPixels
-        val screenH = activity.resources.displayMetrics.heightPixels
         val dialogWidthPx = min((screenW * 0.88f).toInt(), dp(360))
-        val listHeightPx = min((screenH * 0.44f).toInt(), dp(185))
 
-        val root = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            background = makeRoundedBg("#F0101218".toColorInt(), 20f, "#33FFFFFF".toColorInt(), 1f)
-            setPadding(dp(16), dp(14), dp(16), dp(14))
-            layoutParams = ViewGroup.LayoutParams(dialogWidthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
+        val root = LayoutInflater.from(activity)
+            .inflate(R.layout.dialog_subtitles_sheet, null, false) as LinearLayout
+        root.background = makeRoundedBg("#F0101218".toColorInt(), 20f, "#33FFFFFF".toColorInt(), 1f)
+
+        val tabSwitchBox = root.findViewById<LinearLayout>(R.id.tabSwitchBox)
+        tabSwitchBox.background = makeRoundedBg("#14FFFFFF".toColorInt(), 12f, "#22FFFFFF".toColorInt(), 1f)
+
+        val tabTracksBtn = root.findViewById<TextView>(R.id.tabTracksBtn)
+        val tabSettingsBtn = root.findViewById<TextView>(R.id.tabSettingsBtn)
+        val btnClosePopup = root.findViewById<TextView>(R.id.btnClosePopup)
+        val tracksPanel = root.findViewById<LinearLayout>(R.id.tracksPanel)
+        val settingsPanel = root.findViewById<LinearLayout>(R.id.settingsPanel)
+
+        val btnDisableSubs = root.findViewById<TextView>(R.id.btnDisableSubs)
+        val btnUploadSrt = root.findViewById<TextView>(R.id.btnUploadSrt)
+        val btnRefreshSubs = root.findViewById<TextView>(R.id.btnRefreshSubs)
+        val filterRow = root.findViewById<LinearLayout>(R.id.filterRow)
+        val tracksContainer = root.findViewById<LinearLayout>(R.id.tracksContainer)
+
+        val sizeOptionsRow = root.findViewById<LinearLayout>(R.id.sizeOptionsRow)
+        val bgOptionsRow = root.findViewById<LinearLayout>(R.id.bgOptionsRow)
+        val syncRow = root.findViewById<LinearLayout>(R.id.syncRow)
+        val tvSyncStatus = root.findViewById<TextView>(R.id.tvSyncStatus)
+        val btnMinusHalf = root.findViewById<TextView>(R.id.btnMinusHalf)
+        val btnResetSync = root.findViewById<TextView>(R.id.btnResetSync)
+        val btnPlusHalf = root.findViewById<TextView>(R.id.btnPlusHalf)
+
+        tabTracksBtn.background = makeRoundedBg(Color.WHITE, 10f)
+        btnClosePopup.background = makeRoundedBg("#1FFFFFFF".toColorInt(), 16f)
+        btnClosePopup.setOnClickListener { dialog.dismiss() }
+
+        val isOff = selectedSubtitleId == "NONE"
+        btnDisableSubs.setTextColor(if (isOff) "#0E1015".toColorInt() else Color.WHITE)
+        btnDisableSubs.background = makeRoundedBg(
+            if (isOff) Color.WHITE else "#1AFFFFFF".toColorInt(),
+            10f,
+            "#33FFFFFF".toColorInt(),
+            0.8f
+        )
+        btnDisableSubs.setOnClickListener {
+            selectedSubtitleId = "NONE"
+            tvSubtitleOverlay.visibility = View.GONE
+            dialog.dismiss()
         }
 
-        // شريط التبويبين الزجاجي الموحد
-        val topHeaderRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(10))
+        btnUploadSrt.background = makeRoundedBg("#1AFFFFFF".toColorInt(), 10f, "#33FFFFFF".toColorInt(), 0.8f)
+        btnUploadSrt.setOnClickListener {
+            dialog.dismiss()
+            onPickLocalSubtitleFile()
         }
 
-        val tabSwitchBox = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            background = makeRoundedBg("#14FFFFFF".toColorInt(), 12f, "#22FFFFFF".toColorInt(), 1f)
-            setPadding(dp(3), dp(3), dp(3), dp(3))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
+        btnRefreshSubs.background = makeRoundedBg("#1AFFFFFF".toColorInt(), 10f, "#33FFFFFF".toColorInt(), 0.8f)
 
-        val tabTracksBtn = TextView(activity).apply {
-            text = "Languages"
-            textSize = 12.5f
-            typeface = fontBold
-            setTextColor("#0E1015".toColorInt())
-            gravity = Gravity.CENTER
-            background = makeRoundedBg(Color.WHITE, 10f)
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
-        val tabSettingsBtn = TextView(activity).apply {
-            text = "Appearance"
-            textSize = 12.5f
-            typeface = fontBold
-            setTextColor("#B0BAC9".toColorInt())
-            gravity = Gravity.CENTER
-            background = null
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
-        tabSwitchBox.addView(tabTracksBtn)
-        tabSwitchBox.addView(tabSettingsBtn)
-
-        val btnClosePopup = TextView(activity).apply {
-            text = "✕"
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            typeface = fontBold
-            gravity = Gravity.CENTER
-            background = makeRoundedBg("#1FFFFFFF".toColorInt(), 16f)
-            layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).apply { marginStart = dp(10) }
-            setOnClickListener { dialog.dismiss() }
-        }
-
-        topHeaderRow.addView(tabSwitchBox)
-        topHeaderRow.addView(btnClosePopup)
-        root.addView(topHeaderRow)
-
-        // =====================================================
-        // التبويب 1: قائمة اللغات النظيفة (بدون WEB-DL1080p...)
-        // =====================================================
-        val tracksPanel = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.VISIBLE
-        }
-
-        val quickActionsRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(8))
-        }
-
-        val btnDisableSubs = TextView(activity).apply {
-            val isOff = selectedSubtitleId == "NONE"
-            text = "Off"
-            textSize = 11.5f
-            typeface = fontBold
-            setTextColor(if (isOff) "#0E1015".toColorInt() else Color.WHITE)
-            background = makeRoundedBg(
-                if (isOff) Color.WHITE else "#1AFFFFFF".toColorInt(),
-                10f,
-                "#33FFFFFF".toColorInt(),
-                0.8f
-            )
-            setPadding(dp(14), dp(6), dp(14), dp(6))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginEnd = dp(6) }
-            setOnClickListener {
-                selectedSubtitleId = "NONE"
-                tvSubtitleOverlay.visibility = View.GONE
-                dialog.dismiss()
-            }
-        }
-
-        val btnUploadSrt = TextView(activity).apply {
-            text = "+ Local File"
-            textSize = 11.5f
-            typeface = fontBold
-            setTextColor(Color.WHITE)
-            background = makeRoundedBg("#1AFFFFFF".toColorInt(), 10f, "#33FFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginEnd = dp(6)
-            }
-            gravity = Gravity.CENTER
-            setOnClickListener {
-                dialog.dismiss()
-                onPickLocalSubtitleFile()
-            }
-        }
-
-        val btnRefreshSubs = TextView(activity).apply {
-            text = "Reload"
-            textSize = 11.5f
-            typeface = fontBold
-            setTextColor(Color.WHITE)
-            background = makeRoundedBg("#1AFFFFFF".toColorInt(), 10f, "#33FFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-        }
-
-        quickActionsRow.addView(btnDisableSubs)
-        quickActionsRow.addView(btnUploadSrt)
-        quickActionsRow.addView(btnRefreshSubs)
-        tracksPanel.addView(quickActionsRow)
-
-        val filterScroll = HorizontalScrollView(activity).apply { isHorizontalScrollBarEnabled = false }
-        val filterRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 0, 0, dp(8))
-        }
-        filterScroll.addView(filterRow)
-        tracksPanel.addView(filterScroll)
-
-        val tracksScroll = ScrollView(activity).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, listHeightPx)
-        }
-        val tracksContainer = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-        tracksScroll.addView(tracksContainer)
-        tracksPanel.addView(tracksScroll)
-        root.addView(tracksPanel)
-
-        // =====================================================
-        // التبويب 2: المظهر والمزامنة (Appearance & Sync)
-        // =====================================================
-        val settingsPanel = LinearLayout(activity).apply {
-            orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
-            setPadding(dp(2), dp(4), dp(2), dp(4))
-        }
-
-        val lblSize = TextView(activity).apply {
-            text = "FONT SIZE"
-            setTextColor("#94A3B8".toColorInt())
-            textSize = 10.5f
-            typeface = fontBold
-            setPadding(0, 0, 0, dp(6))
-        }
-        settingsPanel.addView(lblSize)
-
-        val sizeOptionsRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(12) }
-        }
         val sizePresets = listOf(
             13f to "Small",
             16f to "Normal",
             20f to "Large",
             24f to "Max"
         )
-
         fun rebuildSizePills() {
             sizeOptionsRow.removeAllViews()
             sizePresets.forEach { (spVal, label) ->
@@ -1691,31 +1099,12 @@ class MovieInlinePlayerController(
             }
         }
         rebuildSizePills()
-        settingsPanel.addView(sizeOptionsRow)
 
-        val lblBg = TextView(activity).apply {
-            text = "TEXT BACKGROUND STYLE"
-            setTextColor("#94A3B8".toColorInt())
-            textSize = 10.5f
-            typeface = fontBold
-            setPadding(0, 0, 0, dp(6))
-        }
-        settingsPanel.addView(lblBg)
-
-        val bgOptionsRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(12) }
-        }
-        // خيار Shadow (شفاف + ظل أسود واضح حول الحروف) + Frosted Glass + Dark Box
         val bgPresets = listOf(
             0 to "Shadow",
             130 to "Glass",
             215 to "Dark Box"
         )
-
         fun rebuildBgPills() {
             bgOptionsRow.removeAllViews()
             bgPresets.forEach { (alphaVal, label) ->
@@ -1745,70 +1134,25 @@ class MovieInlinePlayerController(
             }
         }
         rebuildBgPills()
-        settingsPanel.addView(bgOptionsRow)
 
-        val syncRow = LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#14FFFFFF".toColorInt(), 12f, "#28FFFFFF".toColorInt(), 1f)
-            setPadding(dp(12), dp(8), dp(12), dp(8))
-        }
-        val tvSyncStatus = TextView(activity).apply {
-            text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
-            setTextColor(Color.WHITE)
-            textSize = 12f
-            typeface = fontBold
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        val btnMinusHalf = TextView(activity).apply {
-            text = "-0.5s"
-            setTextColor(Color.WHITE)
-            textSize = 11.5f
-            typeface = fontBold
-            background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = dp(6)
-            }
-            setOnClickListener {
-                subtitleOffsetMs -= 500L
-                tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
-            }
-        }
-        val btnResetSync = TextView(activity).apply {
-            text = "Reset"
-            setTextColor("#0E1015".toColorInt())
-            textSize = 11.5f
-            typeface = fontBold
-            background = makeRoundedBg(Color.WHITE, 8f)
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = dp(6)
-            }
-            setOnClickListener {
-                subtitleOffsetMs = 0L
-                tvSyncStatus.text = "Offset: +0.0s"
-            }
-        }
-        val btnPlusHalf = TextView(activity).apply {
-            text = "+0.5s"
-            setTextColor(Color.WHITE)
-            textSize = 11.5f
-            typeface = fontBold
-            background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
-            setPadding(dp(10), dp(5), dp(10), dp(5))
-            setOnClickListener {
-                subtitleOffsetMs += 500L
-                tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
-            }
-        }
-        syncRow.addView(tvSyncStatus)
-        syncRow.addView(btnMinusHalf)
-        syncRow.addView(btnResetSync)
-        syncRow.addView(btnPlusHalf)
-        settingsPanel.addView(syncRow)
+        syncRow.background = makeRoundedBg("#14FFFFFF".toColorInt(), 12f, "#28FFFFFF".toColorInt(), 1f)
+        tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
+        btnMinusHalf.background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
+        btnResetSync.background = makeRoundedBg(Color.WHITE, 8f)
+        btnPlusHalf.background = makeRoundedBg("#24FFFFFF".toColorInt(), 8f)
 
-        root.addView(settingsPanel)
+        btnMinusHalf.setOnClickListener {
+            subtitleOffsetMs -= 500L
+            tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
+        }
+        btnResetSync.setOnClickListener {
+            subtitleOffsetMs = 0L
+            tvSyncStatus.text = "Offset: +0.0s"
+        }
+        btnPlusHalf.setOnClickListener {
+            subtitleOffsetMs += 500L
+            tvSyncStatus.text = String.format(Locale.US, "Offset: %+.1fs", subtitleOffsetMs / 1000.0)
+        }
 
         tabTracksBtn.setOnClickListener {
             tracksPanel.visibility = View.VISIBLE
@@ -1974,9 +1318,6 @@ class MovieInlinePlayerController(
         applySubtitleStyleToOverlay()
     }
 
-    /**
-     * تطبيق ستايل الترجمة: في وضع Shadow (Transparent) نضع ظل أسود قوي وواضح حول النص بدون خلفية
-     */
     private fun applySubtitleStyleToOverlay() {
         tvSubtitleOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
         tvSubtitleOverlay.setTextColor(subtitleTextColor)
@@ -2235,9 +1576,6 @@ class MovieInlinePlayerController(
         setBufferingState(visible)
     }
 
-    /**
-     * تهيئة المشغل لفيلم أو حلقة جديدة مع تحديد نافذة الـ Intro بدقة (تتفعل للمسلسلات فقط أو عند اكتشاف مقدمة)
-     */
     fun resetForNewStream(isActiveMode: Boolean, isSeries: Boolean = false) {
         isCurrentMediaSeries = isSeries
         hasSkippedIntroForCurrentMedia = false
@@ -2269,7 +1607,6 @@ class MovieInlinePlayerController(
         availableSubtitles = subs
         if (activeCues != null) {
             activeSubtitleCues = activeCues
-            // فحص ما إذا كانت الترجمة تحتوي على إشارة مقدمة [Intro] أو موسيقى البداية في الدقائق الأولى
             if (!isCurrentMediaSeries) {
                 val introCue = activeCues.firstOrNull { cue ->
                     cue.startMs in 5_000L..120_000L &&
@@ -2296,9 +1633,6 @@ class MovieInlinePlayerController(
         )
     }
 
-    /**
-     * إظهار التحكم بـ Fade-In ناعم + رفع الترجمة فوق شريط التقدم
-     */
     fun showControlsWithFade() {
         if (isInPipMode) return
         controlsOverlay.removeCallbacks(autoHideRunnable)
@@ -2331,9 +1665,6 @@ class MovieInlinePlayerController(
         controlsOverlay.postDelayed(autoHideRunnable, 3400)
     }
 
-    /**
-     * إخفاء التحكم بـ Fade-Out ناعم + إعادة الترجمة لمكانها الطبيعي في الأسفل
-     */
     fun hideControlsSmoothly() {
         controlsOverlay.removeCallbacks(autoHideRunnable)
         if (!controlsOverlay.isVisible) return
@@ -2371,40 +1702,6 @@ class MovieInlinePlayerController(
         if (dur > 0) {
             seekBar.progress = ((newPos * 1000L) / dur).toInt().coerceIn(0, 1000)
             tvElapsed.text = formatTimeMs(newPos)
-        }
-    }
-
-    private fun createPlayerBottomActionChip(
-        icon: Drawable,
-        label: String,
-        onClick: () -> Unit
-    ): LinearLayout {
-        return LinearLayout(activity).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeRoundedBg("#24FFFFFF".toColorInt(), 16f, "#40FFFFFF".toColorInt(), 0.8f)
-            setPadding(dp(14), dp(6), dp(14), dp(6))
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                marginStart = dp(8)
-                marginEnd = dp(8)
-            }
-
-            val iv = ImageView(activity).apply {
-                setImageDrawable(icon)
-                layoutParams = LinearLayout.LayoutParams(dp(15), dp(15)).apply { marginEnd = dp(6) }
-            }
-            val tv = TextView(activity).apply {
-                text = label
-                setTextColor(Color.WHITE)
-                textSize = 12f
-                typeface = fontBold
-            }
-            addView(iv)
-            addView(tv)
-            setOnClickListener { onClick() }
         }
     }
 
