@@ -423,8 +423,8 @@ class ContentDetailActivity : AppCompatActivity() {
     private fun bindXmlViewsAndListeners() {
         fullScreenAmbientDrawable = FlixVisionFullScreenAmbientDrawable(
             coverHeightPx = dpF(365f),
-            bottomFadeStartAtRestPx = dpF(175f),
-            fullOpaqueYAtRestPx = dpF(295f),
+            bottomFadeStartAtRestPx = dpF(170f),
+            fullOpaqueYAtRestPx = dpF(285f),
             scrollToHideDistancePx = dpF(195f)
         )
 
@@ -583,30 +583,30 @@ class ContentDetailActivity : AppCompatActivity() {
     private fun extractFlixVisionPalette(bitmap: Bitmap): Pair<Int, Int> {
         return try {
             val scaled = Bitmap.createScaledBitmap(bitmap, 64, 64, true)
-            val numBins = 72 // كل خانة تمثل 5 درجات لونية من 360 درجة
+            val numBins = 72
             val binWeights = FloatArray(numBins)
             val binCosH = FloatArray(numBins)
             val binSinH = FloatArray(numBins)
             val binSatSum = FloatArray(numBins)
             val binValSum = FloatArray(numBins)
 
-            var fallbackR = 0f
-            var fallbackG = 0f
-            var fallbackB = 0f
-            var fallbackWeight = 0f
+            var coolMutedR = 0f
+            var coolMutedG = 0f
+            var coolMutedB = 0f
+            var coolMutedWeight = 0f
+            var colorfulPixelCount = 0
 
             val hsv = FloatArray(3)
 
-            for (y in 2 until 60) {
-                // تركيز أعلى على منطقة الوسط وأسفل الغلاف जहां تندمج الخلفية مع الصورة
+            for (y in 4 until 62) {
                 val verticalFactor = when {
-                    y in 18..54 -> 1.35f
-                    else -> 0.85f
+                    y >= 32 -> 1.85f
+                    y >= 18 -> 1.15f
+                    else -> 0.70f
                 }
                 for (x in 2 until 62) {
                     val pixel = scaled.getPixel(x, y)
-                    val alpha = Color.alpha(pixel)
-                    if (alpha < 180) continue
+                    if (Color.alpha(pixel) < 180) continue
 
                     val r = Color.red(pixel)
                     val g = Color.green(pixel)
@@ -617,22 +617,32 @@ class ContentDetailActivity : AppCompatActivity() {
                     val sat = hsv[1]
                     val value = hsv[2]
 
-                    if (value in 0.14f..0.95f) {
-                        val w = (sat + 0.1f) * value * verticalFactor
-                        fallbackR += r * w
-                        fallbackG += g * w
-                        fallbackB += b * w
-                        fallbackWeight += w
+                    if (value in 0.12f..0.75f) {
+                        val w = (0.15f + sat) * verticalFactor
+                        coolMutedR += r * w
+                        coolMutedG += g * w
+                        coolMutedB += b * w
+                        coolMutedWeight += w
                     }
 
-                    // استبعاد الأسود المحروق والأبيض الرمادي الباهت من التصويت اللوني
-                    if (value < 0.15f || (value > 0.94f && sat < 0.18f) || sat < 0.14f) continue
+                    // Netjahlo el abyad w el gris el fateh bezzaf (kima Disclosure Day) bach ma ydirch green ghalet
+                    if (value < 0.10f || (value > 0.76f && sat < 0.32f) || sat < 0.18f) continue
+
+                    // Naqso men lawn el hait el beige w el bachra
+                    val skinOrBeigePenalty = if (hue in 15f..50f && sat < 0.65f && value > 0.32f) {
+                        0.12f
+                    } else {
+                        1.0f
+                    }
+
+                    if (sat >= 0.24f && value in 0.12f..0.72f) {
+                        colorfulPixelCount++
+                    }
+
+                    val depthFactor = if (value in 0.12f..0.58f) 1.35f else 0.75f
+                    val weight = (sat * sat * 2.2f + sat * 0.5f) * depthFactor * verticalFactor * skinOrBeigePenalty
 
                     val bin = ((hue / 5f).toInt()).coerceIn(0, numBins - 1)
-                    // إعطاء وزن قوي للألوان المشبعة والواضحة في البوستر
-                    val vibrantBoost = (sat * sat * 2.6f + sat * 0.8f) * (0.4f + 0.6f * sin(value * Math.PI).toFloat())
-                    val weight = vibrantBoost * verticalFactor
-
                     val rad = Math.toRadians(hue.toDouble())
                     binWeights[bin] += weight
                     binCosH[bin] += (cos(rad).toFloat() * weight)
@@ -642,7 +652,6 @@ class ContentDetailActivity : AppCompatActivity() {
                 }
             }
 
-            // إيجاد التجمع اللوني الأقوى مع احتساب الجيران المباشرين (Smooth Peak)
             var bestBin = -1
             var bestClusterScore = 0f
             for (i in 0 until numBins) {
@@ -655,53 +664,52 @@ class ContentDetailActivity : AppCompatActivity() {
                 }
             }
 
-            if (bestBin != -1 && bestClusterScore > 0.05f) {
-                val prev = (bestBin - 1 + numBins) % numBins
-                val next = (bestBin + 1) % numBins
-
-                val totalW = (binWeights[bestBin] + binWeights[prev] * 0.45f + binWeights[next] * 0.45f).coerceAtLeast(0.001f)
-                val avgCos = (binCosH[bestBin] + binCosH[prev] * 0.45f + binCosH[next] * 0.45f) / totalW
-                val avgSin = (binSinH[bestBin] + binSinH[prev] * 0.45f + binSinH[next] * 0.45f) / totalW
-
-                var dominantHue = Math.toDegrees( kotlin.math.atan2(avgSin.toDouble(), avgCos.toDouble()) ).toFloat()
-                if (dominantHue < 0f) dominantHue += 360f
-
-                val rawSat = (binSatSum[bestBin] + binSatSum[prev] * 0.45f + binSatSum[next] * 0.45f) / totalW
-                val rawVal = (binValSum[bestBin] + binValSum[prev] * 0.45f + binValSum[next] * 0.45f) / totalW
-
-                // الحفاظ على حيوية اللون وإضاءته الحقيقية ليظهر كل لون بوضوح كما في FlixVision
-                val finalSat = (rawSat * 1.12f).coerceIn(0.48f, 0.92f)
-                val finalVal = (rawVal * 0.85f).coerceIn(0.42f, 0.64f)
-
-                val leftBrightColor = Color.HSVToColor(floatArrayOf(dominantHue, finalSat, finalVal))
-                // جعل اللون الأيمن غامقاً جداً ومشتقاً من نفس درجة الغلاف بدلاً من الأسود الميت
-                val rightDarkColor = Color.HSVToColor(floatArrayOf(dominantHue, (finalSat * 0.85f).coerceAtMost(0.80f), 0.05f))
-
-                leftBrightColor to rightDarkColor
-            } else if (fallbackWeight > 0.01f) {
-                // للأغلفة ذات الطابع الرمادي أو الكلاسيكي (Noir / B&W)
-                val avgColor = Color.rgb(
-                    (fallbackR / fallbackWeight).toInt().coerceIn(0, 255),
-                    (fallbackG / fallbackWeight).toInt().coerceIn(0, 255),
-                    (fallbackB / fallbackWeight).toInt().coerceIn(0, 255)
-                )
-                Color.colorToHSV(avgColor, hsv)
-                hsv[1] = hsv[1].coerceIn(0.15f, 0.45f)
-                hsv[2] = hsv[2].coerceIn(0.35f, 0.52f)
-                val leftBrightColor = Color.HSVToColor(hsv)
-                leftBrightColor to "#040508".toColorInt()
-            } else {
-                "#283646".toColorInt() to "#000000".toColorInt()
+            // Ila kanet el soura bida/gris barda (kima Disclosure Day) ma fihach alwan qwiya
+            if (colorfulPixelCount < 95 || bestBin == -1 || bestClusterScore < 0.05f) {
+                return if (coolMutedWeight > 0.01f) {
+                    val avgR = (coolMutedR / coolMutedWeight).toInt().coerceIn(0, 255)
+                    val avgG = (coolMutedG / coolMutedWeight).toInt().coerceIn(0, 255)
+                    val avgB = (coolMutedB / coolMutedWeight).toInt().coerceIn(0, 255)
+                    Color.colorToHSV(Color.rgb(avgR, avgG, avgB), hsv)
+                    // Nkhaliwh Slate Blue/Grey ghameq kima FlixVision f Disclosure Day
+                    if (hsv[1] < 0.22f) {
+                        hsv[0] = 212f
+                        hsv[1] = 0.34f
+                    } else {
+                        hsv[1] = hsv[1].coerceIn(0.24f, 0.42f)
+                    }
+                    hsv[2] = hsv[2].coerceIn(0.22f, 0.30f)
+                    Color.HSVToColor(hsv) to "#000000".toColorInt()
+                } else {
+                    "#222D3A".toColorInt() to "#000000".toColorInt()
+                }
             }
+
+            val prev = (bestBin - 1 + numBins) % numBins
+            val next = (bestBin + 1 + numBins) % numBins
+            val totalW = (binWeights[bestBin] + binWeights[prev] * 0.45f + binWeights[next] * 0.45f).coerceAtLeast(0.001f)
+            val avgCos = (binCosH[bestBin] + binCosH[prev] * 0.45f + binCosH[next] * 0.45f) / totalW
+            val avgSin = (binSinH[bestBin] + binSinH[prev] * 0.45f + binSinH[next] * 0.45f) / totalW
+
+            var dominantHue = Math.toDegrees(kotlin.math.atan2(avgSin.toDouble(), avgCos.toDouble())).toFloat()
+            if (dominantHue < 0f) dominantHue += 360f
+
+            val rawSat = (binSatSum[bestBin] + binSatSum[prev] * 0.45f + binSatSum[next] * 0.45f) / totalW
+            val rawVal = (binValSum[bestBin] + binValSum[prev] * 0.45f + binValSum[next] * 0.45f) / totalW
+
+            val finalSat = (rawSat * 1.05f).coerceIn(0.32f, 0.82f)
+            val finalVal = (rawVal * 0.78f).coerceIn(0.24f, 0.38f)
+
+            val leftBrightColor = Color.HSVToColor(floatArrayOf(dominantHue, finalSat, finalVal))
+            leftBrightColor to "#000000".toColorInt()
         } catch (_: Exception) {
-            "#283646".toColorInt() to "#000000".toColorInt()
+            "#233242".toColorInt() to "#000000".toColorInt()
         }
     }
 
     private fun startCoverColorExtractionAnimation(targetLeftColor: Int, targetRightColor: Int) {
         colorExtractionAnimator?.cancel()
 
-        // تمرير اللون المستخرج إلى المشغل ليتلون تأثير ضغط Play/Pause و 15s بنفس لون الثيم
         moviePlayerController.setDynamicThemeColor(targetLeftColor)
 
         val evaluator = ArgbEvaluator()
@@ -709,8 +717,8 @@ class ContentDetailActivity : AppCompatActivity() {
         val startRight = currentRightDarkColor
 
         colorExtractionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            startDelay = 0L
-            duration = 950L
+            startDelay = 0L // Yebda direct bla ma yestenah 2s f static color
+            duration = 1500L // Animation tban b salasa kima FlixVision
             interpolator = DecelerateInterpolator(1.4f)
             addUpdateListener { va ->
                 val f = va.animatedFraction
@@ -1908,7 +1916,7 @@ class FlixVisionFullScreenAmbientDrawable(
 ) : Drawable() {
 
     private val mainThemePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
-    private val sideEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
+    private val edgeGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
 
     private var leftBrightColor: Int = "#233242".toColorInt()
     private var rightDarkColor: Int = "#000000".toColorInt()
@@ -1976,10 +1984,11 @@ class FlixVisionFullScreenAmbientDrawable(
         val dynamicOpaqueY = (fullOpaqueYAtRestPx * (1f - scrollFraction * 0.90f))
             .coerceAtLeast(dynamicFadeStart + 16f)
 
+        // El shadow yabda fouq el isem w yakmal 100% taht el isem direct kima kan f code ta3ek w kima FlixVision
         val topCoverAlpha = (255f * scrollFraction).toInt().coerceIn(0, 255)
-        val fadeStep1Alpha = (255f * (0.16f + 0.84f * scrollFraction)).toInt().coerceIn(0, 255)
-        val fadeStep2Alpha = (255f * (0.48f + 0.52f * scrollFraction)).toInt().coerceIn(0, 255)
-        val fadeStep3Alpha = (255f * (0.82f + 0.18f * scrollFraction)).toInt().coerceIn(0, 255)
+        val fadeStep1Alpha = (255f * (0.18f + 0.82f * scrollFraction)).toInt().coerceIn(0, 255)
+        val fadeStep2Alpha = (255f * (0.52f + 0.48f * scrollFraction)).toInt().coerceIn(0, 255)
+        val fadeStep3Alpha = (255f * (0.85f + 0.15f * scrollFraction)).toInt().coerceIn(0, 255)
 
         val s0 = (dynamicFadeStart / h).coerceIn(0f, 0.90f)
         val sEnd = (dynamicOpaqueY / h).coerceIn(s0 + 0.03f, 0.98f)
@@ -2018,58 +2027,79 @@ class FlixVisionFullScreenAmbientDrawable(
         )
         canvas.drawRect(0f, 0f, w, h, mainThemePaint)
 
-        if (!isPlayerMode && scrollFraction < 0.99f) {
+        // El hawaf (Edges Foga + Gauche + Droite) b nafs el color ta3 li taht (leftBrightColor)
+        if (!isPlayerMode && scrollFraction < 0.98f) {
+            val fadeOutFactor = 1f - scrollFraction * 0.65f
             val coverBottom = min(h, coverHeightPx)
-            val sideGrowth = 1f + (scrollFraction * 1.15f)
 
-            val leftEdgeW = w * (0.22f * sideGrowth).coerceAtMost(0.48f)
-            val leftAlpha = ((110 + 70 * extractionFraction) * (1f - scrollFraction * 0.45f)).toInt().coerceIn(0, 255)
-            sideEdgePaint.shader = LinearGradient(
+            // 1. El Hafa El Fouqaniya (Top Edge kima f FlixVision Screen 2) b nafs color ta3 li taht
+            val topEdgeH = coverHeightPx * 0.34f
+            val topAlpha = (155 * fadeOutFactor).toInt().coerceIn(0, 255)
+            edgeGlowPaint.shader = LinearGradient(
+                0f,
+                0f,
+                0f,
+                topEdgeH,
+                intArrayOf(
+                    ColorUtils.setAlphaComponent(leftBrightColor, topAlpha),
+                    ColorUtils.setAlphaComponent(leftBrightColor, (topAlpha * 0.55f).toInt()),
+                    ColorUtils.setAlphaComponent(leftBrightColor, (topAlpha * 0.18f).toInt()),
+                    Color.TRANSPARENT
+                ),
+                floatArrayOf(0f, 0.38f, 0.72f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(0f, 0f, w, topEdgeH, edgeGlowPaint)
+
+            // 2. El Hafa 3la Gauche (khfifa fel taraf bach yakhroj chwiya color men tam bla ma yghatti el cover)
+            val leftEdgeW = w * 0.18f
+            val leftAlpha = ((115 + 45 * extractionFraction) * fadeOutFactor).toInt().coerceIn(0, 255)
+            edgeGlowPaint.shader = LinearGradient(
                 0f,
                 0f,
                 leftEdgeW,
                 0f,
                 intArrayOf(
                     ColorUtils.setAlphaComponent(leftBrightColor, leftAlpha),
-                    ColorUtils.setAlphaComponent(leftBrightColor, (leftAlpha * 0.68f).toInt()),
-                    ColorUtils.setAlphaComponent(leftBrightColor, (leftAlpha * 0.36f).toInt()),
-                    ColorUtils.setAlphaComponent(leftBrightColor, (leftAlpha * 0.12f).toInt()),
+                    ColorUtils.setAlphaComponent(leftBrightColor, (leftAlpha * 0.48f).toInt()),
+                    ColorUtils.setAlphaComponent(leftBrightColor, (leftAlpha * 0.14f).toInt()),
                     Color.TRANSPARENT
                 ),
-                floatArrayOf(0f, 0.25f, 0.52f, 0.78f, 1f),
+                floatArrayOf(0f, 0.36f, 0.72f, 1f),
                 Shader.TileMode.CLAMP
             )
-            canvas.drawRect(0f, 0f, leftEdgeW, coverBottom, sideEdgePaint)
+            canvas.drawRect(0f, 0f, leftEdgeW, coverBottom, edgeGlowPaint)
 
-            val rightEdgeW = w * (0.28f * sideGrowth).coerceAtMost(0.58f)
-            val rightAlpha = (175 * (1f - scrollFraction * 0.35f)).toInt().coerceIn(0, 255)
-            sideEdgePaint.shader = LinearGradient(
+            // 3. El Hafa 3la Droite (b nafs el color mkhallat m3a rightDarkColor)
+            val rightEdgeW = w * 0.20f
+            val rightEdgeColor = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.55f)
+            val rightAlpha = (135 * fadeOutFactor).toInt().coerceIn(0, 255)
+            edgeGlowPaint.shader = LinearGradient(
                 w,
                 0f,
                 w - rightEdgeW,
                 0f,
                 intArrayOf(
-                    ColorUtils.setAlphaComponent(rightDarkColor, rightAlpha),
-                    ColorUtils.setAlphaComponent(rightDarkColor, (rightAlpha * 0.70f).toInt()),
-                    ColorUtils.setAlphaComponent(rightDarkColor, (rightAlpha * 0.38f).toInt()),
-                    ColorUtils.setAlphaComponent(rightDarkColor, (rightAlpha * 0.14f).toInt()),
+                    ColorUtils.setAlphaComponent(rightEdgeColor, rightAlpha),
+                    ColorUtils.setAlphaComponent(rightEdgeColor, (rightAlpha * 0.48f).toInt()),
+                    ColorUtils.setAlphaComponent(rightEdgeColor, (rightAlpha * 0.14f).toInt()),
                     Color.TRANSPARENT
                 ),
-                floatArrayOf(0f, 0.25f, 0.52f, 0.78f, 1f),
+                floatArrayOf(0f, 0.36f, 0.72f, 1f),
                 Shader.TileMode.CLAMP
             )
-            canvas.drawRect(w - rightEdgeW, 0f, w, coverBottom, sideEdgePaint)
+            canvas.drawRect(w - rightEdgeW, 0f, w, coverBottom, edgeGlowPaint)
         }
     }
 
     override fun setAlpha(alpha: Int) {
         mainThemePaint.alpha = alpha
-        sideEdgePaint.alpha = alpha
+        edgeGlowPaint.alpha = alpha
     }
 
     override fun setColorFilter(colorFilter: ColorFilter?) {
         mainThemePaint.colorFilter = colorFilter
-        sideEdgePaint.colorFilter = colorFilter
+        edgeGlowPaint.colorFilter = colorFilter
     }
 
     @Deprecated("Deprecated in Java")
