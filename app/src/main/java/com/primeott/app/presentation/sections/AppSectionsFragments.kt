@@ -448,13 +448,13 @@ class HomeFragment : Fragment() {
                 val absPos = abs(clampedPos)
                 val focusFactor = (1f - absPos).coerceAtLeast(0f)
 
-                // تفعيل منظور الكاميرا ثلاثي الأبعاد
+                // تفعيل العمق ثلاثي الأبعاد (3D Perspective Camera)
                 page.cameraDistance = cameraScale
                 page.pivotX = page.width * 0.5f
                 page.pivotY = page.height * 0.5f
 
                 if (absPos < 0.001f) {
-                    // الكارت المركزي في الوسط: واضح، مسطح 100% وفي المقدمة
+                    // 1. الـ Cover المركزي في الوسط: عادي، مسطح 100%، واضح وفوق الجميع
                     page.rotationY = 0f
                     page.rotation = 0f
                     page.scaleX = 1.0f
@@ -464,23 +464,24 @@ class HomeFragment : Fragment() {
                     page.translationZ = 24f * d
                     page.alpha = 1.0f
                 } else {
-                    // الكروت الجانبية: عكسنا الإشارة باش يدورو بالظهر تاعهم نحو الخارج (Reverse Y-axis Rotation)
-                    page.rotationY = clampedPos * 42f // إشارة موجبة بدل سالبة باش يلتف العكس
+                    // 2. الكروت الجانبية (السابق والتالي):
+                    // تدور حول المحور العمودي Y-axis بزاوية متعاكسة للخارج (Coverflow Backside Angle)
+                    page.rotationY = clampedPos * -38f
 
-                    // ميلان خفيف متناسق
-                    page.rotation = clampedPos * -5.0f
+                    // ميلان سينمائي خفيف للأطراف كيما فـ image_8ce4be.jpg
+                    page.rotation = clampedPos * 5.5f
 
-                    // سحب الكروت الجانبية للخارج
-                    page.translationX = clampedPos * (page.width * 0.18f)
-                    page.translationY = absPos * (18f * d)
+                    // سحب الكروت الجانبية لتدخل تحت أطراف الكارت المركزي
+                    page.translationX = -clampedPos * (page.width * 0.22f)
+                    page.translationY = absPos * (16f * d)
 
-                    // وضع الكروت الجانبية في الخلف عمودياً
-                    page.translationZ = (1f - absPos) * (-12f * d)
+                    // وضع الكروت الجانبية خلف الكارت المركزي في العمق Z
+                    page.translationZ = (1f - absPos) * (10f * d)
 
-                    // تصغير الحجم والتعتيم باش يبقى التركيز على الكارت الوسطاني
-                    page.scaleX = 0.82f + (focusFactor * 0.18f)
-                    page.scaleY = 0.80f + (focusFactor * 0.20f)
-                    page.alpha = 0.45f + (focusFactor * 0.55f)
+                    // تصغير وتعتيم خفيف باش يبرز الكارت الوسطاني
+                    page.scaleX = 0.84f + (focusFactor * 0.16f)
+                    page.scaleY = 0.82f + (focusFactor * 0.18f)
+                    page.alpha = 0.50f + (focusFactor * 0.50f)
                 }
             }
 
