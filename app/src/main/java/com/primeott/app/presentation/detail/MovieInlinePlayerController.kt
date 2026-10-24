@@ -125,6 +125,9 @@ class MovieInlinePlayerController(
     private lateinit var ivGestureIcon: ImageView
     private lateinit var pbGestureLevel: ProgressBar
     private lateinit var tvGesturePercent: TextView
+    private lateinit var vServerBlackShutter: View
+    private lateinit var tvServerSwitchingPill: TextView
+    private var currentActiveServerName: String = "Server 1"
 
     private var fullscreenLeftBrightnessBar: LinearLayout? = null
     private var pbSideBrightness: ProgressBar? = null
@@ -431,6 +434,38 @@ class MovieInlinePlayerController(
 
         applySubtitleStyleToOverlay()
         animateSubtitlePositionForControls(controlsVisible = true, animate = false)
+
+        // شاشة سوداء تظهر فوراً عند تغيير السيرفر حتى يشتغل السيرفر الجديد
+        vServerBlackShutter = View(activity).apply {
+            setBackgroundColor(Color.BLACK)
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+        // نضيفوها فوق playerView مباشرة وتحت شريط التحكم والترجمة
+        rootPlayerFrame.addView(vServerBlackShutter, 1)
+
+        // شارة سفلية زجاجية تكتب "Switching to [Server]..."
+        tvServerSwitchingPill = TextView(activity).apply {
+            setTextColor(Color.WHITE)
+            textSize = 11.5f
+            typeface = fontBold
+            gravity = Gravity.CENTER
+            background = makeRoundedBg("#D910131C".toColorInt(), 18f, "#4DFFFFFF".toColorInt(), 0.9f)
+            setPadding(dp(16), dp(6), dp(16), dp(6))
+            visibility = View.GONE
+            elevation = dpF(8f)
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            ).apply {
+                bottomMargin = dp(48)
+            }
+        }
+        rootPlayerFrame.addView(tvServerSwitchingPill)
     }
 
     fun setDynamicThemeColor(themeColor: Int) {
@@ -471,9 +506,50 @@ class MovieInlinePlayerController(
         }
     }
 
+    fun onServerSwitchingStarted(serverName: String) {
+        currentActiveServerName = serverName
+        hasRenderedInitialFrameForStream = false
+
+        // 1. نفصلو الصورة القديمة ونديرو Black Screen فوراً
+        playerView.player = null
+        vServerBlackShutter.animate().cancel()
+        vServerBlackShutter.alpha = 1f
+        vServerBlackShutter.visibility = View.VISIBLE
+
+        // 2. نبينو اللودر في الوسط
+        setBufferingState(true)
+
+        // 3. نكتبو لتحت بلي راه يبدل للسيرفر الجديد
+        tvServerSwitchingPill.animate().cancel()
+        tvServerSwitchingPill.text = "Switching to $serverName..."
+        tvServerSwitchingPill.alpha = 1f
+        tvServerSwitchingPill.visibility = View.VISIBLE
+    }
+
     fun onFirstFrameRendered() {
         setBufferingState(false)
         updatePlayPauseVectorIcon(true)
+
+        // نخفيو الـ Black Screen بنعومة غير يبدا السيرفر الجديد
+        if (vServerBlackShutter.isVisible) {
+            vServerBlackShutter.animate()
+                .alpha(0f)
+                .setDuration(200L)
+                .withEndAction { vServerBlackShutter.visibility = View.GONE }
+                .start()
+        }
+
+        // نكتبو بلي اتصل بالسيرفر الجديد ومن بعد نخفيوها
+        if (tvServerSwitchingPill.isVisible) {
+            tvServerSwitchingPill.text = "Connected: $currentActiveServerName"
+            tvServerSwitchingPill.animate()
+                .alpha(0f)
+                .setStartDelay(1100L)
+                .setDuration(250L)
+                .withEndAction { tvServerSwitchingPill.visibility = View.GONE }
+                .start()
+        }
+
         if (!hasRenderedInitialFrameForStream) {
             hasRenderedInitialFrameForStream = true
             controlsOverlay.removeCallbacks(autoHideRunnable)
@@ -1744,7 +1820,7 @@ class MovieInlinePlayerController(
     }
 
     fun setServerBadgeLabel(serverName: String) {
-        // نبقي زر السيرفر يعرض الأيقونة فقط بدون كتابة اسم السيرفر
+        currentActiveServerName = serverName
         btnTopServerOnly.text = ""
     }
 

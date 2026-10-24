@@ -275,10 +275,18 @@ class ContentDetailActivity : AppCompatActivity() {
                 }
             },
             onServerSelected = { srvIdx, server ->
+                playerEngine.player?.let { exo ->
+                    if (exo.currentPosition > 3000L) {
+                        pendingResumePositionMs = exo.currentPosition
+                    }
+                }
+                playerEngine.pauseAndReleaseSocket()
                 currentProviderIndex = srvIdx
                 hasLockedPrimaryStream = false
                 resolvedDirectStreams.clear()
-                moviePlayerController.setLoadingState(true)
+
+                moviePlayerController.onServerSwitchingStarted(server.label)
+
                 if (server.isDirectStream) {
                     onRawStreamIntercepted(server.url, server.referer, server.origin, server.userAgent)
                 } else {
@@ -1112,25 +1120,58 @@ class ContentDetailActivity : AppCompatActivity() {
                     )
                 }
             }
+
+            @JavascriptInterface
+            fun onDeadServerDetected() {
+                // إذا الصفحة كتبت Video Not Found أو 404 نصوتو للسيرفر اللي بعدو فوراً بلا انتظار!
+                runOnUiThread {
+                    if (!hasLockedPrimaryStream) {
+                        tryNextProviderInBackground()
+                    }
+                }
+            }
         }, "PrimeSnifferBridge")
 
         headlessSnifferWebView.webChromeClient = WebChromeClient()
         headlessSnifferWebView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val target = request?.url?.toString() ?: return true
-                val allowed = listOf("vidlink", "vixsrc", "vidsrc", "embed.su", "autoembed", "multiembed", "cloudnestra", "tmstr", "rabbitstream", "megacloud")
+                val allowed = listOf(
+                    "vidfast", "vixsrc", "netnaija", "vidlink", "multiembed", "2embed",
+                    "vidsrc", "embed.su", "autoembed", "superembed", "cloudnestra",
+                    "tmstr", "rabbitstream", "megacloud", "vidplay", "filemoon"
+                )
                 return !allowed.any { target.contains(it, ignoreCase = true) }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                val status = errorResponse?.statusCode ?: 200
+                if (request?.isForMainFrame == true && (status == 404 || status == 403 || status >= 500)) {
+                    if (!hasLockedPrimaryStream) {
+                        tryNextProviderInBackground()
+                    }
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 if (hasLockedPrimaryStream || url == "about:blank") return
-                val autoClickJs = """
+                val autoClickAndCheckDeadJs = """
                     (function() {
+                        var bodyTxt = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : "";
+                        if (bodyTxt.indexOf("not found") !== -1 || bodyTxt.indexOf("unavailable") !== -1 || bodyTxt.indexOf("no sources") !== -1 || bodyTxt.indexOf("404") !== -1) {
+                            window.PrimeSnifferBridge.onDeadServerDetected();
+                            return;
+                        }
                         var count = 0;
                         var timer = setInterval(function() {
                             count++;
-                            if (count > 20) { clearInterval(timer); return; }
+                            if (count > 12) { clearInterval(timer); return; }
                             var btns = document.querySelectorAll('button, .play-btn, .jw-icon-display, .vjs-big-play-button, [aria-label="Play"], #play-button, .plyr__control--overlaid');
                             for (var i = 0; i < btns.length; i++) {
                                 try { btns[i].click(); } catch(e) {}
@@ -1144,10 +1185,10 @@ class ContentDetailActivity : AppCompatActivity() {
                                     clearInterval(timer);
                                 }
                             }
-                        }, 300);
+                        }, 250);
                     })();
                 """.trimIndent()
-                view?.evaluateJavascript(autoClickJs, null)
+                view?.evaluateJavascript(autoClickAndCheckDeadJs, null)
             }
 
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
@@ -1161,27 +1202,46 @@ class ContentDetailActivity : AppCompatActivity() {
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                 }
 
+                // تصحيح اكتشاف لغة الترجمة (يفحص الرابط + يفحص الحروف العربية داخل الملف نفسه)
                 if ((lower.contains(".vtt") || lower.contains(".srt")) && !lower.contains("thumb") && !lower.contains("sprite")) {
-                    val isAr = lower.contains("ar") || lower.contains("ara")
-                    val subTrack = SubtitleTrack(
-                        id = "stream_sync_${reqUrl.hashCode()}",
-                        languageCode = if (isAr) "ar" else "en",
-                        languageLabel = if (isAr) "Arabic" else "English",
-                        releaseName = "",
-                        url = reqUrl
-                    )
-                    runOnUiThread {
-                        val existing = moviePlayerController.getAvailableSubtitles()
-                        if (existing.none { it.url == reqUrl }) {
-                            val updated = listOf(subTrack) + existing
-                            moviePlayerController.updateAvailableSubtitles(updated)
-                            if (isAr || moviePlayerController.getActiveSubtitleCues().isEmpty()) {
-                                lifecycleScope.launch {
-                                    val cues = withContext(Dispatchers.IO) {
-                                        OttRepository.downloadAndParseSubtitles(subTrack)
-                                    }
-                                    if (cues.isNotEmpty()) {
-                                        moviePlayerController.updateAvailableSubtitles(updated, cues, subTrack.id)
+                    val urlCode = when {
+                        lower.contains("arab") || Regex("([/_.-])(ar|ara)([/_.-]|\\.)").containsMatchIn(lower) -> "ar"
+                        lower.contains("french") || Regex("([/_.-])(fr|fre|fra)([/_.-]|\\.)").containsMatchIn(lower) -> "fr"
+                        lower.contains("turk") || Regex("([/_.-])(tr|tur)([/_.-]|\\.)").containsMatchIn(lower) -> "tr"
+                        lower.contains("span") || Regex("([/_.-])(es|spa)([/_.-]|\\.)").containsMatchIn(lower) -> "es"
+                        else -> "en"
+                    }
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val tempTrack = SubtitleTrack(
+                            id = "stream_sync_${reqUrl.hashCode()}",
+                            languageCode = urlCode,
+                            languageLabel = if (urlCode == "ar") "Arabic" else "English",
+                            releaseName = "",
+                            url = reqUrl
+                        )
+                        val cues = OttRepository.downloadAndParseSubtitles(tempTrack)
+                        if (cues.isNotEmpty()) {
+                            // فحص نص الترجمة: إذا فيه حروف عربية نصنفه Arabic حتى لو الرابط مافيهش "ar"
+                            val hasArabicScript = cues.take(10).any { cue ->
+                                cue.text.any { ch -> ch in '\u0600'..'\u06FF' }
+                            }
+                            val finalCode = if (hasArabicScript) "ar" else urlCode
+                            val finalLabel = when (finalCode) {
+                                "ar" -> "Arabic"
+                                "fr" -> "French"
+                                "tr" -> "Turkish"
+                                "es" -> "Spanish"
+                                else -> "English"
+                            }
+                            val verifiedTrack = tempTrack.copy(languageCode = finalCode, languageLabel = finalLabel)
+                            withContext(Dispatchers.Main) {
+                                val existing = moviePlayerController.getAvailableSubtitles()
+                                if (existing.none { it.url == reqUrl }) {
+                                    val updated = listOf(verifiedTrack) + existing
+                                    if (finalCode == "ar" || moviePlayerController.getActiveSubtitleCues().isEmpty()) {
+                                        moviePlayerController.updateAvailableSubtitles(updated, cues, verifiedTrack.id)
+                                    } else {
+                                        moviePlayerController.updateAvailableSubtitles(updated)
                                     }
                                 }
                             }
@@ -1339,7 +1399,8 @@ class ContentDetailActivity : AppCompatActivity() {
 
         snifferTimeoutJob?.cancel()
         snifferTimeoutJob = lifecycleScope.launch {
-            delay(6500L)
+            // 2.6 ثواني فقط: إلا السيرفر ما ردش بالفيلم يحول فوراً للسيرفر اللي بعدو!
+            delay(2600L)
             if (!hasLockedPrimaryStream && !playerEngine.isPlaying()) {
                 tryNextProviderInBackground()
             }
@@ -1352,7 +1413,12 @@ class ContentDetailActivity : AppCompatActivity() {
         val nextIdx = (currentProviderIndex + 1) % providerTargets.size
         val nextServer = providerTargets[nextIdx]
         currentProviderIndex = nextIdx
-        moviePlayerController.setServerBadgeLabel(nextServer.label)
+
+        if (isPlayerModeActive) {
+            moviePlayerController.onServerSwitchingStarted(nextServer.label)
+        } else {
+            moviePlayerController.setServerBadgeLabel(nextServer.label)
+        }
 
         if (nextServer.isDirectStream) {
             onRawStreamIntercepted(nextServer.url, nextServer.referer, nextServer.origin, nextServer.userAgent)
@@ -1587,7 +1653,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 bindMovieFullDetailsToUi(vod, details)
             }
 
-            startStreamExtractionForEpisodeOrMovie(vod, 1, 1, runWebViewNow = true)
+            startStreamExtractionForEpisodeOrMovie(vod, 1, 1, runWebViewNow = false)
 
             withContext(Dispatchers.IO) {
                 val subs = OttRepository.fetchRealSubtitlesForMovie(
@@ -1832,16 +1898,16 @@ class ContentDetailActivity : AppCompatActivity() {
         btnFavBox.setImageResource(resId)
     }
 
-   private fun createWatchTogetherRoom() {
+    private fun createWatchTogetherRoom() {
         val vod = currentVod ?: return
 
-        // نبعثو الرابط الواجد غير إذا كان الفيلم ديجا شاعل بالـ Play، وإلا نخلو الغرفة تجبدو مباشرة كيما اختيار الأفلام
-        val workingStream = if (isPlayerModeActive) resolvedDirectStreams.firstOrNull() else null
-        val directStream = workingStream?.url.orEmpty()
-        val refererUrl = workingStream?.referer ?: "https://vidlink.pro/"
-        val customUa = workingStream?.userAgent ?: SNIFFER_UA
+        // نجبدو الرابط إذا كان واجد، وإذا مازال ما وجدش ندخلو للغرفة فوراً وهي تكمل تجبدو وحدها!
+        val resolvedStream = resolvedDirectStreams.firstOrNull()
+        val providerStream = providerTargets.firstOrNull { it.isDirectStream }
+        val directStream = resolvedStream?.url ?: providerStream?.url ?: ""
 
-        Toast.makeText(this, "🎬 جاري فتح غرفة المشاهدة...", Toast.LENGTH_SHORT).show()
+        val refererUrl = providerTargets.getOrNull(currentProviderIndex)?.url ?: directStream
+        val customUa = SessionManager.CUSTOM_USER_AGENT
 
         lifecycleScope.launch {
             val (ok, codeOrErr) = OttRepository.createWatchRoom(
@@ -1875,40 +1941,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun launchRoomWithDirectStream(vod: VodItem, streamUrl: String, referer: String, ua: String) {
-        lifecycleScope.launch {
-            val (ok, codeOrErr) = OttRepository.createWatchRoom(
-                deviceId = SessionManager.getDeviceId(this@ContentDetailActivity),
-                userName = SessionManager.getUserName(this@ContentDetailActivity),
-                roomName = "غرفة ${vod.title.take(22)}",
-                roomIcon = "🎬",
-                isPrivate = false,
-                password = "",
-                allowGuestsControl = true,
-                contentType = "VOD",
-                streamId = vod.id,
-                contentTitle = vod.title,
-                contentPoster = vod.posterUrl,
-                streamUrl = streamUrl
-            )
-
-            playerEngine.pauseAndReleaseSocket()
-
-            startActivity(Intent(this@ContentDetailActivity, WatchRoomActivity::class.java).apply {
-                putExtra(WatchRoomActivity.EXTRA_ROOM_CODE, if (ok) codeOrErr else "")
-                putExtra(WatchRoomActivity.EXTRA_ROOM_NAME, "غرفة ${vod.title.take(22)}")
-                putExtra(WatchRoomActivity.EXTRA_STREAM_URL, streamUrl)
-                putExtra(WatchRoomActivity.EXTRA_STREAM_TITLE, vod.title)
-                putExtra(WatchRoomActivity.EXTRA_IS_HOST, true)
-                putExtra("direct_movie_launch", true)
-                putExtra("stream_id", vod.id)
-                putExtra("stream_referer", referer)
-                putExtra("stream_ua", ua)
-            })
-        }
-    }
-
-    
     override fun onPause() {
         super.onPause()
         val p = playerEngine.player
