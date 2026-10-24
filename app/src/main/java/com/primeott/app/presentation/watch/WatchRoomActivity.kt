@@ -1,85 +1,45 @@
 package com.primeott.app.presentation.watch
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ObjectAnimator
 import android.app.Activity
-import android.app.AlertDialog
-import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
 import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.Editable
-import android.text.InputType
-import android.text.TextUtils
 import android.text.TextWatcher
-import android.util.TypedValue
-import android.view.GestureDetector
 import android.view.Gravity
-import android.view.LayoutInflater
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.Window
-import android.view.WindowManager
-import android.view.animation.DecelerateInterpolator
-import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.AppCompatButton
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.graphics.ColorUtils
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import androidx.core.view.isVisible
-import androidx.media3.common.Player
-import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.ExoPlayer
 import com.primeott.app.R
 import com.primeott.app.data.remote.SessionManager
 import com.primeott.app.data.repository.OttRepository
-import com.primeott.app.data.repository.PrimeVodExtractor
+import com.primeott.app.data.repository.RoomSyncResult
 import com.primeott.app.domain.model.StreamSource
-import com.primeott.app.domain.model.SubtitleCue
-import com.primeott.app.domain.model.SubtitleTrack
-import com.primeott.app.presentation.detail.VectorIcons
 import com.primeott.app.presentation.player.PrimePlayerEngine
 import kotlinx.coroutines.*
-import okhttp3.*
 import org.json.JSONObject
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
-import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
 
@@ -90,7 +50,6 @@ class WatchTogetherController(
     private val hostActivity: Activity?,
     private val isStandaloneActivity: Boolean
 ) {
-
     private val controllerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val httpClient = OttRepository.okHttpClient
@@ -120,57 +79,17 @@ class WatchTogetherController(
     private var statTotalMessages = 0
     private var statSyncCount = 0
     private var isDestroyed = false
-
-    private var webSocket: WebSocket? = null
-    private var voiceChatManager: VoiceChatManager? = null
-
-    private lateinit var playerEngine: PrimePlayerEngine
-    private val currentProviderTargets = mutableListOf<StreamSource>()
-    private val resolvedDirectStreams = mutableListOf<StreamSource>()
-    private var currentProviderIndex = 0
-    private var selectedQualityHeight: Int? = null
-    private var isExtractingNewMovie = false
-    private var activeMovieTmdbId: String = ""
-    private var headlessSnifferWebView: WebView? = null
-    private var snifferExtractionJob: Job? = null
-    private var snifferTimeoutRunnable: Runnable? = null
-    private var currentResizeModeIndex = 0
     private var isHandlingRemoteSync = false
-    private val triedProviderIndices = mutableSetOf<Int>()
-    private var availableSubtitles: List<SubtitleTrack> = emptyList()
-    private var activeSubtitleCues: List<SubtitleCue> = emptyList()
-    private var selectedSubtitleId: String = ""
-    private var subtitleOffsetMs: Long = 0L
-    private var subtitleTextSizeSp: Float = 16f
-    private var subtitleTextColor: Int = Color.WHITE
-    private var subtitleBgAlpha: Int = 0
-    private var subtitleExtraLiftDp: Int = 0
+
+    private var voiceChatManager: VoiceChatManager? = null
+    private lateinit var playerEngine: PrimePlayerEngine
+    private lateinit var streamSniffer: WatchRoomStreamSniffer
+    private lateinit var subtitleManager: WatchRoomSubtitleManager
+    private lateinit var playerUI: WatchRoomPlayerUI
+    private lateinit var dialogsManager: WatchRoomDialogs
+    private lateinit var syncClient: WatchRoomSyncClient
 
     private lateinit var playerFrameContainer: FrameLayout
-    private lateinit var appCustomControlsOverlay: FrameLayout
-    private lateinit var tvAppPlayerTitle: TextView
-    private lateinit var btnAppServerPill: TextView
-    private lateinit var btnAppQualityPill: TextView
-    private lateinit var btnAppSubtitlesCc: ImageView
-    private lateinit var btnAppPipIcon: ImageView
-    private lateinit var btnAppRewind15: FrameLayout
-    private lateinit var vAppRewindCircle: View
-    private lateinit var btnAppPlayPauseSlot: FrameLayout
-    private lateinit var vAppPlayPauseCircle: View
-    private lateinit var ivAppCenterPlayPause: ImageView
-    private lateinit var pbAppCenterBuffering: ProgressBar
-    private lateinit var btnAppForward15: FrameLayout
-    private lateinit var vAppForwardCircle: View
-    private lateinit var tvAppElapsed: TextView
-    private lateinit var sbAppRedSeekBar: SeekBar
-    private lateinit var tvAppDuration: TextView
-    private lateinit var btnAppFullscreenToggle: ImageView
-    private lateinit var tvAppSubtitleOverlay: TextView
-    private var isUserSeekingRedBar = false
-    private var progressTickJob: Job? = null
-    private var isFullscreenPlayer = false
-    private var originalPlayerHeightPx = 0
-
     private lateinit var layoutLobbyContainer: LinearLayout
     private lateinit var layoutActiveRoomContainer: LinearLayout
     private lateinit var etJoinByCodeInput: EditText
@@ -227,16 +146,20 @@ class WatchTogetherController(
     private lateinit var mediaPickerAdapter: MediaPickerAdapter
     private lateinit var eventLogsAdapter: EventLogsAdapter
 
-    private val autoHideControlsRunnable = Runnable {
-        if (playerEngine.isPlaying() && !isUserSeekingRedBar) {
-            hideAppPlayerControlsSmoothly()
-        }
-    }
-
     private val syncAndHeartbeatRunnable = object : Runnable {
         override fun run() {
             if (isDestroyed) return
-            performCloudflareRoomSync()
+            val room = currentRoom
+            if (room != null && !streamSniffer.isExtractingNewMovie) {
+                syncClient.performCloudflareRoomSync(
+                    room = room,
+                    isHost = room.hostId == localUserId,
+                    isPlaying = playerEngine.isPlaying(),
+                    currentPosMs = playerEngine.player?.currentPosition ?: 0L,
+                    lastSyncedMessageId = lastSyncedMessageId,
+                    isMicMuted = voiceChatManager?.isMuted() ?: true
+                )
+            }
             updateExpirationCountdownUI()
             mainHandler.postDelayed(this, 4000L)
         }
@@ -246,8 +169,7 @@ class WatchTogetherController(
         initIdentityAndPreferences()
         bindViews()
         eliminateBottomEmptySpace()
-        initializePrimePlayerEngine()
-        buildIdenticalAppPlayerOverlayUI()
+        initSubModules()
         setupRecyclerViews()
         setupLobbyListeners()
         setupRoomListeners()
@@ -267,12 +189,6 @@ class WatchTogetherController(
 
         val prefs = hostContext.getSharedPreferences("watch_together_prefs", Context.MODE_PRIVATE)
         blockedUserIds.addAll(prefs.getStringSet("blocked_users", emptySet()) ?: emptySet())
-
-        val subPrefs = hostContext.getSharedPreferences("prime_sub_style_prefs", Context.MODE_PRIVATE)
-        subtitleTextSizeSp = subPrefs.getFloat("sub_size_sp", 16f).coerceIn(12f, 26f)
-        subtitleTextColor = subPrefs.getInt("sub_text_color", Color.WHITE)
-        subtitleBgAlpha = subPrefs.getInt("sub_bg_alpha", 0)
-        subtitleExtraLiftDp = subPrefs.getInt("sub_extra_lift_dp", 0).coerceIn(-10, 90)
     }
 
     private fun bindViews() {
@@ -343,457 +259,148 @@ class WatchTogetherController(
         rvRoomEventLogs = rootView.findViewById(R.id.rvRoomEventLogs)
     }
 
-   private fun initializePrimePlayerEngine() {
+    private fun initSubModules() {
+        dialogsManager = WatchRoomDialogs(hostContext, httpClient, controllerScope)
+        subtitleManager = WatchRoomSubtitleManager(hostContext, httpClient, controllerScope)
+
+        syncClient = WatchRoomSyncClient(
+            httpClient = httpClient,
+            scope = controllerScope,
+            workerBaseUrl = workerBaseUrl,
+            localUserId = localUserId,
+            localUserName = localUserName,
+            authToken = authToken,
+            blockedUserIds = blockedUserIds,
+            onChatMessageReceived = { msg -> appendChatMessage(msg) },
+            onEmojiReceived = { emoji -> spawnFloatingEmoji(emoji) },
+            onSyncResultReceived = { res -> applyServerSyncResult(res) }
+        )
+
+        streamSniffer = WatchRoomStreamSniffer(
+            hostContext = hostContext,
+            rootView = rootView,
+            scope = controllerScope,
+            onStatusUpdate = { statusText ->
+                if (this::playerUI.isInitialized) {
+                    playerUI.updateServerPillText(statusText)
+                }
+            },
+            onBufferingChanged = { isBuffering ->
+                if (this::playerUI.isInitialized) playerUI.setBuffering(isBuffering)
+            },
+            onStreamResolved = { source, title, isMovie ->
+                applyResolvedStreamSourceToRoom(source, title, isMovie)
+            }
+        )
+
         playerEngine = PrimePlayerEngine(
             context = hostContext,
             scope = controllerScope,
             onSourceSwitched = { _, src ->
                 mainHandler.post {
-                    val srvLabel = src.label.ifBlank { "REYZO ${currentProviderIndex + 1}" }
+                    val srvLabel = src.label.ifBlank { "REYZO ${streamSniffer.currentProviderIndex + 1}" }
                     currentRoom?.streamServerLabel = srvLabel
                     currentRoom?.streamUrl = src.url
                     currentRoom?.streamReferer = src.referer
                     currentRoom?.streamOrigin = src.origin
-                    if (this::btnAppServerPill.isInitialized) {
-                        btnAppServerPill.text = "  $srvLabel"
+                    if (this::playerUI.isInitialized) {
+                        playerUI.updateServerPillText("  $srvLabel")
                     }
                 }
             },
             onRealQualityDetected = { qualityLabel, _ ->
                 mainHandler.post {
-                    if (this::btnAppQualityPill.isInitialized && selectedQualityHeight == null) {
-                        btnAppQualityPill.text = "  $qualityLabel"
+                    if (this::playerUI.isInitialized && playerUI.selectedQualityHeight == null) {
+                        playerUI.updateQualityPillText("  $qualityLabel")
                     }
                 }
             },
             onFirstFrameRendered = {
                 mainHandler.post {
-                    setAppPlayerBuffering(false)
-                    updateAppPlayPauseIcon(true)
-                    scheduleAutoHideControls()
+                    playerUI.setBuffering(false)
+                    playerUI.updatePlayPauseIcon(true)
+                    playerUI.scheduleAutoHideControls()
                 }
             },
             onPlaybackExhausted = {
                 mainHandler.post {
-                    val nextIdx = currentProviderTargets.indices.firstOrNull { it !in triedProviderIndices }
+                    val nextIdx = streamSniffer.currentProviderTargets.indices.firstOrNull { it !in streamSniffer.triedProviderIndices }
                     if (nextIdx != null) {
-                        loadProviderInHeadlessSniffer(nextIdx)
+                        streamSniffer.loadProviderInHeadlessSniffer(nextIdx, currentRoom?.streamTitle ?: "")
                     } else {
-                        isExtractingNewMovie = false
-                        setAppPlayerBuffering(false)
+                        streamSniffer.isExtractingNewMovie = false
+                        playerUI.setBuffering(false)
                     }
                 }
             }
         )
-    }
 
-    @SuppressLint("ClickableViewAccessibility")
-    private fun buildIdenticalAppPlayerOverlayUI() {
-        tvAppSubtitleOverlay = TextView(hostContext).apply {
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 4), WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 4))
-            visibility = View.GONE
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            ).apply {
-                setMargins(WatchRoomUtils.dp(hostContext, 20), 0, WatchRoomUtils.dp(hostContext, 20), WatchRoomUtils.dp(hostContext, 16))
-            }
-        }
-        applySubtitleStyleToOverlay()
-        playerFrameContainer.addView(tvAppSubtitleOverlay)
-
-        appCustomControlsOverlay = FrameLayout(hostContext).apply {
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.parseColor("#B3000000"), Color.parseColor("#33000000"), Color.parseColor("#CC000000"))
-            )
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
-
-        val topBarRow = LinearLayout(hostContext).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 6))
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP)
-        }
-
-        tvAppPlayerTitle = TextView(hostContext).apply {
-            text = "Prime Player"
-            setTextColor(Color.WHITE)
-            textSize = 13.5f
-            setTypeface(typeface, Typeface.BOLD)
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = WatchRoomUtils.dp(hostContext, 8) }
-        }
-        topBarRow.addView(tvAppPlayerTitle)
-
-        val makeGlassChip = { radiusDp: Float ->
-            GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = WatchRoomUtils.dpF(hostContext, radiusDp)
-                setColor(Color.parseColor("#2EFFFFFF"))
-                setStroke(max(1, WatchRoomUtils.dpF(hostContext, 0.85f).toInt()), Color.parseColor("#4DFFFFFF"))
-            }
-        }
-
-        btnAppServerPill = TextView(hostContext).apply {
-            text = "  REYZO 1"
-            setTextColor(Color.WHITE)
-            textSize = 11.5f
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER_VERTICAL
-            background = makeGlassChip(10f)
-            setPadding(WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 5), WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 5))
-            val srvIcon = VectorIcons.createSmallServerStackIcon(hostContext, Color.WHITE).apply { setBounds(0, 0, intrinsicWidth, intrinsicHeight) }
-            setCompoundDrawables(srvIcon, null, null, null)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, WatchRoomUtils.dp(hostContext, 32)).apply { marginEnd = WatchRoomUtils.dp(hostContext, 6) }
-            setOnClickListener { resetAutoHideControls(); showAppServersPopup() }
-        }
-        topBarRow.addView(btnAppServerPill)
-
-        btnAppQualityPill = TextView(hostContext).apply {
-            text = " 1080p"
-            setTextColor(Color.WHITE)
-            textSize = 11.5f
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            background = makeGlassChip(10f)
-            setPadding(WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 5), WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 5))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, WatchRoomUtils.dp(hostContext, 32)).apply { marginEnd = WatchRoomUtils.dp(hostContext, 6) }
-            setOnClickListener { resetAutoHideControls(); showAppQualityPopup() }
-        }
-        topBarRow.addView(btnAppQualityPill)
-
-        btnAppSubtitlesCc = ImageView(hostContext).apply {
-            background = makeGlassChip(10f)
-            setPadding(WatchRoomUtils.dp(hostContext, 7), WatchRoomUtils.dp(hostContext, 7), WatchRoomUtils.dp(hostContext, 7), WatchRoomUtils.dp(hostContext, 7))
-            setImageDrawable(VectorIcons.createSubtitlesCcIcon(hostContext, Color.WHITE))
-            layoutParams = LinearLayout.LayoutParams(WatchRoomUtils.dp(hostContext, 32), WatchRoomUtils.dp(hostContext, 32)).apply { marginEnd = WatchRoomUtils.dp(hostContext, 6) }
-            setOnClickListener { resetAutoHideControls(); showAppSubtitlesDialog() }
-        }
-        topBarRow.addView(btnAppSubtitlesCc)
-
-        btnAppPipIcon = ImageView(hostContext).apply {
-            background = makeGlassChip(10f)
-            setPadding(WatchRoomUtils.dp(hostContext, 7), WatchRoomUtils.dp(hostContext, 7), WatchRoomUtils.dp(hostContext, 7), WatchRoomUtils.dp(hostContext, 7))
-            setImageDrawable(VectorIcons.createPipMiniPlayerIcon(hostContext, Color.WHITE))
-            layoutParams = LinearLayout.LayoutParams(WatchRoomUtils.dp(hostContext, 32), WatchRoomUtils.dp(hostContext, 32))
-            setOnClickListener {
-                currentResizeModeIndex = (currentResizeModeIndex + 1) % 3
-                watchPlayerView.resizeMode = when (currentResizeModeIndex) {
-                    1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                    2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                }
-                Toast.makeText(hostContext, "📐 تم تغيير أبعاد الشاشة", Toast.LENGTH_SHORT).show()
-            }
-        }
-        topBarRow.addView(btnAppPipIcon)
-        appCustomControlsOverlay.addView(topBarRow)
-
-        val centerRow = LinearLayout(hostContext).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER)
-        }
-
-        val makeRedTouchCircle = {
-            View(hostContext).apply {
-                background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(ColorUtils.setAlphaComponent(Color.parseColor("#E50914"), 195))
-                }
-                alpha = 0f
-                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-            }
-        }
-
-        btnAppRewind15 = FrameLayout(hostContext).apply { layoutParams = LinearLayout.LayoutParams(WatchRoomUtils.dp(hostContext, 52), WatchRoomUtils.dp(hostContext, 52)).apply { marginEnd = WatchRoomUtils.dp(hostContext, 28) } }
-        vAppRewindCircle = makeRedTouchCircle()
-        val ivRewind = ImageView(hostContext).apply {
-            setImageDrawable(VectorIcons.createCircularSeekArrowIcon(hostContext, isForward = false))
-            setPadding(WatchRoomUtils.dp(hostContext, 8), WatchRoomUtils.dp(hostContext, 8), WatchRoomUtils.dp(hostContext, 8), WatchRoomUtils.dp(hostContext, 8))
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
-        btnAppRewind15.addView(vAppRewindCircle); btnAppRewind15.addView(ivRewind)
-        btnAppRewind15.setOnClickListener { pulseCircleFeedback(vAppRewindCircle); seekRoomPlayerByDeltaMs(-15_000L) }
-        centerRow.addView(btnAppRewind15)
-
-        btnAppPlayPauseSlot = FrameLayout(hostContext).apply { layoutParams = LinearLayout.LayoutParams(WatchRoomUtils.dp(hostContext, 64), WatchRoomUtils.dp(hostContext, 64)) }
-        vAppPlayPauseCircle = makeRedTouchCircle()
-        ivAppCenterPlayPause = ImageView(hostContext).apply {
-            setImageDrawable(VectorIcons.createPlayPauseIcon(hostContext, isPlaying = true))
-            setPadding(WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 10))
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
-        pbAppCenterBuffering = ProgressBar(hostContext).apply {
-            indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#E50914"))
-            visibility = View.GONE
-            layoutParams = FrameLayout.LayoutParams(WatchRoomUtils.dp(hostContext, 46), WatchRoomUtils.dp(hostContext, 46), Gravity.CENTER)
-        }
-        btnAppPlayPauseSlot.addView(vAppPlayPauseCircle); btnAppPlayPauseSlot.addView(ivAppCenterPlayPause); btnAppPlayPauseSlot.addView(pbAppCenterBuffering)
-        btnAppPlayPauseSlot.setOnClickListener { pulseCircleFeedback(vAppPlayPauseCircle); toggleSyncPlayPauseAction() }
-        centerRow.addView(btnAppPlayPauseSlot)
-
-        btnAppForward15 = FrameLayout(hostContext).apply { layoutParams = LinearLayout.LayoutParams(WatchRoomUtils.dp(hostContext, 52), WatchRoomUtils.dp(hostContext, 52)).apply { marginStart = WatchRoomUtils.dp(hostContext, 28) } }
-        vAppForwardCircle = makeRedTouchCircle()
-        val ivForward = ImageView(hostContext).apply {
-            setImageDrawable(VectorIcons.createCircularSeekArrowIcon(hostContext, isForward = true))
-            setPadding(WatchRoomUtils.dp(hostContext, 8), WatchRoomUtils.dp(hostContext, 8), WatchRoomUtils.dp(hostContext, 8), WatchRoomUtils.dp(hostContext, 8))
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        }
-        btnAppForward15.addView(vAppForwardCircle); btnAppForward15.addView(ivForward)
-        btnAppForward15.setOnClickListener { pulseCircleFeedback(vAppForwardCircle); seekRoomPlayerByDeltaMs(15_000L) }
-        centerRow.addView(btnAppForward15)
-
-        appCustomControlsOverlay.addView(centerRow)
-
-        val bottomSeekRow = LinearLayout(hostContext).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 4), WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 8))
-            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM)
-        }
-
-        tvAppElapsed = TextView(hostContext).apply {
-            text = "00:00"
-            setTextColor(Color.WHITE)
-            textSize = 11.5f
-            setTypeface(typeface, Typeface.BOLD)
-        }
-        bottomSeekRow.addView(tvAppElapsed)
-
-        sbAppRedSeekBar = SeekBar(hostContext).apply {
-            max = 1000
-            progress = 0
-            progressTintList = ColorStateList.valueOf(Color.parseColor("#E50914"))
-            thumbTintList = ColorStateList.valueOf(Color.parseColor("#E50914"))
-            secondaryProgressTintList = ColorStateList.valueOf(Color.parseColor("#66FFFFFF"))
-            progressBackgroundTintList = ColorStateList.valueOf(Color.parseColor("#3DFFFFFF"))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = WatchRoomUtils.dp(hostContext, 6); marginEnd = WatchRoomUtils.dp(hostContext, 6) }
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
-                    if (fromUser) {
-                        resetAutoHideControls()
-                        val dur = playerEngine.player?.duration ?: 0L
-                        if (dur > 0) tvAppElapsed.text = WatchRoomUtils.formatTimeMs((dur * p) / 1000L)
+        playerUI = WatchRoomPlayerUI(
+            hostContext = hostContext,
+            rootView = rootView,
+            hostActivity = hostActivity,
+            watchPlayerView = watchPlayerView,
+            playerFrameContainer = playerFrameContainer,
+            playerEngine = playerEngine,
+            subtitleManager = subtitleManager,
+            scope = controllerScope,
+            onTogglePlayPause = { toggleSyncPlayPauseAction() },
+            onSeekByDeltaMs = { deltaMs -> seekRoomPlayerByDeltaMs(deltaMs) },
+            onSeekToExactMs = { targetPos ->
+                val room = currentRoom
+                val exo = playerEngine.player
+                if (room != null && exo != null) {
+                    if (room.hostId == localUserId) {
+                        exo.seekTo(targetPos)
+                        room.playbackPositionMs = targetPos
+                        triggerPlaybackSyncBroadcast()
+                    } else {
+                        Toast.makeText(hostContext, "⚠️ تقديم الفيديو متاح للمضيف فقط", Toast.LENGTH_SHORT).show()
                     }
                 }
-                override fun onStartTrackingTouch(s: SeekBar?) {
-                    isUserSeekingRedBar = true
-                    appCustomControlsOverlay.removeCallbacks(autoHideControlsRunnable)
-                }
-                override fun onStopTrackingTouch(s: SeekBar?) {
-                    isUserSeekingRedBar = false
-                    val room = currentRoom
-                    val exo = playerEngine.player
-                    if (room != null && exo != null && exo.duration > 0) {
-                        if (room.hostId == localUserId) {
-                            val targetPos = (exo.duration * (s?.progress ?: 0)) / 1000L
-                            exo.seekTo(targetPos)
-                            room.playbackPositionMs = targetPos
-                            broadcastPlaybackSync()
-                        } else {
-                            Toast.makeText(hostContext, "⚠️ تقديم الفيديو متاح للمضيف فقط", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                    resetAutoHideControls()
-                }
-            })
-        }
-        bottomSeekRow.addView(sbAppRedSeekBar)
-
-        tvAppDuration = TextView(hostContext).apply {
-            text = "00:00"
-            setTextColor(Color.parseColor("#D0D7E2"))
-            textSize = 11.5f
-            setTypeface(typeface, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = WatchRoomUtils.dp(hostContext, 10) }
-        }
-        bottomSeekRow.addView(tvAppDuration)
-
-        btnAppFullscreenToggle = ImageView(hostContext).apply {
-            setImageDrawable(VectorIcons.createFullscreenIcon(hostContext, isFullscreen = false))
-            setPadding(WatchRoomUtils.dp(hostContext, 4), WatchRoomUtils.dp(hostContext, 4), WatchRoomUtils.dp(hostContext, 4), WatchRoomUtils.dp(hostContext, 4))
-            layoutParams = LinearLayout.LayoutParams(WatchRoomUtils.dp(hostContext, 26), WatchRoomUtils.dp(hostContext, 26))
-            setOnClickListener { toggleAppPlayerFullscreen(!isFullscreenPlayer) }
-        }
-        bottomSeekRow.addView(btnAppFullscreenToggle)
-
-        appCustomControlsOverlay.addView(bottomSeekRow)
-        playerFrameContainer.addView(appCustomControlsOverlay)
-
-        val gestureDetector = GestureDetector(hostContext, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                if (appCustomControlsOverlay.isVisible && appCustomControlsOverlay.alpha > 0.5f) {
-                    hideAppPlayerControlsSmoothly()
-                } else {
-                    showAppPlayerControlsWithFade()
-                }
-                return true
+            },
+            onServerSelected = { idx, srv -> switchServerInRoom(idx, srv) },
+            getProviderTargets = { streamSniffer.currentProviderTargets },
+            getCurrentProviderIndex = { streamSniffer.currentProviderIndex },
+            getCurrentStreamId = { currentRoom?.streamId ?: "" },
+            onPlayStateTextUpdate = { isPlaying ->
+                btnSyncPlayPause.text = if (isPlaying) "⏸️ إيقاف مؤقت" else "▶️ تشغيل متزامن"
             }
-
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                val w = playerFrameContainer.width.coerceAtLeast(1)
-                if (e.x < w * 0.48f) {
-                    pulseCircleFeedback(vAppRewindCircle)
-                    seekRoomPlayerByDeltaMs(-15_000L)
-                } else {
-                    pulseCircleFeedback(vAppForwardCircle)
-                    seekRoomPlayerByDeltaMs(15_000L)
-                }
-                return true
-            }
-        })
-
-        val touchListener = View.OnTouchListener { _, ev ->
-            gestureDetector.onTouchEvent(ev)
-            true
-        }
-        watchPlayerView.setOnTouchListener(touchListener)
-        appCustomControlsOverlay.setOnTouchListener(touchListener)
-
-        startAppPlayerProgressAndSubtitleLoop()
-    }
-
-    private fun startAppPlayerProgressAndSubtitleLoop() {
-        progressTickJob?.cancel()
-        progressTickJob = controllerScope.launch {
-            while (isActive && !isDestroyed) {
-                delay(300)
-                val p = playerEngine.player ?: continue
-
-                updateAppPlayPauseIcon(p.isPlaying)
-                if (p.playbackState == Player.STATE_BUFFERING) {
-                    setAppPlayerBuffering(true)
-                } else if (p.playbackState == Player.STATE_READY) {
-                    setAppPlayerBuffering(false)
-                }
-
-                val pos = p.currentPosition.coerceAtLeast(0L)
-                val dur = p.duration
-
-                if (dur > 0 && !isUserSeekingRedBar) {
-                    sbAppRedSeekBar.progress = ((pos * 1000L) / dur).toInt().coerceIn(0, 1000)
-                    sbAppRedSeekBar.secondaryProgress = (p.bufferedPercentage * 10).coerceIn(0, 1000)
-                    tvAppElapsed.text = WatchRoomUtils.formatTimeMs(pos)
-                    tvAppDuration.text = WatchRoomUtils.formatTimeMs(dur)
-                }
-
-                if (selectedSubtitleId != "NONE" && activeSubtitleCues.isNotEmpty() && p.isPlaying) {
-                    val syncedPos = (pos - subtitleOffsetMs).coerceAtLeast(0L)
-                    val cue = activeSubtitleCues.firstOrNull { syncedPos in it.startMs..it.endMs }
-                    if (cue != null) {
-                        val cleanCueText = WatchRoomUtils.cleanAssAndHtmlTags(cue.text)
-                        if (tvAppSubtitleOverlay.text.toString() != cleanCueText) {
-                            tvAppSubtitleOverlay.text = cleanCueText
-                        }
-                        if (!tvAppSubtitleOverlay.isVisible) tvAppSubtitleOverlay.visibility = View.VISIBLE
-                    } else if (tvAppSubtitleOverlay.isVisible) {
-                        tvAppSubtitleOverlay.text = ""
-                        tvAppSubtitleOverlay.visibility = View.GONE
-                    }
-                } else if (selectedSubtitleId == "NONE" && tvAppSubtitleOverlay.isVisible) {
-                    tvAppSubtitleOverlay.visibility = View.GONE
-                }
-            }
-        }
-    }
-
-    private fun setAppPlayerBuffering(buffering: Boolean) {
-        if (!this::pbAppCenterBuffering.isInitialized) return
-        if (buffering) {
-            ivAppCenterPlayPause.visibility = View.INVISIBLE
-            pbAppCenterBuffering.visibility = View.VISIBLE
-        } else {
-            pbAppCenterBuffering.visibility = View.GONE
-            ivAppCenterPlayPause.visibility = View.VISIBLE
-        }
-    }
-
-    private fun updateAppPlayPauseIcon(isPlaying: Boolean) {
-        if (!this::ivAppCenterPlayPause.isInitialized) return
-        ivAppCenterPlayPause.setImageDrawable(
-            VectorIcons.createPlayPauseIcon(hostContext, isPlaying = isPlaying)
         )
-        btnSyncPlayPause.text = if (isPlaying) "⏸️ إيقاف مؤقت" else "▶️ تشغيل متزامن"
+        playerUI.buildOverlayUI()
     }
 
-    private fun applySubtitleStyleToOverlay() {
-        if (!this::tvAppSubtitleOverlay.isInitialized) return
-        tvAppSubtitleOverlay.setTextSize(TypedValue.COMPLEX_UNIT_SP, subtitleTextSizeSp)
-        tvAppSubtitleOverlay.setTextColor(subtitleTextColor)
-        if (subtitleBgAlpha <= 10) {
-            tvAppSubtitleOverlay.background = null
-            tvAppSubtitleOverlay.setShadowLayer(12f, 0f, 3.5f, Color.BLACK)
+    private fun triggerPlaybackSyncBroadcast() {
+        val room = currentRoom ?: return
+        if (streamSniffer.isExtractingNewMovie || room.streamUrl.isBlank()) return
+        statSyncCount++
+        val player = playerEngine.player
+        syncClient.broadcastPlaybackSync(
+            room = room,
+            isPlaying = player?.isPlaying ?: room.isPlaying,
+            currentPosMs = player?.currentPosition ?: room.playbackPositionMs,
+            lastSyncedMessageId = lastSyncedMessageId,
+            isMicMuted = voiceChatManager?.isMuted() ?: true
+        )
+        updateDetailedStatsUI()
+    }
+
+    private fun switchServerInRoom(index: Int, target: StreamSource) {
+        val room = currentRoom ?: return
+        if (room.hostId != localUserId) {
+            Toast.makeText(hostContext, "⚠️ تغيير السيرفر متاح للمضيف فقط", Toast.LENGTH_SHORT).show()
+            return
+        }
+        streamSniffer.currentProviderIndex = index
+        playerUI.selectedQualityHeight = null
+        playerUI.updateServerPillText("  ${target.label.ifBlank { "REYZO ${index + 1}" }}")
+        playerUI.setBuffering(true)
+
+        if (target.isDirectStream || streamSniffer.isLikelyDirectStreamUrl(target.url)) {
+            playStreamSourceInEngine(target, room.streamTitle, seekMs = playerEngine.player?.currentPosition ?: 0L)
+            triggerPlaybackSyncBroadcast()
         } else {
-            tvAppSubtitleOverlay.setShadowLayer(6f, 0f, 2f, Color.BLACK)
-            tvAppSubtitleOverlay.background = WatchRoomUtils.makeRoundedBg(
-                hostContext,
-                ColorUtils.setAlphaComponent(Color.parseColor("#0B0D13"), subtitleBgAlpha),
-                8f
-            )
-        }
-    }
-
-    private fun pulseCircleFeedback(circleView: View) {
-        circleView.animate().cancel()
-        circleView.alpha = 0.95f
-        circleView.scaleX = 0.78f
-        circleView.scaleY = 0.78f
-        circleView.animate()
-            .scaleX(1.08f)
-            .scaleY(1.08f)
-            .alpha(0f)
-            .setDuration(300L)
-            .setInterpolator(DecelerateInterpolator())
-            .start()
-    }
-
-    private fun showAppPlayerControlsWithFade() {
-        appCustomControlsOverlay.removeCallbacks(autoHideControlsRunnable)
-        appCustomControlsOverlay.animate().cancel()
-        if (!appCustomControlsOverlay.isVisible) {
-            appCustomControlsOverlay.alpha = 0f
-            appCustomControlsOverlay.visibility = View.VISIBLE
-        }
-        appCustomControlsOverlay.animate().alpha(1f).setDuration(200L).start()
-        scheduleAutoHideControls()
-    }
-
-    private fun hideAppPlayerControlsSmoothly() {
-        appCustomControlsOverlay.removeCallbacks(autoHideControlsRunnable)
-        if (!appCustomControlsOverlay.isVisible) return
-        appCustomControlsOverlay.animate().cancel()
-        appCustomControlsOverlay.animate()
-            .alpha(0f)
-            .setDuration(200L)
-            .withEndAction {
-                appCustomControlsOverlay.visibility = View.GONE
-                appCustomControlsOverlay.alpha = 1f
-            }
-            .start()
-    }
-
-    private fun resetAutoHideControls() {
-        appCustomControlsOverlay.removeCallbacks(autoHideControlsRunnable)
-        if (!appCustomControlsOverlay.isVisible || appCustomControlsOverlay.alpha < 0.9f) {
-            showAppPlayerControlsWithFade()
-        } else {
-            scheduleAutoHideControls()
-        }
-    }
-
-    private fun scheduleAutoHideControls() {
-        appCustomControlsOverlay.removeCallbacks(autoHideControlsRunnable)
-        if (playerEngine.isPlaying() && !isUserSeekingRedBar) {
-            appCustomControlsOverlay.postDelayed(autoHideControlsRunnable, 3400L)
+            streamSniffer.loadProviderInHeadlessSniffer(index, room.streamTitle)
         }
     }
 
@@ -809,467 +416,9 @@ class WatchTogetherController(
         val newPos = if (dur > 0) min(target, dur) else target
         exo.seekTo(newPos)
         room.playbackPositionMs = newPos
-        if (dur > 0) {
-            sbAppRedSeekBar.progress = ((newPos * 1000L) / dur).toInt().coerceIn(0, 1000)
-            tvAppElapsed.text = WatchRoomUtils.formatTimeMs(newPos)
-        }
-        broadcastPlaybackSync()
-        resetAutoHideControls()
-    }
-
-    private fun toggleAppPlayerFullscreen(enterFullscreen: Boolean) {
-        val act = hostActivity ?: return
-        isFullscreenPlayer = enterFullscreen
-        btnAppFullscreenToggle.setImageDrawable(
-            VectorIcons.createFullscreenIcon(hostContext, isFullscreen = enterFullscreen)
-        )
-
-        val lp = playerFrameContainer.layoutParams
-        if (lp != null && originalPlayerHeightPx == 0 && lp.height > 0) {
-            originalPlayerHeightPx = lp.height
-        }
-
-        if (enterFullscreen) {
-            act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-            WindowCompat.setDecorFitsSystemWindows(act.window, false)
-            WindowInsetsControllerCompat(act.window, rootView).hide(WindowInsetsCompat.Type.systemBars())
-            if (lp != null) {
-                lp.height = ViewGroup.LayoutParams.MATCH_PARENT
-                playerFrameContainer.layoutParams = lp
-            }
-        } else {
-            act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-            WindowCompat.setDecorFitsSystemWindows(act.window, true)
-            WindowInsetsControllerCompat(act.window, rootView).show(WindowInsetsCompat.Type.systemBars())
-            if (lp != null) {
-                lp.height = if (originalPlayerHeightPx > 0) originalPlayerHeightPx else WatchRoomUtils.dp(hostContext, 225)
-                playerFrameContainer.layoutParams = lp
-            }
-        }
-    }
-
-    private fun showAppServersPopup() {
-        val providers = if (currentProviderTargets.isNotEmpty()) {
-            currentProviderTargets
-        } else {
-            playerEngine.getSources()
-        }
-        if (providers.isEmpty()) {
-            Toast.makeText(hostContext, "السيرفر الحالي شغال", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val dialog = Dialog(hostContext)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-
-        val widthPx = WatchRoomUtils.dp(hostContext, 275)
-        val card = LinearLayout(hostContext).apply {
-            orientation = LinearLayout.VERTICAL
-            background = WatchRoomUtils.makeRoundedBg(hostContext, Color.parseColor("#EE10131A"), 18f, Color.parseColor("#33FFFFFF"), 1f)
-            setPadding(WatchRoomUtils.dp(hostContext, 18), WatchRoomUtils.dp(hostContext, 16), WatchRoomUtils.dp(hostContext, 18), WatchRoomUtils.dp(hostContext, 14))
-            layoutParams = ViewGroup.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-
-        val header = TextView(hostContext).apply {
-            text = "Servers"
-            setTextColor(Color.WHITE)
-            textSize = 15f
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(WatchRoomUtils.dp(hostContext, 4), 0, WatchRoomUtils.dp(hostContext, 4), WatchRoomUtils.dp(hostContext, 10))
-        }
-        card.addView(header)
-
-        val scroll = ScrollView(hostContext)
-        val listCol = LinearLayout(hostContext).apply { orientation = LinearLayout.VERTICAL }
-        scroll.addView(listCol)
-        card.addView(scroll)
-
-        providers.forEachIndexed { idx, srv ->
-            val isSel = idx == currentProviderIndex
-            val row = LinearLayout(hostContext).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                background = if (isSel) WatchRoomUtils.makeRoundedBg(hostContext, Color.parseColor("#26FFFFFF"), 10f, Color.parseColor("#55FFFFFF"), 1f) else null
-                setPadding(WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 10))
-                setOnClickListener {
-                    dialog.dismiss()
-                    switchServerInRoom(idx, srv)
-                }
-            }
-            val nameTv = TextView(hostContext).apply {
-                text = srv.label.ifBlank { "REYZO ${idx + 1}" }
-                setTextColor(if (isSel) Color.WHITE else Color.parseColor("#CBD5E1"))
-                textSize = 13.5f
-                setTypeface(typeface, Typeface.BOLD)
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            }
-            row.addView(nameTv)
-            if (isSel) {
-                val ivCheck = ImageView(hostContext).apply {
-                    setImageDrawable(VectorIcons.createCheckMarkIcon(hostContext, Color.WHITE))
-                    layoutParams = LinearLayout.LayoutParams(WatchRoomUtils.dp(hostContext, 16), WatchRoomUtils.dp(hostContext, 16))
-                }
-                row.addView(ivCheck)
-            }
-            listCol.addView(row)
-        }
-
-        dialog.setContentView(card)
-        dialog.show()
-        dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
-    }
-
-    private fun switchServerInRoom(index: Int, target: StreamSource) {
-        val room = currentRoom ?: return
-        if (room.hostId != localUserId) {
-            Toast.makeText(hostContext, "⚠️ تغيير السيرفر متاح للمضيف فقط", Toast.LENGTH_SHORT).show()
-            return
-        }
-        currentProviderIndex = index
-        selectedQualityHeight = null
-        btnAppServerPill.text = "  ${target.label.ifBlank { "REYZO ${index + 1}" }}"
-        setAppPlayerBuffering(true)
-
-        if (target.isDirectStream || isLikelyDirectStreamUrl(target.url)) {
-            playStreamSourceInEngine(target, room.streamTitle, seekMs = playerEngine.player?.currentPosition ?: 0L)
-            broadcastPlaybackSync()
-        } else {
-            loadProviderInHeadlessSniffer(index)
-        }
-    }
-
-    private fun showAppQualityPopup() {
-        val dialog = Dialog(hostContext)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-
-        val widthPx = WatchRoomUtils.dp(hostContext, 260)
-        val card = LinearLayout(hostContext).apply {
-            orientation = LinearLayout.VERTICAL
-            background = WatchRoomUtils.makeRoundedBg(hostContext, Color.parseColor("#EE10131A"), 18f, Color.parseColor("#33FFFFFF"), 1f)
-            setPadding(WatchRoomUtils.dp(hostContext, 18), WatchRoomUtils.dp(hostContext, 16), WatchRoomUtils.dp(hostContext, 18), WatchRoomUtils.dp(hostContext, 14))
-            layoutParams = ViewGroup.LayoutParams(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-
-        val header = TextView(hostContext).apply {
-            text = "Quality"
-            setTextColor(Color.WHITE)
-            textSize = 15f
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(WatchRoomUtils.dp(hostContext, 4), 0, WatchRoomUtils.dp(hostContext, 4), WatchRoomUtils.dp(hostContext, 10))
-        }
-        card.addView(header)
-
-        val realQualities = playerEngine.getAvailableQualityTracks()
-        val detectedBadge = playerEngine.getCurrentDetectedQualityLabel()
-
-        val isAutoSelected = selectedQualityHeight == null
-        val autoRow = TextView(hostContext).apply {
-            text = "Auto ($detectedBadge)"
-            setTextColor(if (isAutoSelected) Color.WHITE else Color.parseColor("#CBD5E1"))
-            textSize = 13.5f
-            setTypeface(typeface, Typeface.BOLD)
-            background = if (isAutoSelected) WatchRoomUtils.makeRoundedBg(hostContext, Color.parseColor("#26FFFFFF"), 10f, Color.parseColor("#55FFFFFF"), 1f) else null
-            setPadding(WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 10))
-            setOnClickListener {
-                selectedQualityHeight = null
-                playerEngine.selectVideoQualityHeight(null)
-                btnAppQualityPill.text = "  $detectedBadge"
-                dialog.dismiss()
-            }
-        }
-        card.addView(autoRow)
-
-        realQualities.forEach { qTrack ->
-            val qLabel = when {
-                qTrack.height >= 2160 -> "4K Ultra HD (2160p)"
-                qTrack.height >= 1080 -> "Full HD (1080p)"
-                qTrack.height >= 720 -> "HD (720p)"
-                qTrack.height >= 480 -> "SD (480p)"
-                else -> "${qTrack.height}p"
-            }
-            val isSel = selectedQualityHeight == qTrack.height
-            val row = TextView(hostContext).apply {
-                text = qLabel
-                setTextColor(if (isSel) Color.WHITE else Color.parseColor("#CBD5E1"))
-                textSize = 13.5f
-                setTypeface(typeface, Typeface.BOLD)
-                background = if (isSel) WatchRoomUtils.makeRoundedBg(hostContext, Color.parseColor("#26FFFFFF"), 10f, Color.parseColor("#55FFFFFF"), 1f) else null
-                setPadding(WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 10))
-                setOnClickListener {
-                    selectedQualityHeight = qTrack.height
-                    playerEngine.selectVideoQualityHeight(qTrack.height)
-                    btnAppQualityPill.text = "  ${qTrack.height}p"
-                    dialog.dismiss()
-                }
-            }
-            card.addView(row)
-        }
-
-        dialog.setContentView(card)
-        dialog.show()
-        dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
-    }
-
-    private fun showAppSubtitlesDialog() {
-        val dialog = Dialog(hostContext)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-
-        val screenW = hostContext.resources.displayMetrics.widthPixels
-        val dialogWidthPx = min((screenW * 0.88f).toInt(), WatchRoomUtils.dp(hostContext, 360))
-
-        val root = LayoutInflater.from(hostContext).inflate(R.layout.dialog_subtitles_sheet, null, false) as LinearLayout
-        root.background = WatchRoomUtils.makeRoundedBg(hostContext, Color.parseColor("#F0101218"), 20f, Color.parseColor("#33FFFFFF"), 1f)
-
-        val tabSwitchBox = root.findViewById<LinearLayout>(R.id.tabSwitchBox)
-        tabSwitchBox.background = WatchRoomUtils.makeRoundedBg(hostContext, Color.parseColor("#14FFFFFF"), 12f, Color.parseColor("#22FFFFFF"), 1f)
-
-        val tabTracksBtn = root.findViewById<TextView>(R.id.tabTracksBtn)
-        val tabSettingsBtn = root.findViewById<TextView>(R.id.tabSettingsBtn)
-        val btnClosePopup = root.findViewById<TextView>(R.id.btnClosePopup)
-        val tracksPanel = root.findViewById<LinearLayout>(R.id.tracksPanel)
-        val settingsPanel = root.findViewById<LinearLayout>(R.id.settingsPanel)
-        val btnDisableSubs = root.findViewById<TextView>(R.id.btnDisableSubs)
-        val btnUploadSrt = root.findViewById<TextView>(R.id.btnUploadSrt)
-        val btnRefreshSubs = root.findViewById<TextView>(R.id.btnRefreshSubs)
-        val filterRow = root.findViewById<LinearLayout>(R.id.filterRow)
-        val tracksContainer = root.findViewById<LinearLayout>(R.id.tracksContainer)
-
-        tabTracksBtn.background = WatchRoomUtils.makeRoundedBg(hostContext, Color.WHITE, 10f)
-        btnClosePopup.background = WatchRoomUtils.makeRoundedBg(hostContext, Color.parseColor("#1FFFFFFF"), 16f)
-        btnClosePopup.setOnClickListener { dialog.dismiss() }
-        btnUploadSrt.visibility = View.GONE
-
-        val isOff = selectedSubtitleId == "NONE"
-        btnDisableSubs.setTextColor(if (isOff) Color.parseColor("#0E1015") else Color.WHITE)
-        btnDisableSubs.background = WatchRoomUtils.makeRoundedBg(
-            hostContext,
-            if (isOff) Color.WHITE else Color.parseColor("#1AFFFFFF"),
-            10f,
-            Color.parseColor("#33FFFFFF"),
-            0.8f
-        )
-        btnDisableSubs.setOnClickListener {
-            selectedSubtitleId = "NONE"
-            tvAppSubtitleOverlay.visibility = View.GONE
-            dialog.dismiss()
-        }
-
-        tabTracksBtn.setOnClickListener {
-            tracksPanel.visibility = View.VISIBLE
-            settingsPanel.visibility = View.GONE
-            tabTracksBtn.background = WatchRoomUtils.makeRoundedBg(hostContext, Color.WHITE, 10f)
-            tabTracksBtn.setTextColor(Color.parseColor("#0E1015"))
-            tabSettingsBtn.background = null
-            tabSettingsBtn.setTextColor(Color.parseColor("#B0BAC9"))
-        }
-        tabSettingsBtn.setOnClickListener {
-            tracksPanel.visibility = View.GONE
-            settingsPanel.visibility = View.VISIBLE
-            tabSettingsBtn.background = WatchRoomUtils.makeRoundedBg(hostContext, Color.WHITE, 10f)
-            tabSettingsBtn.setTextColor(Color.parseColor("#0E1015"))
-            tabTracksBtn.background = null
-            tabTracksBtn.setTextColor(Color.parseColor("#B0BAC9"))
-        }
-
-        fun renderTracksList() {
-            filterRow.removeAllViews()
-            tracksContainer.removeAllViews()
-            if (availableSubtitles.isEmpty()) {
-                val emptyTv = TextView(hostContext).apply {
-                    text = "لا توجد ترجمات خارجية متاحة حالياً"
-                    setTextColor(Color.parseColor("#94A3B8"))
-                    textSize = 12.5f
-                    gravity = Gravity.CENTER
-                    setPadding(WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 24), WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 24))
-                }
-                tracksContainer.addView(emptyTv)
-            } else {
-                availableSubtitles.forEach { track ->
-                    val isSelected = track.id == selectedSubtitleId
-                    val itemLayout = LinearLayout(hostContext).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = Gravity.CENTER_VERTICAL
-                        background = if (isSelected) WatchRoomUtils.makeRoundedBg(hostContext, Color.parseColor("#26FFFFFF"), 10f, Color.parseColor("#55FFFFFF"), 1f) else null
-                        setPadding(WatchRoomUtils.dp(hostContext, 14), WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 14), WatchRoomUtils.dp(hostContext, 10))
-                        setOnClickListener {
-                            selectedSubtitleId = track.id
-                            subtitleOffsetMs = 0L
-                            controllerScope.launch {
-                                val parsed = withContext(Dispatchers.IO) {
-                                    downloadAndParseSubtitleDirect(track.url)
-                                }
-                                if (parsed.isNotEmpty()) {
-                                    activeSubtitleCues = parsed
-                                    tvAppSubtitleOverlay.visibility = View.VISIBLE
-                                }
-                            }
-                            dialog.dismiss()
-                        }
-                    }
-                    val langTv = TextView(hostContext).apply {
-                        text = track.languageLabel.ifBlank { track.languageCode }
-                        setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#D0D7E2"))
-                        textSize = 13.5f
-                        setTypeface(typeface, Typeface.BOLD)
-                        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                    }
-                    itemLayout.addView(langTv)
-                    tracksContainer.addView(itemLayout)
-                }
-            }
-        }
-
-        btnRefreshSubs.setOnClickListener {
-            val tmdbId = activeMovieTmdbId.ifEmpty { currentRoom?.streamId ?: "" }
-            if (tmdbId.isNotEmpty()) {
-                controllerScope.launch {
-                    val subs = withContext(Dispatchers.IO) {
-                        fetchSubtitlesDirectFromApi(tmdbId)
-                    }
-                    availableSubtitles = subs
-                    renderTracksList()
-                }
-            }
-        }
-
-        renderTracksList()
-        if (availableSubtitles.isEmpty()) {
-            btnRefreshSubs.performClick()
-        }
-
-        dialog.setContentView(root)
-        dialog.show()
-        dialog.window?.setLayout(dialogWidthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
-    }
-
-    private fun fetchSubtitlesDirectFromApi(cleanTmdbId: String): List<SubtitleTrack> {
-        val list = mutableListOf<SubtitleTrack>()
-        try {
-            val urlsToTry = listOf(
-                "${SessionManager.CLOUDFLARE_API_URL}/api/v2/subtitles?tmdb_id=$cleanTmdbId&type=movie",
-                "https://sub.wyzie.ru/search?id=$cleanTmdbId"
-            )
-            for (apiUrl in urlsToTry) {
-                val req = Request.Builder().url(apiUrl).header("User-Agent", SessionManager.CUSTOM_USER_AGENT).build()
-                httpClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@use
-                    val bodyStr = resp.body?.string()?.trim() ?: return@use
-                    val arr = if (bodyStr.startsWith("[")) {
-                        org.json.JSONArray(bodyStr)
-                    } else {
-                        JSONObject(bodyStr).optJSONArray("subtitles") ?: org.json.JSONArray()
-                    }
-                    for (i in 0 until arr.length()) {
-                        val o = arr.optJSONObject(i) ?: continue
-                        val subUrl = o.optString("url", "")
-                        if (subUrl.isBlank()) continue
-                        val langCode = o.optString("language", o.optString("lang", "ar"))
-                        val langLabel = o.optString("display", o.optString("label", langCode))
-                        list.add(
-                            SubtitleTrack(
-                                id = o.optString("id", "sub_$i"),
-                                languageCode = langCode,
-                                languageLabel = langLabel,
-                                releaseName = o.optString("release", ""),
-                                url = subUrl
-                            )
-                        )
-                    }
-                }
-                if (list.isNotEmpty()) break
-            }
-        } catch (_: Exception) {}
-        return list
-    }
-
-    private fun downloadAndParseSubtitleDirect(url: String): List<SubtitleCue> {
-        val cues = mutableListOf<SubtitleCue>()
-        try {
-            val req = Request.Builder().url(url).header("User-Agent", SessionManager.CUSTOM_USER_AGENT).build()
-            httpClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return emptyList()
-                val text = resp.body?.string() ?: return emptyList()
-                val lines = text.lines()
-                var i = 0
-                val timeRegex = Regex("""(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{2}:\d{2}[,.]\d{3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,.]\d{3}|\d{2}:\d{2}[,.]\d{3})""")
-                while (i < lines.size) {
-                    val line = lines[i].trim()
-                    val match = timeRegex.find(line)
-                    if (match != null) {
-                        val startMs = parseSubTimeMs(match.groupValues[1])
-                        val endMs = parseSubTimeMs(match.groupValues[2])
-                        i++
-                        val sb = StringBuilder()
-                        while (i < lines.size && lines[i].trim().isNotEmpty()) {
-                            if (sb.isNotEmpty()) sb.append("\n")
-                            sb.append(lines[i].trim())
-                            i++
-                        }
-                        if (sb.isNotEmpty() && endMs > startMs) {
-                            cues.add(SubtitleCue(startMs, endMs, WatchRoomUtils.cleanAssAndHtmlTags(sb.toString())))
-                        }
-                    } else {
-                        i++
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        return cues
-    }
-
-    private fun parseSubTimeMs(raw: String): Long {
-        val norm = raw.trim().replace(',', '.')
-        val parts = norm.split(":")
-        return try {
-            if (parts.size == 3) {
-                val h = parts[0].toLong()
-                val m = parts[1].toLong()
-                val secParts = parts[2].split(".")
-                val s = secParts[0].toLong()
-                val ms = secParts.getOrNull(1)?.padEnd(3, '0')?.take(3)?.toLong() ?: 0L
-                (h * 3600_000L) + (m * 60_000L) + (s * 1000L) + ms
-            } else if (parts.size == 2) {
-                val m = parts[0].toLong()
-                val secParts = parts[1].split(".")
-                val s = secParts[0].toLong()
-                val ms = secParts.getOrNull(1)?.padEnd(3, '0')?.take(3)?.toLong() ?: 0L
-                (m * 60_000L) + (s * 1000L) + ms
-            } else 0L
-        } catch (_: Exception) {
-            0L
-        }
-    }
-
-    private fun loadSubtitlesForMovieAutomatically(tmdbId: String) {
-        val cleanId = tmdbId.replace("tmdb_movie_", "").replace("tmdb_tv_", "").replace("tmdb_", "").trim()
-        if (cleanId.isEmpty() || cleanId == "0") return
-        activeMovieTmdbId = cleanId
-
-        controllerScope.launch {
-            val subs: List<SubtitleTrack> = withContext(Dispatchers.IO) {
-                fetchSubtitlesDirectFromApi(cleanId)
-            }
-            availableSubtitles = subs
-            val preferredArabic = subs.firstOrNull { track ->
-                track.languageCode.startsWith("ar", ignoreCase = true) ||
-                track.languageLabel.contains("Arab", ignoreCase = true) ||
-                track.languageLabel.contains("عرب", ignoreCase = true)
-            } ?: subs.firstOrNull()
-
-            if (preferredArabic != null) {
-                val cues: List<SubtitleCue> = withContext(Dispatchers.IO) {
-                    downloadAndParseSubtitleDirect(preferredArabic.url)
-                }
-                if (cues.isNotEmpty()) {
-                    selectedSubtitleId = preferredArabic.id
-                    activeSubtitleCues = cues
-                    tvAppSubtitleOverlay.visibility = View.VISIBLE
-                }
-            }
-        }
+        playerUI.updateSeekProgressUI(newPos, dur)
+        triggerPlaybackSyncBroadcast()
+        playerUI.resetAutoHideControls()
     }
 
     private fun eliminateBottomEmptySpace() {
@@ -1308,7 +457,7 @@ class WatchTogetherController(
     }
 
     private fun setupRecyclerViews() {
-        activeRoomsAdapter = ActiveRoomsAdapter(hostContext, filteredRoomsList) { room -> attemptJoinRoom(room) }
+        activeRoomsAdapter = ActiveRoomsAdapter(hostContext, filteredRoomsList) { room -> joinRoomByCodeOrLink(room.roomCode) }
         rvActiveRooms.layoutManager = LinearLayoutManager(hostContext)
         rvActiveRooms.adapter = activeRoomsAdapter
 
@@ -1319,7 +468,7 @@ class WatchTogetherController(
         participantsAdapter = ParticipantsAdapter(
             hostContext,
             getList = { participantsMap.values.sortedByDescending { it.role == "HOST" } }
-        ) { participant -> showParticipantManagementDialog(participant) }
+        ) { participant -> openParticipantDialog(participant) }
         rvParticipantsList.layoutManager = LinearLayoutManager(hostContext)
         rvParticipantsList.adapter = participantsAdapter
 
@@ -1346,195 +495,27 @@ class WatchTogetherController(
         }
     }
 
-    private fun showMoviesGridModalDialog() {
-        val dialog = Dialog(hostContext, android.R.style.Theme_Black_NoTitleBar)
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-
-        val screenHeight = hostContext.resources.displayMetrics.heightPixels
-
-        val modalRoot = LinearLayout(hostContext).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(WatchRoomUtils.dp(hostContext, 16), WatchRoomUtils.dp(hostContext, 18), WatchRoomUtils.dp(hostContext, 16), WatchRoomUtils.dp(hostContext, 14))
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#10131C"))
-                cornerRadius = WatchRoomUtils.dpF(hostContext, 22f)
-                setStroke(WatchRoomUtils.dp(hostContext, 1), Color.parseColor("#2A3042"))
-            }
-        }
-
-        val headerRow = LinearLayout(hostContext).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, WatchRoomUtils.dp(hostContext, 12))
-        }
-        val tvHeader = TextView(hostContext).apply {
-            text = "Search Movies"
-            setTextColor(Color.WHITE)
-            textSize = 18f
-            setTypeface(typeface, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        val btnSwitchToChannels = TextView(hostContext).apply {
-            text = "📺 القنوات"
-            setTextColor(Color.WHITE)
-            textSize = 12f
-            setPadding(WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 6), WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 6))
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#262B3A"))
-                cornerRadius = WatchRoomUtils.dpF(hostContext, 12f)
-            }
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = WatchRoomUtils.dp(hostContext, 10) }
-            setOnClickListener {
-                dialog.dismiss()
+    private fun openMoviesGridModal() {
+        dialogsManager.showMoviesGridModalDialog(
+            allMoviesList = allMoviesList,
+            onSwitchToChannels = {
                 isShowingMoviesSubTab = false
                 refreshMediaPickerList()
                 switchRoomInternalTab("MEDIA")
-            }
-        }
-        val btnClose = TextView(hostContext).apply {
-            text = "✕"
-            setTextColor(Color.WHITE)
-            textSize = 16f
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.parseColor("#262B3A"))
-            }
-            layoutParams = LinearLayout.LayoutParams(WatchRoomUtils.dp(hostContext, 38), WatchRoomUtils.dp(hostContext, 38))
-            setOnClickListener { dialog.dismiss() }
-        }
-        headerRow.addView(tvHeader)
-        headerRow.addView(btnSwitchToChannels)
-        headerRow.addView(btnClose)
-        modalRoot.addView(headerRow)
-
-        val etSearchModal = EditText(hostContext).apply {
-            hint = "🔍  ابحث عن أي فيلم..."
-            setHintTextColor(Color.parseColor("#8C96A8"))
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            setSingleLine(true)
-            setPadding(WatchRoomUtils.dp(hostContext, 16), WatchRoomUtils.dp(hostContext, 12), WatchRoomUtils.dp(hostContext, 16), WatchRoomUtils.dp(hostContext, 12))
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#181C28"))
-                cornerRadius = WatchRoomUtils.dpF(hostContext, 14f)
-                setStroke(WatchRoomUtils.dp(hostContext, 1), Color.parseColor("#32394E"))
-            }
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = WatchRoomUtils.dp(hostContext, 12) }
-        }
-        modalRoot.addView(etSearchModal)
-
-        val modalMoviesList = mutableListOf<MediaStreamOption>().apply { addAll(allMoviesList) }
-        lateinit var modalAdapter: MediaPickerAdapter
-        modalAdapter = MediaPickerAdapter(hostContext, httpClient, controllerScope, modalMoviesList) { chosen ->
-            dialog.dismiss()
-            selectMediaForRoom(chosen)
-        }
-
-        val rvModalGrid = RecyclerView(hostContext).apply {
-            layoutManager = GridLayoutManager(hostContext, 3)
-            adapter = modalAdapter
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (screenHeight * 0.68).toInt())
-        }
-        modalRoot.addView(rvModalGrid)
-
-        val footerRow = LinearLayout(hostContext).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, WatchRoomUtils.dp(hostContext, 12), 0, 0)
-        }
-        val btnCancel = Button(hostContext).apply {
-            text = "Cancel"
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#212634"))
-                cornerRadius = WatchRoomUtils.dpF(hostContext, 14f)
-            }
-            layoutParams = LinearLayout.LayoutParams(0, WatchRoomUtils.dp(hostContext, 46), 1f).apply { marginEnd = WatchRoomUtils.dp(hostContext, 8) }
-            setOnClickListener { dialog.dismiss() }
-        }
-        val btnSearch = Button(hostContext).apply {
-            text = "Search"
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            setTypeface(typeface, Typeface.BOLD)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#E50914"))
-                cornerRadius = WatchRoomUtils.dpF(hostContext, 14f)
-            }
-            layoutParams = LinearLayout.LayoutParams(0, WatchRoomUtils.dp(hostContext, 46), 1f).apply { marginStart = WatchRoomUtils.dp(hostContext, 8) }
-        }
-        footerRow.addView(btnCancel)
-        footerRow.addView(btnSearch)
-        modalRoot.addView(footerRow)
-
-        var searchJob: Job? = null
-        val triggerModalSearch = { queryRaw: String ->
-            val q = queryRaw.trim()
-            searchJob?.cancel()
-            if (q.isEmpty()) {
-                modalMoviesList.clear()
-                modalMoviesList.addAll(allMoviesList)
-                modalAdapter.notifyDataSetChanged()
-            } else {
-                val localFiltered = allMoviesList.filter { it.title.contains(q, ignoreCase = true) }
-                modalMoviesList.clear()
-                modalMoviesList.addAll(localFiltered)
-                modalAdapter.notifyDataSetChanged()
-
-                if (q.length >= 2) {
-                    searchJob = controllerScope.launch {
-                        delay(220)
-                        val tmdbRes = withContext(Dispatchers.IO) {
-                            OttRepository.searchTmdbCatalog(q, "MOVIES")
-                        }
-                        if (tmdbRes.isNotEmpty()) {
-                            modalMoviesList.clear()
-                            for (vod in tmdbRes) {
-                                modalMoviesList.add(
-                                    MediaStreamOption(
-                                        id = vod.id,
-                                        title = vod.title,
-                                        subtitle = "🎬 فيلم (${vod.year}) • ⭐ ${vod.rating}",
-                                        streamUrl = "",
-                                        posterUrl = vod.posterUrl,
-                                        rating = vod.rating.ifBlank { "7.5" },
-                                        year = vod.year,
-                                        isMovie = true
-                                    )
-                                )
-                            }
-                            modalAdapter.notifyDataSetChanged()
-                        }
-                    }
-                }
-            }
-        }
-
-        etSearchModal.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                triggerModalSearch(s?.toString() ?: "")
-            }
-            override fun afterTextChanged(s: Editable?) {}
-        })
-
-        btnSearch.setOnClickListener { triggerModalSearch(etSearchModal.text?.toString() ?: "") }
-
-        dialog.setContentView(modalRoot)
-        dialog.window?.apply {
-            setBackgroundDrawableResource(android.R.color.transparent)
-            val width = (hostContext.resources.displayMetrics.widthPixels * 0.96).toInt()
-            setLayout(width, WindowManager.LayoutParams.WRAP_CONTENT)
-        }
-        dialog.show()
+            },
+            onMovieSelected = { chosen -> selectMediaForRoom(chosen) }
+        )
     }
 
     private fun setupLobbyListeners() {
-        rootView.findViewById<View>(R.id.btnBlockedUsersLobby).setOnClickListener { showBlockedUsersDialog() }
-        rootView.findViewById<View>(R.id.btnCreateRoomOpen).setOnClickListener { showCreateRoomDialog() }
+        rootView.findViewById<View>(R.id.btnBlockedUsersLobby).setOnClickListener {
+            dialogsManager.showBlockedUsersDialog(blockedUserIds)
+        }
+        rootView.findViewById<View>(R.id.btnCreateRoomOpen).setOnClickListener {
+            dialogsManager.showCreateRoomDialog(localUserName) { title, isPriv, rawPass ->
+                createNewRoomOnServer(title, isPriv, rawPass)
+            }
+        }
         rootView.findViewById<View>(R.id.btnRefreshRooms).setOnClickListener {
             Toast.makeText(hostContext, "🔄 جاري تحديث الغرف النشطة...", Toast.LENGTH_SHORT).show()
             fetchActiveRoomsDirectory(cleanOldSelfRooms = false)
@@ -1571,6 +552,42 @@ class WatchTogetherController(
         chipFilterChannels.setOnClickListener(filterClick)
     }
 
+    private fun createNewRoomOnServer(title: String, isPriv: Boolean, rawPass: String) {
+        controllerScope.launch {
+            val (ok, serverCode) = OttRepository.createWatchRoom(
+                deviceId = localUserId,
+                userName = localUserName,
+                roomName = title,
+                roomIcon = "🎬",
+                isPrivate = isPriv,
+                password = rawPass,
+                allowGuestsControl = true,
+                contentType = "VOD",
+                streamId = "0",
+                contentTitle = "اختر فيلماً أو قناة للبدء",
+                contentPoster = "",
+                streamUrl = ""
+            )
+
+            val finalCode = if (ok && serverCode.isNotEmpty()) serverCode else generateRoomCode()
+            val newRoom = WatchRoomModel(
+                roomId = finalCode,
+                roomCode = finalCode,
+                roomName = title,
+                hostId = localUserId,
+                hostName = localUserName,
+                isPrivate = isPriv,
+                passwordHash = if (isPriv && rawPass.isNotEmpty()) WatchRoomUtils.sha256(rawPass) else "",
+                onlineCount = 1,
+                status = "LIVE",
+                streamUrl = "",
+                streamTitle = "اختر فيلماً أو قناة للبدء",
+                isPlaying = false
+            )
+            enterWatchRoom(newRoom, isHost = true)
+        }
+    }
+
     private fun updateFilterChipsUI() {
         val chips = listOf(
             chipFilterAll to "ALL",
@@ -1603,10 +620,10 @@ class WatchTogetherController(
             if (!matchesFilter) continue
 
             val matchesQuery = query.isEmpty() ||
-                room.roomName.lowercase(Locale.getDefault()).contains(query) ||
-                room.hostName.lowercase(Locale.getDefault()).contains(query) ||
-                room.streamTitle.lowercase(Locale.getDefault()).contains(query) ||
-                room.roomCode.lowercase(Locale.getDefault()).contains(query)
+                    room.roomName.lowercase(Locale.getDefault()).contains(query) ||
+                    room.hostName.lowercase(Locale.getDefault()).contains(query) ||
+                    room.streamTitle.lowercase(Locale.getDefault()).contains(query) ||
+                    room.roomCode.lowercase(Locale.getDefault()).contains(query)
 
             if (matchesQuery) filteredRoomsList.add(room)
         }
@@ -1619,99 +636,6 @@ class WatchTogetherController(
     private fun generateRoomCode(): String {
         val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
         return (1..6).map { chars[Random.nextInt(chars.length)] }.joinToString("")
-    }
-
-    private fun showCreateRoomDialog() {
-        val container = ScrollView(hostContext)
-        val layout = LinearLayout(hostContext).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(44, 32, 44, 20)
-            setBackgroundColor(Color.parseColor("#111726"))
-        }
-        container.addView(layout)
-
-        val etName = EditText(hostContext).apply {
-            hint = "اسم الغرفة"
-            setText("غرفة $localUserName")
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.GRAY)
-        }
-        layout.addView(etName)
-
-        val rgPrivacy = RadioGroup(hostContext).apply {
-            orientation = RadioGroup.HORIZONTAL
-            setPadding(0, 16, 0, 8)
-        }
-        val rbPublic = RadioButton(hostContext).apply {
-            text = "🌐 غرفة عامة"
-            setTextColor(Color.WHITE)
-            isChecked = true
-        }
-        val rbPrivate = RadioButton(hostContext).apply {
-            text = "🔒 غرفة خاصة"
-            setTextColor(Color.WHITE)
-        }
-        rgPrivacy.addView(rbPublic)
-        rgPrivacy.addView(rbPrivate)
-        layout.addView(rgPrivacy)
-
-        val etPassword = EditText(hostContext).apply {
-            hint = "كلمة مرور الغرفة الخاصة"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.GRAY)
-            visibility = View.GONE
-        }
-        layout.addView(etPassword)
-
-        rgPrivacy.setOnCheckedChangeListener { _, checkedId ->
-            etPassword.visibility = if (checkedId == rbPrivate.id) View.VISIBLE else View.GONE
-        }
-
-        AlertDialog.Builder(hostContext)
-            .setTitle("➕ إنشاء غرفة مشاهدة جديدة")
-            .setView(container)
-            .setPositiveButton("فتح الغرفة الآن") { _, _ ->
-                val title = etName.text.toString().trim().ifEmpty { "غرفة $localUserName" }
-                val isPriv = rbPrivate.isChecked
-                val rawPass = etPassword.text.toString().trim()
-
-                controllerScope.launch {
-                    val (ok, serverCode) = OttRepository.createWatchRoom(
-                        deviceId = localUserId,
-                        userName = localUserName,
-                        roomName = title,
-                        roomIcon = "🎬",
-                        isPrivate = isPriv,
-                        password = rawPass,
-                        allowGuestsControl = true,
-                        contentType = "VOD",
-                        streamId = "0",
-                        contentTitle = "اختر فيلماً أو قناة للبدء",
-                        contentPoster = "",
-                        streamUrl = ""
-                    )
-
-                    val finalCode = if (ok && serverCode.isNotEmpty()) serverCode else generateRoomCode()
-                    val newRoom = WatchRoomModel(
-                        roomId = finalCode,
-                        roomCode = finalCode,
-                        roomName = title,
-                        hostId = localUserId,
-                        hostName = localUserName,
-                        isPrivate = isPriv,
-                        passwordHash = if (isPriv && rawPass.isNotEmpty()) WatchRoomUtils.sha256(rawPass) else "",
-                        onlineCount = 1,
-                        status = "LIVE",
-                        streamUrl = "",
-                        streamTitle = "اختر فيلماً أو قناة للبدء",
-                        isPlaying = false
-                    )
-                    enterWatchRoom(newRoom, isHost = true)
-                }
-            }
-            .setNegativeButton("إلغاء", null)
-            .show()
     }
 
     fun joinRoomByCodeOrLink(input: String, password: String = "") {
@@ -1734,7 +658,7 @@ class WatchTogetherController(
             )
             if (res.status == "success" && res.room != null) {
                 val r = res.room
-                val (parsedUrl, parsedRef) = unpackUrlAndReferer(r.streamUrl)
+                val (parsedUrl, parsedRef) = WatchRoomStreamSniffer.unpackUrlAndReferer(r.streamUrl)
                 val model = WatchRoomModel(
                     roomId = r.roomId.ifEmpty { r.roomCode },
                     roomCode = r.roomCode.ifEmpty { extractedCode },
@@ -1755,31 +679,13 @@ class WatchTogetherController(
                 enterWatchRoom(model, isHost = r.isHost)
                 applyServerSyncResult(res)
             } else if (res.requirePassword) {
-                promptServerRoomPassword(extractedCode)
+                dialogsManager.promptServerRoomPassword(extractedCode) { code, pass ->
+                    joinRoomByCodeOrLink(code, pass)
+                }
             } else {
                 Toast.makeText(hostContext, "❌ لم يتم العثور على الغرفة", Toast.LENGTH_LONG).show()
             }
         }
-    }
-
-    private fun promptServerRoomPassword(roomCode: String) {
-        val input = EditText(hostContext).apply {
-            hint = "أدخل كلمة مرور الغرفة..."
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setTextColor(Color.WHITE)
-        }
-        AlertDialog.Builder(hostContext)
-            .setTitle("🔒 غرفة خاصة محمية")
-            .setView(input)
-            .setPositiveButton("انضمام") { _, _ ->
-                joinRoomByCodeOrLink(roomCode, input.text.toString().trim())
-            }
-            .setNegativeButton("إلغاء", null)
-            .show()
-    }
-
-    private fun attemptJoinRoom(room: WatchRoomModel) {
-        joinRoomByCodeOrLink(room.roomCode)
     }
 
     fun enterWatchRoom(room: WatchRoomModel, isHost: Boolean) {
@@ -1807,59 +713,52 @@ class WatchTogetherController(
         updateRoomHeaderAndPermissionsUI()
         switchRoomInternalTab("CHAT")
 
-        tvAppPlayerTitle.text = room.streamTitle
+        playerUI.updatePlayerTitleText(room.streamTitle)
 
-        if (room.streamUrl.isNotBlank()) {
+        // التحقق أن الرابط هو بث مباشر حقيقي (m3u8/mp4) وليس صفحة Embed
+        val hasValidDirectUrl = room.streamUrl.isNotBlank() &&
+            (!room.isMovie || streamSniffer.isLikelyDirectStreamUrl(room.streamUrl))
+
+        if (hasValidDirectUrl) {
             val initialSource = StreamSource(
                 label = room.streamServerLabel.ifBlank { "REYZO 1" },
                 url = room.streamUrl,
                 referer = room.streamReferer,
-                origin = room.streamOrigin.ifBlank { extractOriginFromUrl(room.streamReferer.ifBlank { room.streamUrl }) },
+                origin = room.streamOrigin.ifBlank { WatchRoomStreamSniffer.extractOriginFromUrl(room.streamReferer) },
                 userAgent = room.streamUserAgent,
                 isDirectStream = true
             )
             playStreamSourceInEngine(initialSource, room.streamTitle, room.playbackPositionMs)
-            if (room.streamId.isNotBlank()) {
-                loadSubtitlesForMovieAutomatically(room.streamId)
-                fetchBackupServersInBackground(room.streamId, room.streamTitle)
+            if (room.streamId.isNotBlank() && room.streamId != "0") {
+                subtitleManager.loadSubtitlesForMovieAutomatically(room.streamId)
+                streamSniffer.fetchBackupServersInBackground(room.streamId, room.streamTitle)
             }
         } else if (room.streamId.isNotBlank() && room.streamId != "0") {
-            setAppPlayerBuffering(true)
-            btnAppServerPill.text = "  جاري الجلب..."
+            // إذا كان الفيلم قادماً من الخارج بدون رابط مباشر، نستخرجه عبر الـ Sniffer تماماً كما نفعل داخل الغرفة
+            playerUI.setBuffering(true)
+            playerUI.updateServerPillText("⏳ جاري الجلب...")
+            streamSniffer.extractAndPlayMovie(
+                MediaStreamOption(
+                    id = room.streamId,
+                    title = room.streamTitle,
+                    subtitle = "🎬 فيلم",
+                    streamUrl = "",
+                    isMovie = true
+                )
+            ) { cleanTmdbId ->
+                subtitleManager.loadSubtitlesForMovieAutomatically(cleanTmdbId)
+            }
         } else {
             playerEngine.pauseAndReleaseSocket()
-            setAppPlayerBuffering(false)
+            playerUI.setBuffering(false)
             if (isHost) {
-                showMoviesGridModalDialog()
+                openMoviesGridModal()
             }
         }
 
-        connectRoomWebSocket(room.roomCode)
+        syncClient.connectWebSocket(room.roomCode)
         initVoiceEngineForRoom(room.roomCode)
         updateDetailedStatsUI()
-    }
-
-    private fun fetchBackupServersInBackground(tmdbId: String, title: String) {
-        val cleanId = tmdbId.replace("tmdb_movie_", "").replace("tmdb_tv_", "").replace("tmdb_", "").trim()
-        if (cleanId.isEmpty() || cleanId == "0") return
-        controllerScope.launch {
-            val servers = withContext(Dispatchers.IO) {
-                PrimeVodExtractor.fetchPanelConfiguredServers(
-                    tmdbId = cleanId,
-                    imdbId = "",
-                    title = title,
-                    isSeries = false,
-                    season = 1,
-                    episode = 1
-                )
-            }
-            if (servers.isNotEmpty()) {
-                currentProviderTargets.clear()
-                currentProviderTargets.addAll(servers)
-                val firstName = servers.first().label.ifBlank { "REYZO 1" }
-                btnAppServerPill.text = "  $firstName"
-            }
-        }
     }
 
     private fun updateRoomHeaderAndPermissionsUI() {
@@ -1883,11 +782,11 @@ class WatchTogetherController(
     }
 
     private fun playStreamSourceInEngine(source: StreamSource, title: String, seekMs: Long = 0L) {
-        val (cleanUrl, embeddedRef) = unpackUrlAndReferer(source.url.trim())
+        val (cleanUrl, embeddedRef) = WatchRoomStreamSniffer.unpackUrlAndReferer(source.url.trim())
         if (cleanUrl.isEmpty()) return
 
-        val finalRef = source.referer.ifBlank { embeddedRef.ifBlank { extractOriginFromUrl(cleanUrl) } }
-        val finalOrigin = source.origin.ifBlank { extractOriginFromUrl(finalRef).ifBlank { extractOriginFromUrl(cleanUrl) } }
+        val finalRef = source.referer.ifBlank { embeddedRef.ifBlank { WatchRoomStreamSniffer.extractOriginFromUrl(cleanUrl) } }
+        val finalOrigin = source.origin.ifBlank { WatchRoomStreamSniffer.extractOriginFromUrl(finalRef).ifBlank { WatchRoomStreamSniffer.extractOriginFromUrl(cleanUrl) } }
 
         val readySource = source.copy(
             url = cleanUrl,
@@ -1897,13 +796,13 @@ class WatchTogetherController(
             isDirectStream = true
         )
 
-        tvAppPlayerTitle.text = title
-        btnAppServerPill.text = "  ${readySource.label.ifBlank { "REYZO 1" }}"
-        setAppPlayerBuffering(true)
-        showAppPlayerControlsWithFade()
+        playerUI.updatePlayerTitleText(title)
+        playerUI.updateServerPillText("  ${readySource.label.ifBlank { "REYZO 1" }}")
+        playerUI.setBuffering(true)
+        playerUI.showControlsWithFade()
 
         val allToPlay = mutableListOf(readySource)
-        resolvedDirectStreams.forEach { s ->
+        streamSniffer.resolvedDirectStreams.forEach { s ->
             if (s.url != readySource.url) allToPlay.add(s)
         }
 
@@ -1915,28 +814,6 @@ class WatchTogetherController(
         )
     }
 
-    private fun extractOriginFromUrl(url: String): String {
-        return try {
-            val uri = Uri.parse(url)
-            if (uri.scheme != null && uri.host != null) "${uri.scheme}://${uri.host}" else ""
-        } catch (_: Exception) {
-            ""
-        }
-    }
-
-    private fun packUrlAndReferer(url: String, referer: String): String {
-        val clean = url.substringBefore("|Referer=")
-        return if (referer.isNotBlank()) "$clean|Referer=$referer" else clean
-    }
-
-    private fun unpackUrlAndReferer(raw: String): Pair<String, String> {
-        if (raw.contains("|Referer=")) {
-            val parts = raw.split("|Referer=", limit = 2)
-            return Pair(parts[0].trim(), parts.getOrNull(1)?.trim() ?: "")
-        }
-        return Pair(raw.trim(), "")
-    }
-
     private fun loadRealAppCatalog() {
         controllerScope.launch {
             val homeCatalog = withContext(Dispatchers.IO) {
@@ -1945,11 +822,11 @@ class WatchTogetherController(
 
             allMoviesList.clear()
             val moviesCombined = (
-                homeCatalog.trendingToday +
-                homeCatalog.popularMovies +
-                homeCatalog.topRatedMovies +
-                homeCatalog.actionMovies
-            ).filter { !it.isSeries }.distinctBy { it.id }
+                    homeCatalog.trendingToday +
+                            homeCatalog.popularMovies +
+                            homeCatalog.topRatedMovies +
+                            homeCatalog.actionMovies
+                    ).filter { !it.isSeries }.distinctBy { it.id }
 
             for (vod in moviesCombined) {
                 allMoviesList.add(
@@ -2050,27 +927,24 @@ class WatchTogetherController(
         }
 
         switchRoomInternalTab("CHAT")
-
         playerEngine.pauseAndReleaseSocket()
-        tvAppElapsed.text = "00:00"
-        tvAppDuration.text = "00:00"
-        sbAppRedSeekBar.progress = 0
-        tvAppSubtitleOverlay.text = ""
-        tvAppSubtitleOverlay.visibility = View.GONE
-        activeSubtitleCues = emptyList()
-        availableSubtitles = emptyList()
+        playerUI.resetProgressUI()
 
         room.streamTitle = media.title
         room.streamId = media.id
         room.streamUrl = ""
         room.playbackPositionMs = 0L
 
-        broadcastPlaybackSync()
+        triggerPlaybackSyncBroadcast()
 
         if (media.isMovie && media.streamUrl.isEmpty()) {
-            extractAndPlayMovieIdenticalToApp(media)
+            playerUI.updatePlayerTitleText(media.title)
+            playerUI.showControlsWithFade()
+            streamSniffer.extractAndPlayMovie(media) { cleanTmdbId ->
+                subtitleManager.loadSubtitlesForMovieAutomatically(cleanTmdbId)
+            }
         } else {
-            isExtractingNewMovie = false
+            streamSniffer.isExtractingNewMovie = false
             val chSource = StreamSource(
                 label = "LIVE TV",
                 url = media.streamUrl,
@@ -2081,271 +955,13 @@ class WatchTogetherController(
         }
     }
 
-   private fun isLikelyDirectStreamUrl(rawUrl: String): Boolean {
-        val lower = rawUrl.lowercase(Locale.ROOT)
-        return (lower.contains(".m3u8") ||
-                lower.contains(".mp4") ||
-                lower.contains("/playlist/") ||
-                lower.contains("master.txt") ||
-                lower.contains("m3u8-proxy") ||
-                lower.contains("/hls/") ||
-                lower.contains("mime=video")) &&
-                !lower.contains("netnaija.film/wp-content") &&
-                !lower.contains("promo") &&
-                !lower.contains("trailer") &&
-                !lower.endsWith(".js") &&
-                !lower.endsWith(".css") &&
-                !lower.endsWith(".png") &&
-                !lower.endsWith(".jpg") &&
-                !lower.contains("doubleclick") &&
-                !lower.contains("googlesyndication")
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun extractAndPlayMovieIdenticalToApp(media: MediaStreamOption) {
-        isExtractingNewMovie = true
-        snifferExtractionJob?.cancel()
-        cleanupHeadlessSniffer()
-        currentProviderTargets.clear()
-        resolvedDirectStreams.clear()
-        triedProviderIndices.clear()
-        currentProviderIndex = 0
-
-        val cleanTmdbId = media.id
-            .replace("tmdb_movie_", "")
-            .replace("tmdb_tv_", "")
-            .replace("tmdb_", "")
-            .trim()
-
-        loadSubtitlesForMovieAutomatically(cleanTmdbId)
-
-        tvAppPlayerTitle.text = media.title
-        setAppPlayerBuffering(true)
-        showAppPlayerControlsWithFade()
-
-        if (this::btnAppServerPill.isInitialized) {
-            btnAppServerPill.text = "  جاري الاتصال..."
-        }
-
-        snifferExtractionJob = controllerScope.launch {
-            val servers = withContext(Dispatchers.IO) {
-                runCatching {
-                    PrimeVodExtractor.fetchPanelConfiguredServers(
-                        tmdbId = cleanTmdbId,
-                        imdbId = "",
-                        title = media.title,
-                        isSeries = false,
-                        season = 1,
-                        episode = 1
-                    )
-                }.getOrDefault(emptyList())
-            }
-
-            currentProviderTargets.clear()
-            currentProviderTargets.addAll(servers)
-
-            if (servers.isEmpty()) {
-                isExtractingNewMovie = false
-                setAppPlayerBuffering(false)
-                Toast.makeText(hostContext, "⚠️ لا توجد سيرفرات مفعلة لهذا الفيلم حالياً", Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-
-            if (this@WatchTogetherController::btnAppServerPill.isInitialized) {
-                btnAppServerPill.text = "  ${servers.first().label.ifBlank { "REYZO 1" }}"
-            }
-
-            // 1. Ida kayen serveur direct ymchi f ExoPlayer f la7dha
-            val directIdx = servers.indexOfFirst { (it.isDirectStream || isLikelyDirectStreamUrl(it.url)) && it.url.isNotBlank() }
-            if (directIdx != -1) {
-                currentProviderIndex = directIdx
-                triedProviderIndices.add(directIdx)
-                val directSrv = servers[directIdx].copy(isDirectStream = true)
-                resolvedDirectStreams.add(0, directSrv)
-                applyResolvedStreamSourceToRoom(directSrv, media.title, isMovie = true)
-                return@launch
-            }
-
-            // 2. Ida kan embed target, nkhaddmou el-sniffer ta3 el-khalfiya
-            loadProviderInHeadlessSniffer(0)
-        }
-    }
-
-    @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface", "AddJavascriptInterface")
-    private fun loadProviderInHeadlessSniffer(index: Int) {
-        if (isDestroyed || currentProviderTargets.isEmpty()) return
-        currentProviderIndex = index.coerceIn(0, currentProviderTargets.lastIndex)
-        val target = currentProviderTargets[currentProviderIndex]
-
-        if (this::btnAppServerPill.isInitialized) {
-            btnAppServerPill.text = "  ${target.label.ifBlank { "REYZO ${currentProviderIndex + 1}" }}"
-        }
-        setAppPlayerBuffering(true)
-
-        if (target.isDirectStream || isLikelyDirectStreamUrl(target.url)) {
-            val directSrc = target.copy(isDirectStream = true)
-            resolvedDirectStreams.add(0, directSrc)
-            applyResolvedStreamSourceToRoom(directSrc, currentRoom?.streamTitle ?: "", isMovie = true)
-            return
-        }
-
-        cleanupHeadlessSniffer()
-
-        val snifferUa = target.userAgent.ifBlank {
-            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
-        }
-
-        var streamCapturedForThisTarget = false
-        val wv = WebView(hostContext)
-        headlessSnifferWebView = wv
-
-        if (rootView is ViewGroup) {
-            val hiddenParams = FrameLayout.LayoutParams(WatchRoomUtils.dp(hostContext, 10), WatchRoomUtils.dp(hostContext, 10)).apply {
-                gravity = Gravity.BOTTOM or Gravity.END
-            }
-            wv.alpha = 0.01f
-            rootView.addView(wv, 0, hiddenParams)
-        }
-
-        CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
-
-        wv.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            databaseEnabled = true
-            mediaPlaybackRequiresUserGesture = false
-            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            userAgentString = snifferUa
-            blockNetworkImage = true
-            setSupportMultipleWindows(false)
-        }
-
-        val dispatchCapturedStream = { rawUrl: String, refererHeader: String, originHeader: String, uaHeader: String ->
-            if (!streamCapturedForThisTarget && !isDestroyed && isLikelyDirectStreamUrl(rawUrl)) {
-                streamCapturedForThisTarget = true
-                val capturedSource = StreamSource(
-                    label = target.label.ifBlank { "REYZO ${currentProviderIndex + 1}" },
-                    url = rawUrl,
-                    referer = refererHeader.ifBlank { target.referer.ifBlank { "https://vidlink.pro/" } },
-                    origin = originHeader.ifBlank { target.origin },
-                    userAgent = uaHeader.ifBlank { snifferUa },
-                    isDirectStream = true
-                )
-                mainHandler.post {
-                    cleanupHeadlessSniffer()
-                    resolvedDirectStreams.add(0, capturedSource)
-                    applyResolvedStreamSourceToRoom(capturedSource, currentRoom?.streamTitle ?: "", isMovie = true)
-                }
-            }
-        }
-
-        wv.addJavascriptInterface(object {
-            @JavascriptInterface
-            fun onStreamCaptured(streamUrl: String, pageOrigin: String) {
-                if (streamUrl.startsWith("http") && !streamUrl.contains("doubleclick")) {
-                    dispatchCapturedStream(streamUrl, "$pageOrigin/", pageOrigin, snifferUa)
-                }
-            }
-        }, "PrimeSnifferBridge")
-
-        wv.webChromeClient = WebChromeClient()
-        wv.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                val reqTarget = request?.url?.toString() ?: return true
-                val allowed = listOf("vidlink", "vixsrc", "vidsrc", "embed.su", "autoembed", "multiembed", "cloudnestra", "tmstr", "rabbitstream", "megacloud")
-                return !allowed.any { reqTarget.contains(it, ignoreCase = true) }
-            }
-
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                if (streamCapturedForThisTarget || isDestroyed || url == "about:blank") return
-                val autoClickJs = """
-                    (function() {
-                        var count = 0;
-                        var timer = setInterval(function() {
-                            count++;
-                            if (count > 20) { clearInterval(timer); return; }
-                            var btns = document.querySelectorAll('button, .play-btn, .jw-icon-display, .vjs-big-play-button, [aria-label="Play"], #play-button, .plyr__control--overlaid');
-                            for (var i = 0; i < btns.length; i++) {
-                                try { btns[i].click(); } catch(e) {}
-                            }
-                            var v = document.querySelector('video');
-                            if (v) {
-                                v.muted = true;
-                                try { v.play(); } catch(e) {}
-                                if (v.src && v.src.indexOf('http') === 0) {
-                                    window.PrimeSnifferBridge.onStreamCaptured(v.src, window.location.origin);
-                                    clearInterval(timer);
-                                }
-                            }
-                        }, 300);
-                    })();
-                """.trimIndent()
-                view?.evaluateJavascript(autoClickJs, null)
-            }
-
-            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                if (streamCapturedForThisTarget) {
-                    return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
-                }
-                val reqUrl = request?.url?.toString() ?: return null
-                val lower = reqUrl.lowercase(Locale.ROOT)
-
-                if (lower.contains("doubleclick") || lower.contains("popads") || lower.contains("adsterra") || lower.contains("googlesyndication") || lower.contains("analytics")) {
-                    return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
-                }
-
-                if (isLikelyDirectStreamUrl(reqUrl)) {
-                    val headers = request.requestHeaders
-                    val ref = headers["Referer"] ?: headers["referer"] ?: target.referer.ifBlank { "https://vidlink.pro/" }
-                    val orig = headers["Origin"] ?: headers["origin"] ?: target.origin
-                    val ua = headers["User-Agent"] ?: headers["user-agent"] ?: snifferUa
-                    dispatchCapturedStream(reqUrl, ref, orig, ua)
-                }
-
-                return super.shouldInterceptRequest(view, request)
-            }
-        }
-
-        wv.onResume()
-        wv.resumeTimers()
-        val headers = if (target.referer.isNotEmpty()) mapOf("Referer" to target.referer) else emptyMap()
-        wv.loadUrl(target.url, headers)
-
-        snifferTimeoutRunnable = Runnable {
-            if (!streamCapturedForThisTarget && !isDestroyed) {
-                if (currentProviderIndex + 1 < currentProviderTargets.size) {
-                    loadProviderInHeadlessSniffer(currentProviderIndex + 1)
-                } else {
-                    isExtractingNewMovie = false
-                    setAppPlayerBuffering(false)
-                }
-            }
-        }
-        mainHandler.postDelayed(snifferTimeoutRunnable!!, 6500L)
-    }
-
-    private fun cleanupHeadlessSniffer() {
-        snifferTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
-        snifferTimeoutRunnable = null
-        try {
-            headlessSnifferWebView?.let { wv ->
-                wv.stopLoading()
-                (wv.parent as? ViewGroup)?.removeView(wv)
-                wv.destroy()
-            }
-        } catch (_: Exception) {}
-        headlessSnifferWebView = null
-    }
-
     private fun applyResolvedStreamSourceToRoom(
         source: StreamSource,
         title: String,
         isMovie: Boolean
     ) {
         val room = currentRoom ?: return
-        isExtractingNewMovie = false
+        streamSniffer.isExtractingNewMovie = false
         room.streamUrl = source.url
         room.streamReferer = source.referer
         room.streamOrigin = source.origin
@@ -2359,7 +975,7 @@ class WatchTogetherController(
 
         switchRoomInternalTab("CHAT")
         playStreamSourceInEngine(source, title, seekMs = 0L)
-        broadcastPlaybackSync()
+        triggerPlaybackSyncBroadcast()
         appendSystemChatAndLog("🎬 تم تشغيل: $title (${room.streamServerLabel})")
         updateRoomHeaderAndPermissionsUI()
     }
@@ -2375,22 +991,32 @@ class WatchTogetherController(
             playerEngine.pause()
             room.isPlaying = false
             room.status = "PAUSED"
-            updateAppPlayPauseIcon(false)
+            playerUI.updatePlayPauseIcon(false)
         } else {
             playerEngine.resume()
             room.isPlaying = true
             room.status = "LIVE"
-            updateAppPlayPauseIcon(true)
+            playerUI.updatePlayPauseIcon(true)
         }
         room.playbackPositionMs = exo.currentPosition
-        broadcastPlaybackSync()
+        triggerPlaybackSyncBroadcast()
         updateRoomHeaderAndPermissionsUI()
     }
 
     private fun setupRoomListeners() {
         rootView.findViewById<View>(R.id.btnLeaveRoom).setOnClickListener { confirmLeaveRoom() }
-        btnCloseRoomHost.setOnClickListener { confirmCloseRoomByHost() }
-        btnHostControlsOpen.setOnClickListener { showHostControlsCenterDialog() }
+        btnCloseRoomHost.setOnClickListener {
+            val room = currentRoom ?: return@setOnClickListener
+            if (room.hostId == localUserId) {
+                dialogsManager.confirmCloseRoomByHost { leaveCurrentRoom(closePermanently = true) }
+            }
+        }
+        btnHostControlsOpen.setOnClickListener {
+            val room = currentRoom ?: return@setOnClickListener
+            if (room.hostId == localUserId) {
+                dialogsManager.showHostControlsCenterDialog(room) { updateRoomHeaderAndPermissionsUI() }
+            }
+        }
         tvRoomCodeBadge.setOnClickListener { copyInviteCodeAndLink(shareSheet = false) }
         rootView.findViewById<View>(R.id.btnInviteShare).setOnClickListener { copyInviteCodeAndLink(shareSheet = true) }
         tvOnlineCountBadge.setOnClickListener { switchRoomInternalTab("PARTICIPANTS") }
@@ -2400,7 +1026,7 @@ class WatchTogetherController(
         rootView.findViewById<View>(R.id.btnForceSyncNow).setOnClickListener {
             val room = currentRoom ?: return@setOnClickListener
             if (room.hostId == localUserId) {
-                broadcastPlaybackSync()
+                triggerPlaybackSyncBroadcast()
                 Toast.makeText(hostContext, "✅ تمت مزامنة المشغل لدى الجميع", Toast.LENGTH_SHORT).show()
             } else {
                 val src = StreamSource(
@@ -2421,20 +1047,8 @@ class WatchTogetherController(
             switchRoomInternalTab("MEDIA")
         }
 
-        rootView.findViewById<View>(R.id.btnPickMatchOpen).setOnClickListener {
-            showMoviesGridModalDialog()
-        }
-
-        rootView.findViewById<View>(R.id.btnAspectRatioToggle).setOnClickListener {
-            currentResizeModeIndex = (currentResizeModeIndex + 1) % 3
-            watchPlayerView.resizeMode = when (currentResizeModeIndex) {
-                1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
-                2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-            }
-            Toast.makeText(hostContext, "📐 تم تغيير أبعاد العرض", Toast.LENGTH_SHORT).show()
-        }
-
+        rootView.findViewById<View>(R.id.btnPickMatchOpen).setOnClickListener { openMoviesGridModal() }
+        rootView.findViewById<View>(R.id.btnAspectRatioToggle).setOnClickListener { playerUI.toggleAspectRatio() }
         rootView.findViewById<View>(R.id.btnRoomStatsOpen).setOnClickListener { switchRoomInternalTab("LOGS") }
 
         btnToggleMic.setOnClickListener { toggleMicrophoneState() }
@@ -2461,7 +1075,7 @@ class WatchTogetherController(
 
         tabBtnChat.setOnClickListener { switchRoomInternalTab("CHAT") }
         tabBtnParticipants.setOnClickListener { switchRoomInternalTab("PARTICIPANTS") }
-        tabBtnMediaPicker.setOnClickListener { showMoviesGridModalDialog() }
+        tabBtnMediaPicker.setOnClickListener { openMoviesGridModal() }
         tabBtnLogsStats.setOnClickListener { switchRoomInternalTab("LOGS") }
 
         rootView.findViewById<View>(R.id.btnSendChatMessage).setOnClickListener { sendChatMessage() }
@@ -2472,7 +1086,7 @@ class WatchTogetherController(
             controllerScope.launch {
                 OttRepository.manageWatchRoom(room.roomId, localUserId, "MUTE_ALL")
             }
-            broadcastRoomEvent("MUTE_ALL", JSONObject())
+            syncClient.broadcastRoomEvent(room.roomId, "MUTE_ALL", JSONObject())
             appendSystemChatAndLog("🔇 قام المضيف بكتم الميكروفون للجميع")
         }
 
@@ -2480,10 +1094,16 @@ class WatchTogetherController(
             isShowingMoviesSubTab = false
             refreshMediaPickerList()
         }
-        btnSubTabMatches.setOnClickListener {
-            showMoviesGridModalDialog()
+        btnSubTabMatches.setOnClickListener { openMoviesGridModal() }
+        rootView.findViewById<View>(R.id.btnCustomStreamUrl).setOnClickListener {
+            val room = currentRoom ?: return@setOnClickListener
+            if (room.hostId == localUserId) {
+                dialogsManager.promptCustomStreamUrlDialog { title, url ->
+                    val customSrc = StreamSource(label = "CUSTOM", url = url, isDirectStream = true)
+                    applyResolvedStreamSourceToRoom(customSrc, title, isMovie = true)
+                }
+            }
         }
-        rootView.findViewById<View>(R.id.btnCustomStreamUrl).setOnClickListener { promptCustomStreamUrlDialog() }
 
         etSearchMediaInRoom.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -2548,7 +1168,7 @@ class WatchTogetherController(
             put("senderRole", msg.senderRole)
             put("text", msg.text)
         }
-        broadcastRoomEvent("CHAT_MSG", payload)
+        syncClient.broadcastRoomEvent(room.roomId, "CHAT_MSG", payload)
     }
 
     private fun appendChatMessage(msg: ChatMessageModel) {
@@ -2575,7 +1195,7 @@ class WatchTogetherController(
         controllerScope.launch {
             OttRepository.sendRoomMessage(room.roomId, localUserId, emoji, "REACTION")
         }
-        broadcastRoomEvent("EMOJI", JSONObject().put("emoji", emoji))
+        syncClient.broadcastRoomEvent(room.roomId, "EMOJI", JSONObject().put("emoji", emoji))
     }
 
     private fun spawnFloatingEmoji(emoji: String) {
@@ -2640,61 +1260,7 @@ class WatchTogetherController(
         participantsAdapter.notifyDataSetChanged()
     }
 
-    private fun broadcastPlaybackSync() {
-        val room = currentRoom ?: return
-        if (isExtractingNewMovie || room.streamUrl.isBlank()) return
-        val player = playerEngine.player
-        statSyncCount++
-        val packedStream = packUrlAndReferer(room.streamUrl, room.streamReferer)
-        val payload = JSONObject().apply {
-            put("stream_url", packedStream)
-            put("content_title", room.streamTitle)
-            put("is_playing", player?.isPlaying ?: room.isPlaying)
-            put("playback_position_ms", player?.currentPosition ?: room.playbackPositionMs)
-        }
-        controllerScope.launch {
-            OttRepository.syncWatchRoom(
-                roomId = room.roomId,
-                deviceId = localUserId,
-                lastMessageId = lastSyncedMessageId,
-                isMuted = voiceChatManager?.isMuted() ?: true,
-                inVoice = true,
-                playbackUpdate = payload
-            )
-        }
-        broadcastRoomEvent("PLAYBACK_SYNC", payload)
-        updateDetailedStatsUI()
-    }
-
-    private fun performCloudflareRoomSync() {
-        val room = currentRoom ?: return
-        if (isExtractingNewMovie) return
-
-        controllerScope.launch {
-            val playbackObj = if (room.hostId == localUserId && room.streamUrl.isNotBlank()) {
-                JSONObject().apply {
-                    put("stream_url", packUrlAndReferer(room.streamUrl, room.streamReferer))
-                    put("content_title", room.streamTitle)
-                    put("is_playing", playerEngine.isPlaying())
-                    put("playback_position_ms", playerEngine.player?.currentPosition ?: 0L)
-                }
-            } else null
-
-            val res = OttRepository.syncWatchRoom(
-                roomId = room.roomId,
-                deviceId = localUserId,
-                lastMessageId = lastSyncedMessageId,
-                isMuted = voiceChatManager?.isMuted() ?: true,
-                inVoice = true,
-                playbackUpdate = playbackObj
-            )
-            if (res.status == "success") {
-                applyServerSyncResult(res)
-            }
-        }
-    }
-
-    private fun applyServerSyncResult(res: com.primeott.app.data.repository.RoomSyncResult) {
+    private fun applyServerSyncResult(res: RoomSyncResult) {
         val room = currentRoom ?: return
         val srvRoom = res.room ?: return
 
@@ -2731,10 +1297,10 @@ class WatchTogetherController(
             }
         }
 
-        if (room.hostId != localUserId && !isExtractingNewMovie) {
+        if (room.hostId != localUserId && !streamSniffer.isExtractingNewMovie) {
             isHandlingRemoteSync = true
             try {
-                val (srvCleanUrl, srvRef) = unpackUrlAndReferer(srvRoom.streamUrl)
+                val (srvCleanUrl, srvRef) = WatchRoomStreamSniffer.unpackUrlAndReferer(srvRoom.streamUrl)
                 if (srvCleanUrl.isNotEmpty() && srvCleanUrl != room.streamUrl) {
                     room.streamUrl = srvCleanUrl
                     room.streamReferer = srvRef
@@ -2773,10 +1339,10 @@ class WatchTogetherController(
             for (r in rooms) {
                 val rId = r.roomId.ifEmpty { r.roomCode }
                 val isMyAbandonedRoom = cleanOldSelfRooms &&
-                    currentRoom == null &&
-                    (r.hostName == localUserName || r.hostName == "Prime User") &&
-                    r.participantCount <= 1
-                    
+                        currentRoom == null &&
+                        (r.hostName == localUserName || r.hostName == "Prime User") &&
+                        r.participantCount <= 1
+
                 val isCompletelyDead = r.participantCount <= 0
 
                 if (isMyAbandonedRoom || isCompletelyDead) {
@@ -2804,105 +1370,33 @@ class WatchTogetherController(
         }
     }
 
-    private fun promptCustomStreamUrlDialog() {
-        val room = currentRoom ?: return
-        if (room.hostId != localUserId) return
-        val layout = LinearLayout(hostContext).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(40, 20, 40, 10)
-        }
-        val etTitle = EditText(hostContext).apply { hint = "اسم الفيلم أو القناة" }
-        val etUrl = EditText(hostContext).apply { hint = "رابط البث المباشر (m3u8 / mp4)" }
-        layout.addView(etTitle)
-        layout.addView(etUrl)
-        AlertDialog.Builder(hostContext)
-            .setTitle("🔗 تشغيل رابط بث خارجي")
-            .setView(layout)
-            .setPositiveButton("تشغيل ومزامنة") { _, _ ->
-                val url = etUrl.text.toString().trim()
-                val title = etTitle.text.toString().trim().ifEmpty { "بث خارجي" }
-                if (url.isNotEmpty()) {
-                    val customSrc = StreamSource(label = "CUSTOM", url = url, isDirectStream = true)
-                    applyResolvedStreamSourceToRoom(customSrc, title, isMovie = true)
-                }
-            }
-            .setNegativeButton("إلغاء", null)
-            .show()
-    }
-
-    private fun showParticipantManagementDialog(target: ParticipantModel) {
+    private fun openParticipantDialog(target: ParticipantModel) {
         val room = currentRoom ?: return
         if (target.userId == localUserId) return
         val isMeHost = room.hostId == localUserId
-        val options = mutableListOf<String>()
-        val actions = mutableListOf<() -> Unit>()
-
         val isLocallyMuted = voiceChatManager?.isParticipantMutedLocally(target.userId) == true
-        options.add(if (isLocallyMuted) "🔊 إلغاء الكتم المحلي" else "🔇 كتم صوت هذا العضو لدي")
-        actions.add {
-            voiceChatManager?.setParticipantMutedLocally(target.userId, !isLocallyMuted)
-        }
 
-        if (isMeHost) {
-            options.add("👢 طرد من الغرفة (Kick)")
-            actions.add {
+        dialogsManager.showParticipantManagementDialog(
+            target = target,
+            isMeHost = isMeHost,
+            isLocallyMuted = isLocallyMuted,
+            onToggleLocalMute = {
+                voiceChatManager?.setParticipantMutedLocally(target.userId, !isLocallyMuted)
+            },
+            onKickParticipant = {
                 controllerScope.launch {
                     OttRepository.manageWatchRoom(room.roomId, localUserId, "KICK", target.userId)
                 }
                 participantsMap.remove(target.userId)
                 updateRoomHeaderAndPermissionsUI()
             }
-        }
-
-        AlertDialog.Builder(hostContext)
-            .setTitle("إدارة العضو: ${target.userName}")
-            .setItems(options.toTypedArray()) { _, which -> actions[which].invoke() }
-            .setNegativeButton("إغلاق", null)
-            .show()
+        )
     }
 
     private fun showUserInteractionDialog(targetId: String, targetName: String) {
         if (targetId == "SYSTEM" || targetId == localUserId) return
         val existing = participantsMap[targetId] ?: ParticipantModel(targetId, targetName)
-        showParticipantManagementDialog(existing)
-    }
-
-    private fun showBlockedUsersDialog() {
-        if (blockedUserIds.isEmpty()) {
-            Toast.makeText(hostContext, "قائمة المحظورين فارغة", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val arr = blockedUserIds.toTypedArray()
-        AlertDialog.Builder(hostContext)
-            .setTitle("🚫 المحظورون (اضغط لإلغاء الحظر)")
-            .setItems(arr) { _, which ->
-                blockedUserIds.remove(arr[which])
-                Toast.makeText(hostContext, "✅ تم إلغاء الحظر", Toast.LENGTH_SHORT).show()
-            }
-            .setNegativeButton("إغلاق", null)
-            .show()
-    }
-
-    private fun showHostControlsCenterDialog() {
-        val room = currentRoom ?: return
-        if (room.hostId != localUserId) return
-        val items = arrayOf(
-            if (room.isChatLocked) "🔓 فتح الدردشة الكتابية" else "🔒 قفل الدردشة الكتابية",
-            if (room.isPrivate) "🌐 تحويل الغرفة إلى عامة" else "🔒 تحويل الغرفة إلى خاصة"
-        )
-        AlertDialog.Builder(hostContext)
-            .setTitle("⚙️ إعدادات المضيف")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> room.isChatLocked = !room.isChatLocked
-                    1 -> {
-                        room.isPrivate = !room.isPrivate
-                        updateRoomHeaderAndPermissionsUI()
-                    }
-                }
-            }
-            .setNegativeButton("إغلاق", null)
-            .show()
+        openParticipantDialog(existing)
     }
 
     private fun copyInviteCodeAndLink(shareSheet: Boolean) {
@@ -2923,33 +1417,19 @@ class WatchTogetherController(
     }
 
     fun confirmLeaveRoom() {
-        if (isFullscreenPlayer) {
-            toggleAppPlayerFullscreen(false)
+        if (playerUI.isFullscreenPlayer) {
+            playerUI.toggleFullscreen(false)
             return
         }
         val room = currentRoom ?: return
         val isHost = room.hostId == localUserId
-        AlertDialog.Builder(hostContext)
-            .setTitle("🚪 مغادرة الغرفة")
-            .setMessage(if (isHost) "هل تريد مغادرة وإغلاق غرفة «${room.roomName}»؟" else "هل تريد مغادرة غرفة «${room.roomName}»؟")
-            .setPositiveButton("مغادرة") { _, _ -> leaveCurrentRoom(closePermanently = isHost) }
-            .setNegativeButton("البقاء", null)
-            .show()
-    }
-
-    private fun confirmCloseRoomByHost() {
-        val room = currentRoom ?: return
-        if (room.hostId != localUserId) return
-        AlertDialog.Builder(hostContext)
-            .setTitle("⛔ إغلاق الغرفة نهائياً")
-            .setMessage("سيتم إغلاق الغرفة لجميع المشاركين.")
-            .setPositiveButton("إغلاق الغرفة") { _, _ -> leaveCurrentRoom(closePermanently = true) }
-            .setNegativeButton("إلغاء", null)
-            .show()
+        dialogsManager.confirmLeaveRoom(room.roomName, isHost) { closePerm ->
+            leaveCurrentRoom(closePermanently = closePerm)
+        }
     }
 
     fun leaveCurrentRoom(closePermanently: Boolean) {
-        if (isFullscreenPlayer) toggleAppPlayerFullscreen(false)
+        if (playerUI.isFullscreenPlayer) playerUI.toggleFullscreen(false)
         val room = currentRoom
         if (room != null) {
             val action = if (closePermanently || room.hostId == localUserId) "CLOSE_ROOM" else "LEAVE"
@@ -2958,62 +1438,13 @@ class WatchTogetherController(
                 fetchActiveRoomsDirectory(cleanOldSelfRooms = false)
             }
         }
-        cleanupHeadlessSniffer()
+        streamSniffer.cleanupHeadlessSniffer()
         playerEngine.pauseAndReleaseSocket()
         voiceChatManager?.stopVoiceChat()
-        try { webSocket?.close(1000, "Leave") } catch (_: Exception) {}
-        webSocket = null
+        syncClient.disconnectWebSocket()
         currentRoom = null
         layoutActiveRoomContainer.visibility = View.GONE
         layoutLobbyContainer.visibility = View.VISIBLE
-    }
-
-    private fun connectRoomWebSocket(roomId: String) {
-        try { webSocket?.cancel() } catch (_: Exception) {}
-        val wsUrl = workerBaseUrl.replace("https://", "wss://").replace("http://", "ws://") +
-            "/ws/room?roomId=$roomId&userId=$localUserId&token=$authToken"
-        val req = Request.Builder().url(wsUrl).build()
-        webSocket = httpClient.newWebSocket(req, object : WebSocketListener() {
-            override fun onMessage(webSocket: WebSocket, text: String) {
-                mainHandler.post { handleIncomingRealtimeEvent(text) }
-            }
-        })
-    }
-
-    private fun broadcastRoomEvent(type: String, payload: JSONObject) {
-        val room = currentRoom ?: return
-        val envelope = JSONObject().apply {
-            put("type", type)
-            put("roomId", room.roomId)
-            put("senderId", localUserId)
-            put("senderName", localUserName)
-            put("data", payload)
-        }
-        try { webSocket?.send(envelope.toString()) } catch (_: Exception) {}
-    }
-
-    private fun handleIncomingRealtimeEvent(rawJson: String) {
-        try {
-            val env = JSONObject(rawJson)
-            val type = env.optString("type")
-            val senderId = env.optString("senderId")
-            val senderName = env.optString("senderName", "مشاهد")
-            val data = env.optJSONObject("data") ?: JSONObject()
-            if (senderId == localUserId || blockedUserIds.contains(senderId)) return
-
-            when (type) {
-                "CHAT_MSG" -> appendChatMessage(
-                    ChatMessageModel(
-                        data.optString("msgId", "WS_${System.nanoTime()}"),
-                        senderId,
-                        senderName,
-                        data.optString("senderRole", "PARTICIPANT"),
-                        data.optString("text")
-                    )
-                )
-                "EMOJI" -> spawnFloatingEmoji(data.optString("emoji", "🔥"))
-            }
-        } catch (_: Exception) {}
     }
 
     private fun updateExpirationCountdownUI() {
@@ -3042,53 +1473,91 @@ class WatchTogetherController(
             }
         }
 
-        val passedUrl = intent.getStringExtra(WatchRoomActivity.EXTRA_STREAM_URL) ?: ""
-        val passedStreamId = intent.getStringExtra("stream_id") ?: ""
+        val passedUrl = intent.getStringExtra(WatchRoomActivity.EXTRA_STREAM_URL)
+            ?: intent.getStringExtra("movie_url")
+            ?: ""
+        val passedStreamId = intent.getStringExtra("stream_id")
+            ?: intent.getStringExtra("tmdb_id")
+            ?: intent.getStringExtra("movie_id")
+            ?: intent.getStringExtra("id")
+            ?: ""
         val passedReferer = intent.getStringExtra("stream_referer") ?: ""
         val passedUa = intent.getStringExtra("stream_ua") ?: SessionManager.CUSTOM_USER_AGENT
-        val passedTitle = intent.getStringExtra(WatchRoomActivity.EXTRA_STREAM_TITLE) ?: intent.getStringExtra(WatchRoomActivity.EXTRA_CHANNEL_NAME) ?: intent.getStringExtra("title") ?: ""
+        val passedTitle = intent.getStringExtra(WatchRoomActivity.EXTRA_STREAM_TITLE)
+            ?: intent.getStringExtra(WatchRoomActivity.EXTRA_CHANNEL_NAME)
+            ?: intent.getStringExtra("title")
+            ?: intent.getStringExtra("movie_title")
+            ?: ""
         val passedRoomName = intent.getStringExtra(WatchRoomActivity.EXTRA_ROOM_NAME) ?: ""
-        val passedCode = intent.getStringExtra(WatchRoomActivity.EXTRA_ROOM_CODE) ?: intent.getStringExtra(WatchRoomActivity.EXTRA_ROOM_ID) ?: ""
+        val passedCode = intent.getStringExtra(WatchRoomActivity.EXTRA_ROOM_CODE)
+            ?: intent.getStringExtra(WatchRoomActivity.EXTRA_ROOM_ID)
+            ?: ""
         val isDirectMovie = intent.getBooleanExtra("direct_movie_launch", false)
         val isHostFlag = intent.getBooleanExtra(WatchRoomActivity.EXTRA_IS_HOST, true)
 
         if (isDirectMovie || passedUrl.isNotEmpty() || passedStreamId.isNotEmpty()) {
-            val code = passedCode.ifEmpty { generateRoomCode() }
             val titleToUse = passedTitle.ifEmpty { "فيلم مشترك" }
             val rName = passedRoomName.ifEmpty { "غرفة $titleToUse" }
+            val isDirectValid = passedUrl.isNotEmpty() && streamSniffer.isLikelyDirectStreamUrl(passedUrl)
 
-            val directRoom = WatchRoomModel(
-                roomId = code,
-                roomCode = code,
-                roomName = rName,
-                hostId = localUserId,
-                hostName = localUserName,
-                isPrivate = false,
-                onlineCount = 1,
-                status = "LIVE",
-                streamId = passedStreamId,
-                streamUrl = passedUrl,
-                streamReferer = passedReferer,
-                streamUserAgent = passedUa,
-                streamTitle = titleToUse,
-                category = "🎬 مشاهدة جماعية",
-                isMovie = true,
-                isPlaying = passedUrl.isNotEmpty()
-            )
-            enterWatchRoom(directRoom, isHost = isHostFlag)
-
-            if (passedUrl.isNotEmpty()) {
-                broadcastPlaybackSync()
-            } else if (passedStreamId.isNotEmpty()) {
-                extractAndPlayMovieIdenticalToApp(
-                    MediaStreamOption(
-                        id = passedStreamId,
-                        title = titleToUse,
-                        subtitle = "🎬 فيلم",
-                        streamUrl = "",
-                        isMovie = true
+            controllerScope.launch {
+                val finalCode = if (passedCode.isNotEmpty()) {
+                    passedCode
+                } else {
+                    val (ok, srvCode) = OttRepository.createWatchRoom(
+                        deviceId = localUserId,
+                        userName = localUserName,
+                        roomName = rName,
+                        roomIcon = "🎬",
+                        isPrivate = false,
+                        password = "",
+                        allowGuestsControl = true,
+                        contentType = "VOD",
+                        streamId = passedStreamId.ifEmpty { "0" },
+                        contentTitle = titleToUse,
+                        contentPoster = "",
+                        streamUrl = if (isDirectValid) passedUrl else ""
                     )
+                    if (ok && srvCode.isNotEmpty()) srvCode else generateRoomCode()
+                }
+
+                val directRoom = WatchRoomModel(
+                    roomId = finalCode,
+                    roomCode = finalCode,
+                    roomName = rName,
+                    hostId = localUserId,
+                    hostName = localUserName,
+                    isPrivate = false,
+                    onlineCount = 1,
+                    status = "LIVE",
+                    streamId = passedStreamId,
+                    streamUrl = if (isDirectValid) passedUrl else "",
+                    streamReferer = passedReferer,
+                    streamUserAgent = passedUa,
+                    streamTitle = titleToUse,
+                    category = "مشاهدة جماعية",
+                    isMovie = true,
+                    isPlaying = isDirectValid
                 )
+
+                enterWatchRoom(directRoom, isHost = isHostFlag)
+
+                if (isDirectValid) {
+                    triggerPlaybackSyncBroadcast()
+                } else if (passedStreamId.isEmpty() && passedUrl.isNotEmpty()) {
+                    // حالة احتياطية: إذا لم يتم تمرير TMDB ID وتم تمرير رابط صفحة Embed فقط
+                    streamSniffer.currentProviderTargets.clear()
+                    streamSniffer.currentProviderTargets.add(
+                        StreamSource(
+                            label = "REYZO 1",
+                            url = passedUrl,
+                            referer = passedReferer,
+                            userAgent = passedUa,
+                            isDirectStream = false
+                        )
+                    )
+                    streamSniffer.loadProviderInHeadlessSniffer(0, titleToUse)
+                }
             }
         } else if (passedCode.isNotEmpty()) {
             joinRoomByCodeOrLink(passedCode)
@@ -3103,12 +1572,11 @@ class WatchTogetherController(
                 OttRepository.manageWatchRoom(room.roomId, localUserId, "CLOSE_ROOM")
             }
         }
-        progressTickJob?.cancel()
-        snifferExtractionJob?.cancel()
-        cleanupHeadlessSniffer()
+        playerUI.release()
+        streamSniffer.release()
+        syncClient.disconnectWebSocket()
         controllerScope.cancel()
         mainHandler.removeCallbacksAndMessages(null)
-        try { webSocket?.close(1000, "Destroy") } catch (_: Exception) {}
         voiceChatManager?.release()
         playerEngine.release()
     }

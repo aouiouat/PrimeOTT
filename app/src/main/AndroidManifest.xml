@@ -21,7 +21,6 @@
             android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                
             </intent-filter>
         </activity>
 
@@ -30,23 +29,7 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode"
-            android:windowSoftInputMode="adjustPan">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="primeott" android:host="watch" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="https"
-                    android:host="prime-ott-panel.prime-ott-stream.workers.dev"
-                    android:pathPrefix="/join/" />
-            </intent-filter>
-        </activity>
+            android:windowSoftInputMode="adjustPan" />
 
         <!-- إضافة configChanges هنا تجعل تكبير وتصغير مشغل الأفلام يتم في 0.0 ثانية بدون انقطاع البث -->
         <activity
@@ -58,20 +41,42 @@
         <activity
             android:name=".presentation.watch.WatchRoomActivity"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
-            android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize">
+
+            <!-- يفتح الروابط المباشرة للتطبيق primeott://watch?code=XXXX -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="primeott"
+                    android:host="watch" />
+            </intent-filter>
+
+            <!-- يفتح روابط الدعوة عبر الويب مباشرة داخل الغرفة (/watch و /join/) -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="prime-ott-panel.prime-ott-stream.workers.dev"
+                    android:pathPrefix="/watch" />
+                <data
+                    android:scheme="https"
+                    android:host="prime-ott-panel.prime-ott-stream.workers.dev"
+                    android:pathPrefix="/join/" />
+            </intent-filter>
+        </activity>
 
         <activity
             android:name=".presentation.player.PlayerActivity"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
             android:exported="false"
             android:screenOrientation="sensorLandscape" />
-        
-        
-    
-        
-        
-    
+
         <activity
             android:name="com.primeott.app.presentation.auth.LoginActivity"
             android:exported="true">
@@ -80,10 +85,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
         <activity
             android:name="com.primeott.app.presentation.auth.RegisterActivity"
             android:exported="false" />
-            <activity android:name="com.primeott.app.presentation.auth.ProfileSettingsActivity" android:exported="false" />
+
+        <activity
+            android:name="com.primeott.app.presentation.auth.ProfileSettingsActivity"
+            android:exported="false" />
+
     </application>
 
 </manifest>
