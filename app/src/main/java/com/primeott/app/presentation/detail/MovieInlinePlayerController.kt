@@ -510,18 +510,34 @@ class MovieInlinePlayerController(
         currentActiveServerName = serverName
         hasRenderedInitialFrameForStream = false
 
-        // 1. نفصلو الصورة القديمة ونديرو Black Screen فوراً
         playerView.player = null
         vServerBlackShutter.animate().cancel()
         vServerBlackShutter.alpha = 1f
         vServerBlackShutter.visibility = View.VISIBLE
 
-        // 2. نبينو اللودر في الوسط
         setBufferingState(true)
 
-        // 3. نكتبو لتحت بلي راه يبدل للسيرفر الجديد
         tvServerSwitchingPill.animate().cancel()
+        tvServerSwitchingPill.background = makeRoundedBg("#D910131C".toColorInt(), 18f, "#4DFFFFFF".toColorInt(), 0.9f)
+        tvServerSwitchingPill.setTextColor(Color.WHITE)
         tvServerSwitchingPill.text = "Switching to $serverName..."
+        tvServerSwitchingPill.alpha = 1f
+        tvServerSwitchingPill.visibility = View.VISIBLE
+    }
+
+    fun onAllServersExhausted() {
+        // نوقفو اللودر والدوران كي يكمل قاع السيرفرات وما يلقاش الفيلم
+        setBufferingState(false)
+        updatePlayPauseVectorIcon(false)
+
+        vServerBlackShutter.animate().cancel()
+        vServerBlackShutter.alpha = 1f
+        vServerBlackShutter.visibility = View.VISIBLE
+
+        tvServerSwitchingPill.animate().cancel()
+        tvServerSwitchingPill.background = makeRoundedBg("#E61F1216".toColorInt(), 18f, "#99FF4D4D".toColorInt(), 1f)
+        tvServerSwitchingPill.setTextColor("#FF8080".toColorInt())
+        tvServerSwitchingPill.text = "Stream unavailable on all servers"
         tvServerSwitchingPill.alpha = 1f
         tvServerSwitchingPill.visibility = View.VISIBLE
     }
@@ -530,7 +546,6 @@ class MovieInlinePlayerController(
         setBufferingState(false)
         updatePlayPauseVectorIcon(true)
 
-        // نخفيو الـ Black Screen بنعومة غير يبدا السيرفر الجديد
         if (vServerBlackShutter.isVisible) {
             vServerBlackShutter.animate()
                 .alpha(0f)
@@ -539,12 +554,13 @@ class MovieInlinePlayerController(
                 .start()
         }
 
-        // نكتبو بلي اتصل بالسيرفر الجديد ومن بعد نخفيوها
         if (tvServerSwitchingPill.isVisible) {
-            tvServerSwitchingPill.text = "Connected: $currentActiveServerName"
+            tvServerSwitchingPill.background = makeRoundedBg("#D910131C".toColorInt(), 18f, "#4DFFFFFF".toColorInt(), 0.9f)
+            tvServerSwitchingPill.setTextColor(Color.WHITE)
+            tvServerSwitchingPill.text = "Playing on $currentActiveServerName"
             tvServerSwitchingPill.animate()
                 .alpha(0f)
-                .setStartDelay(1100L)
+                .setStartDelay(1000L)
                 .setDuration(250L)
                 .withEndAction { tvServerSwitchingPill.visibility = View.GONE }
                 .start()

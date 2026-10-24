@@ -145,6 +145,7 @@ class ContentDetailActivity : AppCompatActivity() {
     private val resolvedDirectStreams = mutableListOf<StreamSource>()
     private var providerTargets: List<StreamSource> = emptyList()
     private var currentProviderIndex: Int = 0
+    private var triedServersCount: Int = 0
     private var hasLockedPrimaryStream: Boolean = false
     private var isPlayerModeActive: Boolean = false
 
@@ -282,6 +283,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 }
                 playerEngine.pauseAndReleaseSocket()
                 currentProviderIndex = srvIdx
+                triedServersCount = 0
                 hasLockedPrimaryStream = false
                 resolvedDirectStreams.clear()
 
@@ -583,11 +585,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * خوارزمية استخراج الألوان الديناميكية الدقيقة (72-Hue Swatch Histogram)
-     * تلتقط اللون الحقيقي الطاغي في الغلاف (أخضر، ذهبي، سماوي، قرمزي، بنفسجي، برتقالي، أزرق، إلخ)
-     * دون خلط الألوان المتقابلة مع بعضها.
-     */
     private fun extractFlixVisionPalette(bitmap: Bitmap): Pair<Int, Int> {
         return try {
             val scaled = Bitmap.createScaledBitmap(bitmap, 64, 64, true)
@@ -633,10 +630,8 @@ class ContentDetailActivity : AppCompatActivity() {
                         coolMutedWeight += w
                     }
 
-                    // Netjahlo el abyad w el gris el fateh bezzaf (kima Disclosure Day) bach ma ydirch green ghalet
                     if (value < 0.10f || (value > 0.76f && sat < 0.32f) || sat < 0.18f) continue
 
-                    // Naqso men lawn el hait el beige w el bachra
                     val skinOrBeigePenalty = if (hue in 15f..50f && sat < 0.65f && value > 0.32f) {
                         0.12f
                     } else {
@@ -672,14 +667,12 @@ class ContentDetailActivity : AppCompatActivity() {
                 }
             }
 
-            // Ila kanet el soura bida/gris barda (kima Disclosure Day) ma fihach alwan qwiya
             if (colorfulPixelCount < 95 || bestBin == -1 || bestClusterScore < 0.05f) {
                 return if (coolMutedWeight > 0.01f) {
                     val avgR = (coolMutedR / coolMutedWeight).toInt().coerceIn(0, 255)
                     val avgG = (coolMutedG / coolMutedWeight).toInt().coerceIn(0, 255)
                     val avgB = (coolMutedB / coolMutedWeight).toInt().coerceIn(0, 255)
                     Color.colorToHSV(Color.rgb(avgR, avgG, avgB), hsv)
-                    // Nkhaliwh Slate Blue/Grey ghameq kima FlixVision f Disclosure Day
                     if (hsv[1] < 0.22f) {
                         hsv[0] = 212f
                         hsv[1] = 0.34f
@@ -721,24 +714,41 @@ class ContentDetailActivity : AppCompatActivity() {
         moviePlayerController.setDynamicThemeColor(targetLeftColor)
 
         val evaluator = ArgbEvaluator()
-        val startLeft = currentLeftBrightColor
-        val startRight = currentRightDarkColor
+        val initialBlack = "#000000".toColorInt()
+        val standardGreyLeft = FLIX_INITIAL_LEFT_COLOR // #233242 (Screen 2 Standard Grey)
+        val standardGreyRight = FLIX_INITIAL_RIGHT_COLOR // #000000
 
+        // Animation fiha el marahel f nafs el حركة:
+        // 0.0 -> 0.35 : men Black (Screen 1) lel Grey Standard (Screen 2)
+        // 0.35 -> 1.0 : men Grey Standard (Screen 2) lel Dynamic Color ta3 el Cover
         colorExtractionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            startDelay = 0L // Yebda direct bla ma yestenah 2s f static color
-            duration = 1500L // Animation tban b salasa kima FlixVision
-            interpolator = DecelerateInterpolator(1.4f)
+            startDelay = 0L
+            duration = 1650L
+            interpolator = DecelerateInterpolator(1.3f)
             addUpdateListener { va ->
                 val f = va.animatedFraction
-                val liveLeft = evaluator.evaluate(f, startLeft, targetLeftColor) as Int
-                val liveRight = evaluator.evaluate(f, startRight, targetRightColor) as Int
-                currentLeftBrightColor = liveLeft
-                currentRightDarkColor = liveRight
-                fullScreenAmbientDrawable.updateColors(
-                    leftBright = liveLeft,
-                    rightDark = liveRight,
-                    extractionFraction = f
-                )
+                if (f <= 0.35f) {
+                    val step1 = (f / 0.35f).coerceIn(0f, 1f)
+                    val liveLeft = evaluator.evaluate(step1, initialBlack, standardGreyLeft) as Int
+                    currentLeftBrightColor = liveLeft
+                    currentRightDarkColor = standardGreyRight
+                    fullScreenAmbientDrawable.updateColors(
+                        leftBright = liveLeft,
+                        rightDark = standardGreyRight,
+                        extractionFraction = step1 * 0.4f
+                    )
+                } else {
+                    val step2 = ((f - 0.35f) / 0.65f).coerceIn(0f, 1f)
+                    val liveLeft = evaluator.evaluate(step2, standardGreyLeft, targetLeftColor) as Int
+                    val liveRight = evaluator.evaluate(step2, standardGreyRight, targetRightColor) as Int
+                    currentLeftBrightColor = liveLeft
+                    currentRightDarkColor = liveRight
+                    fullScreenAmbientDrawable.updateColors(
+                        leftBright = liveLeft,
+                        rightDark = liveRight,
+                        extractionFraction = 0.4f + (step2 * 0.6f)
+                    )
+                }
             }
             start()
         }
@@ -974,9 +984,6 @@ class ContentDetailActivity : AppCompatActivity() {
         renderOverviewWithInlineMore(fullOverviewRawText, isOverviewExpanded)
     }
 
-    /**
-     * فتح المشغل بدون تحريك alpha على حاوية الـ SurfaceView لمنع تجمّد الصورة نهائياً
-     */
     private fun activateInlinePlayerSmoothly() {
         isPlayerModeActive = true
         fullScreenAmbientDrawable.setPlayerModeActive(true)
@@ -1120,16 +1127,6 @@ class ContentDetailActivity : AppCompatActivity() {
                     )
                 }
             }
-
-            @JavascriptInterface
-            fun onDeadServerDetected() {
-                // إذا الصفحة كتبت Video Not Found أو 404 نصوتو للسيرفر اللي بعدو فوراً بلا انتظار!
-                runOnUiThread {
-                    if (!hasLockedPrimaryStream) {
-                        tryNextProviderInBackground()
-                    }
-                }
-            }
         }, "PrimeSnifferBridge")
 
         headlessSnifferWebView.webChromeClient = WebChromeClient()
@@ -1151,7 +1148,7 @@ class ContentDetailActivity : AppCompatActivity() {
             ) {
                 super.onReceivedHttpError(view, request, errorResponse)
                 val status = errorResponse?.statusCode ?: 200
-                if (request?.isForMainFrame == true && (status == 404 || status == 403 || status >= 500)) {
+                if (request?.isForMainFrame == true && (status == 404 || status >= 500)) {
                     if (!hasLockedPrimaryStream) {
                         tryNextProviderInBackground()
                     }
@@ -1161,17 +1158,12 @@ class ContentDetailActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 if (hasLockedPrimaryStream || url == "about:blank") return
-                val autoClickAndCheckDeadJs = """
+                val autoClickJs = """
                     (function() {
-                        var bodyTxt = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : "";
-                        if (bodyTxt.indexOf("not found") !== -1 || bodyTxt.indexOf("unavailable") !== -1 || bodyTxt.indexOf("no sources") !== -1 || bodyTxt.indexOf("404") !== -1) {
-                            window.PrimeSnifferBridge.onDeadServerDetected();
-                            return;
-                        }
                         var count = 0;
                         var timer = setInterval(function() {
                             count++;
-                            if (count > 12) { clearInterval(timer); return; }
+                            if (count > 16) { clearInterval(timer); return; }
                             var btns = document.querySelectorAll('button, .play-btn, .jw-icon-display, .vjs-big-play-button, [aria-label="Play"], #play-button, .plyr__control--overlaid');
                             for (var i = 0; i < btns.length; i++) {
                                 try { btns[i].click(); } catch(e) {}
@@ -1185,10 +1177,10 @@ class ContentDetailActivity : AppCompatActivity() {
                                     clearInterval(timer);
                                 }
                             }
-                        }, 250);
+                        }, 280);
                     })();
                 """.trimIndent()
-                view?.evaluateJavascript(autoClickAndCheckDeadJs, null)
+                view?.evaluateJavascript(autoClickJs, null)
             }
 
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
@@ -1202,7 +1194,6 @@ class ContentDetailActivity : AppCompatActivity() {
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                 }
 
-                // تصحيح اكتشاف لغة الترجمة (يفحص الرابط + يفحص الحروف العربية داخل الملف نفسه)
                 if ((lower.contains(".vtt") || lower.contains(".srt")) && !lower.contains("thumb") && !lower.contains("sprite")) {
                     val urlCode = when {
                         lower.contains("arab") || Regex("([/_.-])(ar|ara)([/_.-]|\\.)").containsMatchIn(lower) -> "ar"
@@ -1221,7 +1212,6 @@ class ContentDetailActivity : AppCompatActivity() {
                         )
                         val cues = OttRepository.downloadAndParseSubtitles(tempTrack)
                         if (cues.isNotEmpty()) {
-                            // فحص نص الترجمة: إذا فيه حروف عربية نصنفه Arabic حتى لو الرابط مافيهش "ar"
                             val hasArabicScript = cues.take(10).any { cue ->
                                 cue.text.any { ch -> ch in '\u0600'..'\u06FF' }
                             }
@@ -1276,9 +1266,6 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * منطق التقاط البث الأصلي المستقر مع دعم السيرفرات الاحتياطية بسلاسة
-     */
     private fun onRawStreamIntercepted(url: String, referer: String, origin: String, userAgent: String) {
         runOnUiThread {
             val providerLabel = providerTargets.getOrNull(currentProviderIndex)?.label ?: "Server 1"
@@ -1326,6 +1313,7 @@ class ContentDetailActivity : AppCompatActivity() {
         snifferTimeoutJob?.cancel()
         streamFetchJob?.cancel()
         hasLockedPrimaryStream = false
+        triedServersCount = 0
         playerEngine.pauseAndReleaseSocket()
         resolvedDirectStreams.clear()
         providerTargets = emptyList()
@@ -1366,7 +1354,7 @@ class ContentDetailActivity : AppCompatActivity() {
             providerTargets = panelServers
 
             if (panelServers.isEmpty()) {
-                moviePlayerController.setLoadingState(false)
+                moviePlayerController.onAllServersExhausted()
                 return@launch
             }
 
@@ -1399,8 +1387,7 @@ class ContentDetailActivity : AppCompatActivity() {
 
         snifferTimeoutJob?.cancel()
         snifferTimeoutJob = lifecycleScope.launch {
-            // 2.6 ثواني فقط: إلا السيرفر ما ردش بالفيلم يحول فوراً للسيرفر اللي بعدو!
-            delay(2600L)
+            delay(4500L)
             if (!hasLockedPrimaryStream && !playerEngine.isPlaying()) {
                 tryNextProviderInBackground()
             }
@@ -1410,6 +1397,22 @@ class ContentDetailActivity : AppCompatActivity() {
     private fun tryNextProviderInBackground() {
         if (providerTargets.isEmpty()) return
         hasLockedPrimaryStream = false
+        triedServersCount++
+
+        if (triedServersCount >= providerTargets.size) {
+            snifferTimeoutJob?.cancel()
+            headlessSnifferWebView.stopLoading()
+            headlessSnifferWebView.loadUrl("about:blank")
+            headlessSnifferWebView.onPause()
+            headlessSnifferWebView.pauseTimers()
+            if (isPlayerModeActive) {
+                moviePlayerController.onAllServersExhausted()
+            } else {
+                moviePlayerController.setLoadingState(false)
+            }
+            return
+        }
+
         val nextIdx = (currentProviderIndex + 1) % providerTargets.size
         val nextServer = providerTargets[nextIdx]
         currentProviderIndex = nextIdx
@@ -1456,17 +1459,16 @@ class ContentDetailActivity : AppCompatActivity() {
             })
     }
 
-    /**
-     * جلب غلاف داخلي مختلف لصفحة التفاصيل (مثل FlixVision في parseMovie: يستعمل backdrop_path w1280 أو غلاف بديل من TMDB)
-     * حتى يتغير الغلاف عن البوستر الخارجي ويتحدث اللون الديناميكي معه
-     */
     private fun loadPosterAndExtractPalette(vod: VodItem) {
         coverResolveJob?.cancel()
         colorExtractionAnimator?.cancel()
         ivHeroBackdrop.setImageDrawable(null)
+
+        currentLeftBrightColor = Color.BLACK
+        currentRightDarkColor = Color.BLACK
         fullScreenAmbientDrawable.updateColors(
-            leftBright = FLIX_INITIAL_LEFT_COLOR,
-            rightDark = FLIX_INITIAL_RIGHT_COLOR,
+            leftBright = Color.BLACK,
+            rightDark = Color.BLACK,
             extractionFraction = 0f
         )
 
@@ -1485,9 +1487,10 @@ class ContentDetailActivity : AppCompatActivity() {
 
         if (initialCoverUrl.isNotEmpty()) {
             renderCoverUrlAndExtractPalette(vod.id, initialCoverUrl)
+        } else {
+            startCoverColorExtractionAnimation(FLIX_INITIAL_LEFT_COLOR, FLIX_INITIAL_RIGHT_COLOR)
         }
 
-        // إذا لم يكن هناك غلاف داخلي مختلف بعد، نجلبه من TMDB مباشرة ليظهر غلاف مختلف عن البوستر الخارجي
         if (cachedDistinctCover.isNullOrEmpty() && !hasDistinctBackdrop) {
             coverResolveJob = lifecycleScope.launch {
                 val fetchedCover = withContext(Dispatchers.IO) {
@@ -1522,13 +1525,11 @@ class ContentDetailActivity : AppCompatActivity() {
 
             val json = JSONObject(body)
 
-            // 1. كما يفعل FlixVision في JsonUtils.parseMovie: أخذ backdrop_path بدقة w1280
             val backdropPath = json.optString("backdrop_path", "").trim()
             if (backdropPath.isNotEmpty() && backdropPath != "null" && !backdropPath.endsWith(outsideFileName)) {
                 return "https://image.tmdb.org/t/p/w1280$backdropPath"
             }
 
-            // 2. البحث في قائمة backdrops أو posters الإضافية عن صورة مختلفة عن البوستر الخارجي
             val imagesObj = json.optJSONObject("images")
             if (imagesObj != null) {
                 val backdrops = imagesObj.optJSONArray("backdrops")
@@ -1606,7 +1607,7 @@ class ContentDetailActivity : AppCompatActivity() {
             rating = vod.rating,
             year = vod.year,
             runtime = if (vod.isSeries) "1 Season" else "1h 54m",
-            ageBadge = if (vod.isSeries) "TV-14" else "PG-13",
+            ageBadge = if (vod.isSeries) "Series" else "Film",
             qualityBadge = "FHD"
         )
 
@@ -1697,7 +1698,7 @@ class ContentDetailActivity : AppCompatActivity() {
             rating = details.rating.ifEmpty { vod.rating },
             year = details.year.ifEmpty { vod.year },
             runtime = if (vod.isSeries) "${details.numberOfSeasons} Seasons" else details.runtimeText,
-            ageBadge = if (vod.isSeries) "TV-14" else "PG-13",
+            ageBadge = if (vod.isSeries) "Series" else "Film",
             qualityBadge = "FHD"
         )
 
@@ -1901,7 +1902,6 @@ class ContentDetailActivity : AppCompatActivity() {
     private fun createWatchTogetherRoom() {
         val vod = currentVod ?: return
 
-        // نجبدو الرابط إذا كان واجد، وإذا مازال ما وجدش ندخلو للغرفة فوراً وهي تكمل تجبدو وحدها!
         val resolvedStream = resolvedDirectStreams.firstOrNull()
         val providerStream = providerTargets.firstOrNull { it.isDirectStream }
         val directStream = resolvedStream?.url ?: providerStream?.url ?: ""
@@ -2050,7 +2050,6 @@ class FlixVisionFullScreenAmbientDrawable(
         val dynamicOpaqueY = (fullOpaqueYAtRestPx * (1f - scrollFraction * 0.90f))
             .coerceAtLeast(dynamicFadeStart + 16f)
 
-        // El shadow yabda fouq el isem w yakmal 100% taht el isem direct kima kan f code ta3ek w kima FlixVision
         val topCoverAlpha = (255f * scrollFraction).toInt().coerceIn(0, 255)
         val fadeStep1Alpha = (255f * (0.18f + 0.82f * scrollFraction)).toInt().coerceIn(0, 255)
         val fadeStep2Alpha = (255f * (0.52f + 0.48f * scrollFraction)).toInt().coerceIn(0, 255)
@@ -2093,12 +2092,10 @@ class FlixVisionFullScreenAmbientDrawable(
         )
         canvas.drawRect(0f, 0f, w, h, mainThemePaint)
 
-        // El hawaf (Edges Foga + Gauche + Droite) b nafs el color ta3 li taht (leftBrightColor)
         if (!isPlayerMode && scrollFraction < 0.98f) {
             val fadeOutFactor = 1f - scrollFraction * 0.65f
             val coverBottom = min(h, coverHeightPx)
 
-            // 1. El Hafa El Fouqaniya (Top Edge kima f FlixVision Screen 2) b nafs color ta3 li taht
             val topEdgeH = coverHeightPx * 0.34f
             val topAlpha = (155 * fadeOutFactor).toInt().coerceIn(0, 255)
             edgeGlowPaint.shader = LinearGradient(
@@ -2117,7 +2114,6 @@ class FlixVisionFullScreenAmbientDrawable(
             )
             canvas.drawRect(0f, 0f, w, topEdgeH, edgeGlowPaint)
 
-            // 2. El Hafa 3la Gauche (khfifa fel taraf bach yakhroj chwiya color men tam bla ma yghatti el cover)
             val leftEdgeW = w * 0.18f
             val leftAlpha = ((115 + 45 * extractionFraction) * fadeOutFactor).toInt().coerceIn(0, 255)
             edgeGlowPaint.shader = LinearGradient(
@@ -2136,7 +2132,6 @@ class FlixVisionFullScreenAmbientDrawable(
             )
             canvas.drawRect(0f, 0f, leftEdgeW, coverBottom, edgeGlowPaint)
 
-            // 3. El Hafa 3la Droite (b nafs el color mkhallat m3a rightDarkColor)
             val rightEdgeW = w * 0.20f
             val rightEdgeColor = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.55f)
             val rightAlpha = (135 * fadeOutFactor).toInt().coerceIn(0, 255)
