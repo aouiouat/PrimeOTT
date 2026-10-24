@@ -1826,12 +1826,23 @@ class ContentDetailActivity : AppCompatActivity() {
 
    private fun createWatchTogetherRoom() {
         val vod = currentVod ?: return
+        val cleanId = vod.id.replace("tmdb_movie_", "").replace("tmdb_tv_", "").replace("tmdb_", "").trim()
 
-        // نبعثو الرابط الواجد غير إذا كان الفيلم ديجا شاعل بالـ Play، وإلا نخلو الغرفة تجبدو مباشرة كيما اختيار الأفلام
-        val workingStream = if (isPlayerModeActive) resolvedDirectStreams.firstOrNull() else null
-        val directStream = workingStream?.url.orEmpty()
-        val refererUrl = workingStream?.referer ?: "https://vidlink.pro/"
-        val customUa = workingStream?.userAgent ?: SNIFFER_UA
+        // نبعثو الرابط غير إذا كان اللاعب شاعل ديجا والفيديو يمشي بالـ Play (فيه m3u 8 أو mp4)
+        val activeUrl = resolvedDirectStreams.firstOrNull {
+            it.url.contains(".m3u8", ignoreCase = true) ||
+            it.url.contains(".mp4", ignoreCase = true) ||
+            it.url.contains("/playlist/", ignoreCase = true) ||
+            it.url.contains("m3u8-proxy", ignoreCase = true)
+        }?.url.orEmpty()
+
+        val refererUrl = resolvedDirectStreams.firstOrNull()?.referer ?: "https://vidlink.pro/"
+        val customUa = resolvedDirectStreams.firstOrNull()?.userAgent ?: SNIFFER_UA
+        val syncStreamPayload = if (activeUrl.isNotBlank()) {
+            "$activeUrl|Referer=$refererUrl|TMDB=$cleanId"
+        } else {
+            "https://vidlink.pro/movie/$cleanId|TMDB=$cleanId"
+        }
 
         Toast.makeText(this, "🎬 جاري فتح غرفة المشاهدة...", Toast.LENGTH_SHORT).show()
 
@@ -1845,10 +1856,10 @@ class ContentDetailActivity : AppCompatActivity() {
                 password = "",
                 allowGuestsControl = true,
                 contentType = "VOD",
-                streamId = vod.id,
+                streamId = cleanId,
                 contentTitle = vod.title,
                 contentPoster = vod.posterUrl,
-                streamUrl = directStream
+                streamUrl = syncStreamPayload
             )
 
             playerEngine.pauseAndReleaseSocket()
@@ -1856,11 +1867,11 @@ class ContentDetailActivity : AppCompatActivity() {
             startActivity(Intent(this@ContentDetailActivity, WatchRoomActivity::class.java).apply {
                 putExtra(WatchRoomActivity.EXTRA_ROOM_CODE, if (ok) codeOrErr else "")
                 putExtra(WatchRoomActivity.EXTRA_ROOM_NAME, "غرفة ${vod.title.take(22)}")
-                putExtra(WatchRoomActivity.EXTRA_STREAM_URL, directStream)
+                putExtra(WatchRoomActivity.EXTRA_STREAM_URL, activeUrl)
                 putExtra(WatchRoomActivity.EXTRA_STREAM_TITLE, vod.title)
                 putExtra(WatchRoomActivity.EXTRA_IS_HOST, true)
                 putExtra("direct_movie_launch", true)
-                putExtra("stream_id", vod.id)
+                putExtra("stream_id", cleanId)
                 putExtra("stream_referer", refererUrl)
                 putExtra("stream_ua", customUa)
             })
