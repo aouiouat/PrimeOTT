@@ -155,13 +155,13 @@ class WatchTogetherController(
                     room = room,
                     isHost = room.hostId == localUserId,
                     isPlaying = playerEngine.isPlaying(),
-                    currentPosMs = playerEngine.player?.currentPosition ?: 0L,
+                    currentPosMs = playerEngine.player?.currentPosition ?: room.playbackPositionMs,
                     lastSyncedMessageId = lastSyncedMessageId,
                     isMicMuted = voiceChatManager?.isMuted() ?: true
                 )
+                updateExpirationCountdownUI()
             }
-            updateExpirationCountdownUI()
-            mainHandler.postDelayed(this, 4000L)
+            mainHandler.postDelayed(this, 2500L)
         }
     }
 
@@ -273,7 +273,34 @@ class WatchTogetherController(
             blockedUserIds = blockedUserIds,
             onChatMessageReceived = { msg -> appendChatMessage(msg) },
             onEmojiReceived = { emoji -> spawnFloatingEmoji(emoji) },
-            onSyncResultReceived = { res -> applyServerSyncResult(res) }
+            onSyncResultReceived = { res -> applyServerSyncResult(res) },
+            onRealtimePlaybackSync = { packedUrl, streamId, title, isPlaying, posMs ->
+                handleRealtimePlaybackFromHost(packedUrl, streamId, title, isPlaying, posMs)
+            },
+            onRemoteSpeakerChanged = { speakerId, speakerName, isSpeaking ->
+                handleRemoteSpeakerIndicator(speakerId, speakerName, isSpeaking)
+            },
+            onImmediateSyncRequested = {
+                val room = currentRoom
+                if (room != null) {
+                    syncClient.performCloudflareRoomSync(
+                        room = room,
+                        isHost = room.hostId == localUserId,
+                        isPlaying = playerEngine.isPlaying(),
+                        currentPosMs = playerEngine.player?.currentPosition ?: 0L,
+                        lastSyncedMessageId = lastSyncedMessageId,
+                        isMicMuted = voiceChatManager?.isMuted() ?: true
+                    )
+                }
+            },
+            onForceMuteReceived = {
+                voiceChatManager?.setMuted(true)
+                participantsMap[localUserId]?.isMuted = true
+                btnToggleMic.text = "🔇 مكتوم"
+                btnToggleMic.setTextColor(Color.parseColor("#FF8A80"))
+                participantsAdapter.notifyDataSetChanged()
+                Toast.makeText(hostContext, "قام المضيف بكتم الميكروفون للجميع", Toast.LENGTH_SHORT).show()
+            }
         )
 
         streamSniffer = WatchRoomStreamSniffer(
@@ -318,7 +345,20 @@ class WatchTogetherController(
             onFirstFrameRendered = {
                 mainHandler.post {
                     playerUI.setBuffering(false)
-                    playerUI.updatePlayPauseIcon(true)
+                    val room = currentRoom
+                    val exo = playerEngine.player
+                    if (room != null && exo != null) {
+                        if (room.hostId != localUserId && room.playbackPositionMs > 2000L && abs(exo.currentPosition - room.playbackPositionMs) > 2500L) {
+                            exo.seekTo(room.playbackPositionMs)
+                        }
+                        if (room.hostId != localUserId && exo.isPlaying != room.isPlaying) {
+                            exo.playWhenReady = room.isPlaying
+                        }
+                        if (room.hostId == localUserId) {
+                            triggerPlaybackSyncBroadcast()
+                        }
+                    }
+                    playerUI.updatePlayPauseIcon(playerEngine.isPlaying())
                     playerUI.scheduleAutoHideControls()
                 }
             },
@@ -368,6 +408,123 @@ class WatchTogetherController(
             }
         )
         playerUI.buildOverlayUI()
+    }
+
+    private val speakerClearRunnables = ConcurrentHashMap<String, Runnable>()
+
+    private fun handleRemoteSpeakerIndicator(speakerId: String, speakerName: String, isSpeaking: Boolean) {
+        participantsMap[speakerId]?.isSpeaking = isSpeaking
+        if (isSpeaking) {
+            participantsMap[speakerId]?.isMuted = false
+            tvVoiceSpeakingIndicator.text = "🎙️ يتحدث: $speakerName"
+            tvVoiceSpeakingIndicator.setTextColor(Color.parseColor("#00E676"))
+        }
+        participantsAdapter.notifyDataSetChanged()
+
+        speakerClearRunnables[speakerId]?.let { mainHandler.removeCallbacks(it) }
+        if (isSpeaking) {
+            val clearTask = Runnable {
+                participantsMap[speakerId]?.isSpeaking = false
+                updateSpeakingBannerText()
+                participantsAdapter.notifyDataSetChanged()
+            }
+            speakerClearRunnables[speakerId] = clearTask
+            mainHandler.postDelayed(clearTask, 1400L)
+        } else {
+            updateSpeakingBannerText()
+        }
+    }
+
+    private fun updateSpeakingBannerText() {
+        val activeSpeaker = participantsMap.values.firstOrNull { it.isSpeaking }
+        if (activeSpeaker != null) {
+            val nameToShow = if (activeSpeaker.userId == localUserId) "أنت تتحدث الآن..." else "يتحدث: ${activeSpeaker.userName}"
+            tvVoiceSpeakingIndicator.text = "🎙️ $nameToShow"
+            tvVoiceSpeakingIndicator.setTextColor(Color.parseColor("#00E676"))
+        } else {
+            tvVoiceSpeakingIndicator.text = "🔊 صوت نقي"
+            tvVoiceSpeakingIndicator.setTextColor(Color.parseColor("#CBD5E1"))
+        }
+    }
+
+    private fun initVoiceEngineForRoom(roomCode: String) {
+        voiceChatManager?.release()
+        val roomIdForVoice = currentRoom?.roomCode?.ifBlank { roomCode } ?: roomCode
+        voiceChatManager = VoiceChatManager(
+            context = hostContext,
+            roomId = roomIdForVoice,
+            userId = localUserId,
+            userName = localUserName
+        ) { isSpeaking, speakingId ->
+            mainHandler.post {
+                val room = currentRoom ?: return@post
+                val speakingIdStr = speakingId.toString()
+                if (speakingIdStr.isNotBlank() && speakingIdStr != "0" && speakingIdStr != localUserId) {
+                    val remotePeer = participantsMap.values.firstOrNull { it.userId == speakingIdStr || it.userName == speakingIdStr }
+                    if (remotePeer != null) {
+                        handleRemoteSpeakerIndicator(remotePeer.userId, remotePeer.userName, isSpeaking)
+                    } else {
+                        tvVoiceSpeakingIndicator.text = if (isSpeaking) "🎙️ يتحدث عضو..." else "🔊 صوت نقي"
+                    }
+                } else {
+                    val prev = participantsMap[localUserId]?.isSpeaking ?: false
+                    participantsMap[localUserId]?.isSpeaking = isSpeaking
+                    if (prev != isSpeaking) {
+                        syncClient.broadcastSpeakingState(room.roomCode, isSpeaking)
+                        participantsAdapter.notifyDataSetChanged()
+                    }
+                    updateSpeakingBannerText()
+                }
+            }
+        }
+        if (ContextCompat.checkSelfPermission(hostContext, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            voiceChatManager?.startVoiceChat()
+        }
+    }
+
+    private fun handleRealtimePlaybackFromHost(
+        packedUrl: String,
+        streamId: String,
+        title: String,
+        isPlaying: Boolean,
+        posMs: Long
+    ) {
+        val room = currentRoom ?: return
+        if (room.hostId == localUserId || streamSniffer.isExtractingNewMovie) return
+
+        val (srvCleanUrl, srvRef) = WatchRoomStreamSniffer.unpackUrlAndReferer(packedUrl)
+        if (title.isNotBlank()) room.streamTitle = title
+        if (streamId.isNotBlank()) room.streamId = streamId
+        room.isPlaying = isPlaying
+        room.playbackPositionMs = posMs
+        room.status = if (isPlaying) "LIVE" else "PAUSED"
+
+        if (srvCleanUrl.isNotEmpty() && srvCleanUrl != room.streamUrl) {
+            room.streamUrl = srvCleanUrl
+            room.streamReferer = srvRef
+            val guestSource = StreamSource(
+                label = room.streamServerLabel.ifBlank { "REYZO 1" },
+                url = room.streamUrl,
+                referer = room.streamReferer,
+                isDirectStream = true
+            )
+            playStreamSourceInEngine(guestSource, room.streamTitle, posMs)
+            if (room.streamId.isNotBlank() && room.streamId != "0") {
+                subtitleManager.loadSubtitlesForMovieAutomatically(room.streamId)
+            }
+        } else {
+            playerEngine.player?.let { player ->
+                if (player.isPlaying != isPlaying) {
+                    player.playWhenReady = isPlaying
+                    playerUI.updatePlayPauseIcon(isPlaying)
+                }
+                if (posMs > 0L && abs(player.currentPosition - posMs) > 2200L) {
+                    player.seekTo(posMs)
+                    playerUI.updateSeekProgressUI(posMs, player.duration)
+                }
+            }
+        }
+        updateRoomHeaderAndPermissionsUI()
     }
 
     private fun triggerPlaybackSyncBroadcast() {
@@ -715,7 +872,6 @@ class WatchTogetherController(
 
         playerUI.updatePlayerTitleText(room.streamTitle)
 
-        // التحقق أن الرابط هو بث مباشر حقيقي (m3u8/mp4) وليس صفحة Embed
         val hasValidDirectUrl = room.streamUrl.isNotBlank() &&
             (!room.isMovie || streamSniffer.isLikelyDirectStreamUrl(room.streamUrl))
 
@@ -734,7 +890,6 @@ class WatchTogetherController(
                 streamSniffer.fetchBackupServersInBackground(room.streamId, room.streamTitle)
             }
         } else if (room.streamId.isNotBlank() && room.streamId != "0") {
-            // إذا كان الفيلم قادماً من الخارج بدون رابط مباشر، نستخرجه عبر الـ Sniffer تماماً كما نفعل داخل الغرفة
             playerUI.setBuffering(true)
             playerUI.updateServerPillText("⏳ جاري الجلب...")
             streamSniffer.extractAndPlayMovie(
@@ -970,11 +1125,17 @@ class WatchTogetherController(
         room.streamTitle = title
         room.isMovie = isMovie
         room.isPlaying = true
-        room.playbackPositionMs = 0L
+        
+        if (room.hostId != localUserId && room.playbackPositionMs > 0L) {
+            // الحفاظ على الوقت الحالي للضيف أثناء الجلب
+        } else {
+            room.playbackPositionMs = 0L
+        }
+        
         room.status = "LIVE"
 
         switchRoomInternalTab("CHAT")
-        playStreamSourceInEngine(source, title, seekMs = 0L)
+        playStreamSourceInEngine(source, title, seekMs = room.playbackPositionMs)
         triggerPlaybackSyncBroadcast()
         appendSystemChatAndLog("🎬 تم تشغيل: $title (${room.streamServerLabel})")
         updateRoomHeaderAndPermissionsUI()
@@ -1086,7 +1247,7 @@ class WatchTogetherController(
             controllerScope.launch {
                 OttRepository.manageWatchRoom(room.roomId, localUserId, "MUTE_ALL")
             }
-            syncClient.broadcastRoomEvent(room.roomId, "MUTE_ALL", JSONObject())
+            syncClient.broadcastRoomEvent(room.roomCode, "MUTE_ALL", JSONObject())
             appendSystemChatAndLog("🔇 قام المضيف بكتم الميكروفون للجميع")
         }
 
@@ -1168,7 +1329,7 @@ class WatchTogetherController(
             put("senderRole", msg.senderRole)
             put("text", msg.text)
         }
-        syncClient.broadcastRoomEvent(room.roomId, "CHAT_MSG", payload)
+        syncClient.broadcastRoomEvent(room.roomCode, "CHAT_MSG", payload)
     }
 
     private fun appendChatMessage(msg: ChatMessageModel) {
@@ -1195,7 +1356,7 @@ class WatchTogetherController(
         controllerScope.launch {
             OttRepository.sendRoomMessage(room.roomId, localUserId, emoji, "REACTION")
         }
-        syncClient.broadcastRoomEvent(room.roomId, "EMOJI", JSONObject().put("emoji", emoji))
+        syncClient.broadcastRoomEvent(room.roomCode, "EMOJI", JSONObject().put("emoji", emoji))
     }
 
     private fun spawnFloatingEmoji(emoji: String) {
@@ -1220,24 +1381,6 @@ class WatchTogetherController(
         })
         animY.start()
         animAlpha.start()
-    }
-
-    private fun initVoiceEngineForRoom(roomCode: String) {
-        voiceChatManager?.release()
-        voiceChatManager = VoiceChatManager(
-            context = hostContext,
-            roomId = roomCode,
-            userId = localUserId,
-            userName = localUserName
-        ) { isSpeaking, _ ->
-            mainHandler.post {
-                participantsMap[localUserId]?.isSpeaking = isSpeaking
-                tvVoiceSpeakingIndicator.text = if (isSpeaking) "🟢 يتحدث..." else "صوت نقي"
-            }
-        }
-        if (ContextCompat.checkSelfPermission(hostContext, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            voiceChatManager?.startVoiceChat()
-        }
     }
 
     private fun toggleMicrophoneState() {
@@ -1265,13 +1408,19 @@ class WatchTogetherController(
         val srvRoom = res.room ?: return
 
         if (res.participants.isNotEmpty()) {
+            val previousSpeaking = participantsMap.mapValues { it.value.isSpeaking }
             participantsMap.clear()
             for (p in res.participants) {
+                val roleNorm = if (p.role == "HOST" || p.userName == room.hostName) "HOST" else "PARTICIPANT"
+                if (roleNorm == "HOST" && room.hostId.startsWith("HOST_")) {
+                    room.hostId = p.deviceId
+                }
                 participantsMap[p.deviceId] = ParticipantModel(
                     userId = p.deviceId,
                     userName = p.userName,
-                    role = p.role,
-                    isMuted = p.isMuted
+                    role = roleNorm,
+                    isMuted = p.isMuted,
+                    isSpeaking = previousSpeaking[p.deviceId] ?: false
                 )
             }
             room.onlineCount = participantsMap.size
@@ -1289,9 +1438,10 @@ class WatchTogetherController(
                         msgId = "SRV_${m.id}",
                         senderId = m.senderId,
                         senderName = m.senderName,
-                        senderRole = "PARTICIPANT",
+                        senderRole = if (m.senderId == "SYSTEM") "SYSTEM" else "PARTICIPANT",
                         text = m.content,
-                        timestamp = if (m.createdAt > 0) m.createdAt else System.currentTimeMillis()
+                        timestamp = if (m.createdAt > 0) m.createdAt else System.currentTimeMillis(),
+                        isSystemEvent = m.senderId == "SYSTEM"
                     )
                 )
             }
@@ -1301,24 +1451,49 @@ class WatchTogetherController(
             isHandlingRemoteSync = true
             try {
                 val (srvCleanUrl, srvRef) = WatchRoomStreamSniffer.unpackUrlAndReferer(srvRoom.streamUrl)
+                room.isPlaying = srvRoom.isPlaying
+                room.playbackPositionMs = srvRoom.playbackPositionMs
+                room.status = if (srvRoom.isPlaying) "LIVE" else "PAUSED"
+                if (srvRoom.streamId.isNotBlank() && srvRoom.streamId != "0") {
+                    room.streamId = srvRoom.streamId
+                }
+
                 if (srvCleanUrl.isNotEmpty() && srvCleanUrl != room.streamUrl) {
                     room.streamUrl = srvCleanUrl
                     room.streamReferer = srvRef
                     room.streamTitle = srvRoom.contentTitle.ifEmpty { room.streamTitle }
                     val guestSource = StreamSource(
-                        label = room.streamServerLabel,
+                        label = room.streamServerLabel.ifBlank { "REYZO 1" },
                         url = room.streamUrl,
                         referer = room.streamReferer,
                         isDirectStream = true
                     )
                     playStreamSourceInEngine(guestSource, room.streamTitle, srvRoom.playbackPositionMs)
+                    if (room.streamId.isNotBlank() && room.streamId != "0") {
+                        subtitleManager.loadSubtitlesForMovieAutomatically(room.streamId)
+                    }
+                } else if (srvCleanUrl.isEmpty() && room.streamUrl.isEmpty() && srvRoom.streamId.isNotBlank() && srvRoom.streamId != "0") {
+                    room.streamTitle = srvRoom.contentTitle.ifEmpty { room.streamTitle }
+                    streamSniffer.extractAndPlayMovie(
+                        MediaStreamOption(
+                            id = srvRoom.streamId,
+                            title = room.streamTitle,
+                            subtitle = "🎬 فيلم",
+                            streamUrl = "",
+                            isMovie = true
+                        )
+                    ) { cleanTmdbId ->
+                        subtitleManager.loadSubtitlesForMovieAutomatically(cleanTmdbId)
+                    }
                 } else {
                     playerEngine.player?.let { player ->
                         if (player.isPlaying != srvRoom.isPlaying) {
                             player.playWhenReady = srvRoom.isPlaying
+                            playerUI.updatePlayPauseIcon(srvRoom.isPlaying)
                         }
-                        if (srvRoom.playbackPositionMs > 0 && abs(player.currentPosition - srvRoom.playbackPositionMs) > 8000L) {
+                        if (srvRoom.playbackPositionMs > 0 && abs(player.currentPosition - srvRoom.playbackPositionMs) > 2500L) {
                             player.seekTo(srvRoom.playbackPositionMs)
+                            playerUI.updateSeekProgressUI(srvRoom.playbackPositionMs, player.duration)
                         }
                     }
                 }
@@ -1326,7 +1501,6 @@ class WatchTogetherController(
                 mainHandler.postDelayed({ isHandlingRemoteSync = false }, 350L)
             }
         }
-
         updateRoomHeaderAndPermissionsUI()
         updateDetailedStatsUI()
     }
@@ -1545,7 +1719,6 @@ class WatchTogetherController(
                 if (isDirectValid) {
                     triggerPlaybackSyncBroadcast()
                 } else if (passedStreamId.isEmpty() && passedUrl.isNotEmpty()) {
-                    // حالة احتياطية: إذا لم يتم تمرير TMDB ID وتم تمرير رابط صفحة Embed فقط
                     streamSniffer.currentProviderTargets.clear()
                     streamSniffer.currentProviderTargets.add(
                         StreamSource(
