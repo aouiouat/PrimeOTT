@@ -1587,7 +1587,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 bindMovieFullDetailsToUi(vod, details)
             }
 
-            startStreamExtractionForEpisodeOrMovie(vod, 1, 1, runWebViewNow = false)
+            startStreamExtractionForEpisodeOrMovie(vod, 1, 1, runWebViewNow = true)
 
             withContext(Dispatchers.IO) {
                 val subs = OttRepository.fetchRealSubtitlesForMovie(
@@ -1832,16 +1832,16 @@ class ContentDetailActivity : AppCompatActivity() {
         btnFavBox.setImageResource(resId)
     }
 
-    private fun createWatchTogetherRoom() {
+   private fun createWatchTogetherRoom() {
         val vod = currentVod ?: return
 
-        // نجبدو الرابط إذا كان واجد، وإذا مازال ما وجدش ندخلو للغرفة فوراً وهي تكمل تجبدو وحدها!
-        val resolvedStream = resolvedDirectStreams.firstOrNull()
-        val providerStream = providerTargets.firstOrNull { it.isDirectStream }
-        val directStream = resolvedStream?.url ?: providerStream?.url ?: ""
+        // نبعثو الرابط الواجد غير إذا كان الفيلم ديجا شاعل بالـ Play، وإلا نخلو الغرفة تجبدو مباشرة كيما اختيار الأفلام
+        val workingStream = if (isPlayerModeActive) resolvedDirectStreams.firstOrNull() else null
+        val directStream = workingStream?.url.orEmpty()
+        val refererUrl = workingStream?.referer ?: "https://vidlink.pro/"
+        val customUa = workingStream?.userAgent ?: SNIFFER_UA
 
-        val refererUrl = providerTargets.getOrNull(currentProviderIndex)?.url ?: directStream
-        val customUa = SessionManager.CUSTOM_USER_AGENT
+        Toast.makeText(this, "🎬 جاري فتح غرفة المشاهدة...", Toast.LENGTH_SHORT).show()
 
         lifecycleScope.launch {
             val (ok, codeOrErr) = OttRepository.createWatchRoom(
@@ -1875,6 +1875,40 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
+    private fun launchRoomWithDirectStream(vod: VodItem, streamUrl: String, referer: String, ua: String) {
+        lifecycleScope.launch {
+            val (ok, codeOrErr) = OttRepository.createWatchRoom(
+                deviceId = SessionManager.getDeviceId(this@ContentDetailActivity),
+                userName = SessionManager.getUserName(this@ContentDetailActivity),
+                roomName = "غرفة ${vod.title.take(22)}",
+                roomIcon = "🎬",
+                isPrivate = false,
+                password = "",
+                allowGuestsControl = true,
+                contentType = "VOD",
+                streamId = vod.id,
+                contentTitle = vod.title,
+                contentPoster = vod.posterUrl,
+                streamUrl = streamUrl
+            )
+
+            playerEngine.pauseAndReleaseSocket()
+
+            startActivity(Intent(this@ContentDetailActivity, WatchRoomActivity::class.java).apply {
+                putExtra(WatchRoomActivity.EXTRA_ROOM_CODE, if (ok) codeOrErr else "")
+                putExtra(WatchRoomActivity.EXTRA_ROOM_NAME, "غرفة ${vod.title.take(22)}")
+                putExtra(WatchRoomActivity.EXTRA_STREAM_URL, streamUrl)
+                putExtra(WatchRoomActivity.EXTRA_STREAM_TITLE, vod.title)
+                putExtra(WatchRoomActivity.EXTRA_IS_HOST, true)
+                putExtra("direct_movie_launch", true)
+                putExtra("stream_id", vod.id)
+                putExtra("stream_referer", referer)
+                putExtra("stream_ua", ua)
+            })
+        }
+    }
+
+    
     override fun onPause() {
         super.onPause()
         val p = playerEngine.player
