@@ -83,7 +83,7 @@ import kotlin.math.abs
 private fun applyTrueFullscreenDialog(dialog: Dialog, rootView: View) {
     dialog.window?.let { w ->
         WindowCompat.setDecorFitsSystemWindows(w, false)
-        w.setBackgroundDrawable(ColorDrawable(Color.parseColor("#08080C")))
+        w.setBackgroundDrawable(com.primeott.app.FlixVisionStandardBgDrawable())
         w.statusBarColor = Color.parseColor("#08080C")
         w.navigationBarColor = Color.parseColor("#08080C")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -587,7 +587,7 @@ class HomeFragment : Fragment() {
 
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#08080C"))
+            background = com.primeott.app.FlixVisionStandardBgDrawable()
             setPadding((8 * d).toInt(), (12 * d).toInt(), (8 * d).toInt(), 0)
         }
 
@@ -844,7 +844,7 @@ class HomeFragment : Fragment() {
 
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#08080C"))
+            background = com.primeott.app.FlixVisionStandardBgDrawable()
             setPadding((12 * d).toInt(), (12 * d).toInt(), (12 * d).toInt(), 0)
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,

@@ -1,26 +1,37 @@
 package com.primeott.app
-import com.primeott.app.presentation.watch.WatchTogetherTabFragment
-import com.primeott.app.presentation.auth.ProfileSettingsActivity
-import com.primeott.app.presentation.auth.LoginActivity
 
 import android.animation.ValueAnimator
+import android.content.Context
 import android.content.Intent
 import android.content.res.ColorStateList
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorFilter
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.PixelFormat
+import android.graphics.Shader
+import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import androidx.activity.OnBackPressedCallback
+import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.graphics.ColorUtils
 import androidx.core.widget.ImageViewCompat
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
+import androidx.media3.common.util.UnstableApi
 import com.primeott.app.data.repository.OttRepository
 import com.primeott.app.databinding.ActivityMainBinding
+import com.primeott.app.presentation.auth.LoginActivity
 import com.primeott.app.presentation.livetv.LiveTvFragment
-import com.primeott.app.presentation.sections.*
+import com.primeott.app.presentation.sections.HomeFragment
+import com.primeott.app.presentation.sections.VodFragment
 import com.primeott.app.presentation.watch.WatchRoomActivity
 import com.primeott.app.presentation.watch.WatchTogetherFragment
+import com.primeott.app.presentation.watch.WatchTogetherTabFragment
 import kotlin.math.abs
 import kotlin.math.sin
 
@@ -34,23 +45,21 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        
-
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // تطبيق الخلفية Standard (#233242 -> #000000) مع الـ Dither والـ Vignette
+        binding.root.background = FlixVisionStandardBgDrawable()
+
         // BEGIN_ROYAL_AUTH_HOOK
-        val royalAuthPrefs = getSharedPreferences("royal_auth_prefs", android.content.Context.MODE_PRIVATE)
+        val royalAuthPrefs = getSharedPreferences("royal_auth_prefs", Context.MODE_PRIVATE)
         val loggedUser = royalAuthPrefs.getString("current_user", null)
         if (!royalAuthPrefs.getBoolean("session_active", false) || loggedUser.isNullOrEmpty()) {
-            startActivity(android.content.Intent(this, LoginActivity::class.java))
+            startActivity(Intent(this, LoginActivity::class.java))
             finish()
             return
         }
         // END_ROYAL_AUTH_HOOK
-
-
-        
 
         OttRepository.initFavorites(this)
 
@@ -98,6 +107,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @OptIn(UnstableApi::class)
     private fun switchToTab(tag: String, animate: Boolean = true) {
         if (activeTag == tag && supportFragmentManager.findFragmentByTag(tag) != null) return
 
@@ -221,8 +231,8 @@ class MainActivity : AppCompatActivity() {
             if (animate) {
                 val startX = circle.translationX
                 val maxLiftPx = -4.5f * density
+
                 val maxStretchX = (1.16f + (tabDistance * 0.05f)).coerceAtMost(1.38f)
-                // Ki yroh men a9sa yamin l a9sa yasar yroh rapide b slide chaba
                 val animDuration = if (tabDistance >= 3) 215L else 255L
 
                 circleSlideAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -230,12 +240,9 @@ class MainActivity : AppCompatActivity() {
                     interpolator = FastOutSlowInInterpolator()
                     addUpdateListener { va ->
                         val f = va.animatedFraction
-                        // Slide X
                         circle.translationX = startX + (destX - startX) * f
-                        // Arc Lift Y (yethaz fel wasat apres yetsagam ki yawsal)
                         val wave = sin(f * Math.PI).toFloat()
                         circle.translationY = maxLiftPx * wave
-                        // Liquid Stretch X & Squash Y
                         circle.scaleX = 1f + (maxStretchX - 1f) * wave
                         circle.scaleY = 1f - (0.08f * wave)
                     }
@@ -255,4 +262,67 @@ class MainActivity : AppCompatActivity() {
             applyPosition()
         }
     }
+}
+
+/**
+ * محرك الإضاءة المحيطية مطابق لـ ContentDetailActivity
+ * (#233242 -> #000000) مع 5 درجات دمج أفقية وDITHER_FLAG لمنع تدرجات الألوان المقطعة.
+ */
+class FlixVisionStandardBgDrawable : Drawable() {
+
+    private val mainPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
+    private val topVignettePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
+
+    private val leftBrightColor = Color.parseColor("#233242")
+    private val rightDarkColor = Color.parseColor("#000000")
+
+    override fun draw(canvas: Canvas) {
+        val b = bounds
+        val w = b.width().toFloat().coerceAtLeast(1f)
+        val h = b.height().toFloat().coerceAtLeast(1f)
+
+        val midBlend1 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.25f)
+        val midBlend2 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.54f)
+        val midBlend3 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.82f)
+
+        mainPaint.shader = LinearGradient(
+            0f, 0f, w, 0f,
+            intArrayOf(
+                leftBrightColor,
+                midBlend1,
+                midBlend2,
+                midBlend3,
+                rightDarkColor
+            ),
+            floatArrayOf(0f, 0.26f, 0.54f, 0.80f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(0f, 0f, w, h, mainPaint)
+
+        topVignettePaint.shader = LinearGradient(
+            0f, 0f, 0f, h,
+            intArrayOf(
+                Color.parseColor("#55000000"),
+                Color.TRANSPARENT,
+                Color.TRANSPARENT,
+                Color.parseColor("#66000000")
+            ),
+            floatArrayOf(0f, 0.14f, 0.82f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        canvas.drawRect(0f, 0f, w, h, topVignettePaint)
+    }
+
+    override fun setAlpha(alpha: Int) {
+        mainPaint.alpha = alpha
+        topVignettePaint.alpha = alpha
+    }
+
+    override fun setColorFilter(colorFilter: ColorFilter?) {
+        mainPaint.colorFilter = colorFilter
+        topVignettePaint.colorFilter = colorFilter
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun getOpacity(): Int = PixelFormat.OPAQUE
 }

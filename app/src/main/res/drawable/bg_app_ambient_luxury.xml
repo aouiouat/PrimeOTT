@@ -1,21 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- الطبقة الأساسية السوداء -->
-    <item>
-        <shape android:shape="rectangle">
-            <solid android:color="#000000" />
-        </shape>
-    </item>
 
-    <!-- تدرج Ambient علوي وجانبي بنفس لون FlixVision القياسي (#233242 -> #000000) -->
+    <!-- 1. التدرج الأفقي الـ Standard تاع صفحة الفيلم (#233242 يسار -> #000000 يمين) مع Dither لمنع التقطع -->
     <item>
         <shape android:shape="rectangle">
             <gradient
-                android:angle="315"
-                android:centerColor="#121A24"
-                android:endColor="#000000"
+                android:angle="0"
                 android:startColor="#233242"
-                android:type="linear" />
+                android:centerColor="#10171F"
+                android:endColor="#000000"
+                android:type="linear"
+                android:dither="true" />
         </shape>
     </item>
+
+    <!-- 2. لمسة عمودي ناعمة من الفوق والتحت باش الكروت والكتابة يخرجو شابين بزاف -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="#40000000"
+                android:centerColor="#00000000"
+                android:endColor="#55000000"
+                android:type="linear"
+                android:dither="true" />
+        </shape>
+    </item>
+
 </layer-list>
