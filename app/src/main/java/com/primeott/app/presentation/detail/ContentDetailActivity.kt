@@ -146,6 +146,7 @@ class ContentDetailActivity : AppCompatActivity() {
     private var providerTargets: List<StreamSource> = emptyList()
     private var currentProviderIndex: Int = 0
     private var triedServersCount: Int = 0
+    @Volatile
     private var hasLockedPrimaryStream: Boolean = false
     private var isPlayerModeActive: Boolean = false
 
@@ -1127,6 +1128,15 @@ class ContentDetailActivity : AppCompatActivity() {
                     )
                 }
             }
+
+            @JavascriptInterface
+            fun onDeadServerDetected() {
+                runOnUiThread {
+                    if (!hasLockedPrimaryStream) {
+                        tryNextProviderInBackground()
+                    }
+                }
+            }
         }, "PrimeSnifferBridge")
 
         headlessSnifferWebView.webChromeClient = WebChromeClient()
@@ -1136,7 +1146,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 val allowed = listOf(
                     "vidfast", "vixsrc", "netnaija", "vidlink", "multiembed", "2embed",
                     "vidsrc", "embed.su", "autoembed", "superembed", "cloudnestra",
-                    "tmstr", "rabbitstream", "megacloud", "vidplay", "filemoon"
+                    "tmstr", "rabbitstream", "megacloud", "vidplay", "filemoon", "aoneroom"
                 )
                 return !allowed.any { target.contains(it, ignoreCase = true) }
             }
@@ -1148,39 +1158,60 @@ class ContentDetailActivity : AppCompatActivity() {
             ) {
                 super.onReceivedHttpError(view, request, errorResponse)
                 val status = errorResponse?.statusCode ?: 200
-                if (request?.isForMainFrame == true && (status == 404 || status >= 500)) {
+                if (request?.isForMainFrame == true && (status == 403 || status == 404 || status >= 500)) {
                     if (!hasLockedPrimaryStream) {
                         tryNextProviderInBackground()
                     }
                 }
             }
 
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: android.webkit.WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                if (request?.isForMainFrame == true && !hasLockedPrimaryStream) {
+                    tryNextProviderInBackground()
+                }
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                if (hasLockedPrimaryStream || url == "about:blank") return
-                val autoClickJs = """
+                if (hasLockedPrimaryStream || url.isNullOrEmpty() || url == "about:blank") return
+                // Click only known play controls; never click generic buttons (Pause/seek).
+                val autoClickAndCheckDeadJs = """
                     (function() {
+                        var bodyTxt = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : "";
+                        if (bodyTxt.indexOf("not found") !== -1 || bodyTxt.indexOf("unavailable") !== -1 || bodyTxt.indexOf("no sources") !== -1) {
+                            window.PrimeSnifferBridge.onDeadServerDetected();
+                            return;
+                        }
                         var count = 0;
                         var timer = setInterval(function() {
                             count++;
-                            if (count > 16) { clearInterval(timer); return; }
-                            var btns = document.querySelectorAll('button, .play-btn, .jw-icon-display, .vjs-big-play-button, [aria-label="Play"], #play-button, .plyr__control--overlaid');
-                            for (var i = 0; i < btns.length; i++) {
-                                try { btns[i].click(); } catch(e) {}
-                            }
+                            if (count > 10) { clearInterval(timer); return; }
                             var v = document.querySelector('video');
                             if (v) {
                                 v.muted = true;
-                                try { v.play(); } catch(e) {}
+                                if (v.paused) {
+                                    try { v.play(); } catch(e) {}
+                                }
                                 if (v.src && v.src.indexOf('http') === 0) {
                                     window.PrimeSnifferBridge.onStreamCaptured(v.src, window.location.origin);
                                     clearInterval(timer);
+                                    return;
+                                }
+                            } else {
+                                var btns = document.querySelectorAll('.play-btn, .jw-icon-display, .vjs-big-play-button, [aria-label="Play"], #play-button, .plyr__control--overlaid');
+                                for (var i = 0; i < btns.length; i++) {
+                                    try { btns[i].click(); } catch(e) {}
                                 }
                             }
-                        }, 280);
+                        }, 350);
                     })();
                 """.trimIndent()
-                view?.evaluateJavascript(autoClickJs, null)
+                view?.evaluateJavascript(autoClickAndCheckDeadJs, null)
             }
 
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
@@ -1267,7 +1298,24 @@ class ContentDetailActivity : AppCompatActivity() {
     }
 
     private fun onRawStreamIntercepted(url: String, referer: String, origin: String, userAgent: String) {
+        // Lock immediately before posting to the UI thread so secondary HLS requests
+        // cannot trigger a second player start.
+        synchronized(this) {
+            if (hasLockedPrimaryStream) return
+            hasLockedPrimaryStream = true
+        }
+
         runOnUiThread {
+            snifferTimeoutJob?.cancel()
+            headlessSnifferWebView.evaluateJavascript(
+                "try { var v = document.querySelector('video'); if(v){ v.pause(); v.removeAttribute('src'); v.load(); } } catch(e){}",
+                null
+            )
+            headlessSnifferWebView.stopLoading()
+            headlessSnifferWebView.loadUrl("about:blank")
+            headlessSnifferWebView.onPause()
+            headlessSnifferWebView.pauseTimers()
+
             val providerLabel = providerTargets.getOrNull(currentProviderIndex)?.label ?: "Server 1"
             val newDirectSource = StreamSource(
                 label = providerLabel,
@@ -1278,28 +1326,17 @@ class ContentDetailActivity : AppCompatActivity() {
                 isDirectStream = true
             )
 
-            if (!hasLockedPrimaryStream) {
-                hasLockedPrimaryStream = true
-                snifferTimeoutJob?.cancel()
-                headlessSnifferWebView.stopLoading()
-                headlessSnifferWebView.loadUrl("about:blank")
-                headlessSnifferWebView.onPause()
-                headlessSnifferWebView.pauseTimers()
+            resolvedDirectStreams.clear()
+            resolvedDirectStreams.add(newDirectSource)
+            moviePlayerController.setServerBadgeLabel(providerLabel)
 
-                resolvedDirectStreams.add(0, newDirectSource)
-                moviePlayerController.setServerBadgeLabel(providerLabel)
-
-                if (isPlayerModeActive) {
-                    playerEngine.playSources(
-                        moviePlayerController.playerView,
-                        resolvedDirectStreams.toList(),
-                        0,
-                        pendingResumePositionMs
-                    )
-                }
-            } else {
-                resolvedDirectStreams.add(newDirectSource)
-                playerEngine.appendBackupSourcesSilently(listOf(newDirectSource))
+            if (isPlayerModeActive) {
+                playerEngine.playSources(
+                    moviePlayerController.playerView,
+                    resolvedDirectStreams.toList(),
+                    0,
+                    pendingResumePositionMs
+                )
             }
         }
     }
@@ -1314,7 +1351,11 @@ class ContentDetailActivity : AppCompatActivity() {
         streamFetchJob?.cancel()
         hasLockedPrimaryStream = false
         triedServersCount = 0
+
         playerEngine.pauseAndReleaseSocket()
+        // Clear the previous frame before preparing the new stream.
+        moviePlayerController.playerView.player = null
+
         resolvedDirectStreams.clear()
         providerTargets = emptyList()
 
@@ -1338,7 +1379,7 @@ class ContentDetailActivity : AppCompatActivity() {
                     season = season,
                     episode = episode,
                     onFastestDirectReady = { fastestServer ->
-                        runOnUiThread {
+                        if (!hasLockedPrimaryStream) {
                             val idx = providerTargets.indexOfFirst { it.label == fastestServer.label }.coerceAtLeast(0)
                             currentProviderIndex = idx
                             onRawStreamIntercepted(
@@ -1364,8 +1405,8 @@ class ContentDetailActivity : AppCompatActivity() {
                 val firstDirectIdx = panelServers.indexOfFirst { it.isDirectStream }
                 if (firstDirectIdx != -1) {
                     currentProviderIndex = firstDirectIdx
-                    val s = panelServers[firstDirectIdx]
-                    onRawStreamIntercepted(s.url, s.referer, s.origin, s.userAgent)
+                    val source = panelServers[firstDirectIdx]
+                    onRawStreamIntercepted(source.url, source.referer, source.origin, source.userAgent)
                 } else if (runWebViewNow || isPlayerModeActive) {
                     loadProviderInHeadlessSniffer(0)
                 }
@@ -1576,6 +1617,7 @@ class ContentDetailActivity : AppCompatActivity() {
 
         isPlayerModeActive = false
         playerEngine.pauseAndReleaseSocket()
+        moviePlayerController.playerView.player = null
 
         switchToPosterShowcaseMode(saveCurrentPlayerPos = false, animateTransition = false)
 
@@ -1834,8 +1876,8 @@ class ContentDetailActivity : AppCompatActivity() {
                     val vod = currentVod ?: return@EpisodesHorizontalAdapter
                     val epTitle = "${vod.title}  •  S${seasonNum}:E${ep.episodeNumber}"
                     moviePlayerController.setTitle(epTitle)
-                    activateInlinePlayerSmoothly()
                     startStreamExtractionForEpisodeOrMovie(vod, seasonNum, ep.episodeNumber, runWebViewNow = true)
+                    activateInlinePlayerSmoothly()
                     lifecycleScope.launch(Dispatchers.IO) {
                         val subs = OttRepository.fetchRealSubtitlesForMovie(
                             vod.id,

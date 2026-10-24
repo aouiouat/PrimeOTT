@@ -4,7 +4,7 @@
     android:layout_width="116dp"
     android:layout_height="188dp"
     android:layout_margin="6dp"
-    app:cardBackgroundColor="#101218"
+    app:cardBackgroundColor="#10151D"
     app:cardCornerRadius="14dp"
     app:cardElevation="0dp">
 
@@ -18,7 +18,7 @@
             android:layout_height="match_parent"
             android:scaleType="centerCrop" />
 
-        <!-- التقييم الفوق على اليمين بالذهبي وبطبقة داكنة وراه -->
+        <!-- التقييم بخط product_sans_bold -->
         <TextView
             android:id="@+id/tvVodMeta"
             android:layout_width="wrap_content"
@@ -28,29 +28,27 @@
             android:background="@drawable/bg_rating_pill_dark"
             android:drawableStart="@drawable/ic_star_gold"
             android:drawablePadding="3dp"
-            android:fontFamily="sans-serif-medium"
+            android:fontFamily="@font/product_sans_bold"
             android:gravity="center_vertical"
             android:paddingHorizontal="6.5dp"
             android:text="8.5"
             android:textColor="#FFFFFF"
-            android:textSize="10sp"
-            android:textStyle="bold" />
+            android:textSize="10sp" />
 
-        <!-- طبقة التدرج الأسود الفايد -->
         <View
             android:layout_width="match_parent"
             android:layout_height="78dp"
             android:layout_gravity="bottom"
             android:background="@drawable/bg_card_bottom_fade" />
 
-        <!-- اسم الفيلم أو المسلسل تحت قاع فالكارت بخط مختلف وأصغر شوية -->
+        <!-- اسم الفيلم أو المسلسل بخط product_sans_egular -->
         <TextView
             android:id="@+id/tvVodTitle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
             android:ellipsize="end"
-            android:fontFamily="sans-serif"
+            android:fontFamily="@font/product_sans_egular"
             android:letterSpacing="0.01"
             android:lineSpacingExtra="1dp"
             android:maxLines="2"
@@ -62,8 +60,7 @@
             android:shadowRadius="3"
             android:text="Movie Title"
             android:textColor="#F1F5F9"
-            android:textSize="11.5sp"
-            android:textStyle="bold" />
+            android:textSize="11.5sp" />
 
     </FrameLayout>
 </androidx.cardview.widget.CardView>

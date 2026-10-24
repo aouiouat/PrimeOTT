@@ -16,6 +16,7 @@
         android:layout_gravity="center"
         app:resize_mode="fit"
         app:shutter_background_color="#000000"
+        app:surface_type="texture_view"
         app:use_controller="false" />
 
     <!-- تدرج علوي ناعم -->

@@ -527,6 +527,41 @@ object OttRepository {
         season: Int = 1,
         episode: Int = 1
     ): List<SubtitleTrack> = withContext(Dispatchers.IO) {
+        // Try the Panel subtitle API first; keep existing providers as fallback.
+        val panelSubs = runCatching {
+            val typeParam = if (isSeries) "tv" else "movie"
+            val query = buildString {
+                append("tmdb_id=").append(URLEncoder.encode(tmdbId, "UTF-8"))
+                append("&imdb_id=").append(URLEncoder.encode(imdbId.trim(), "UTF-8"))
+                append("&type=").append(typeParam)
+                append("&s=").append(season)
+                append("&e=").append(episode)
+            }
+            val apiUrl = "${SessionManager.CLOUDFLARE_API_URL.trimEnd('/')}/api/v2/subtitles?$query"
+            val raw = fastGet(apiUrl)
+            val json = JSONObject(raw)
+            val arr = json.optJSONArray("subtitles") ?: JSONArray()
+            val list = mutableListOf<SubtitleTrack>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val subUrl = obj.optString("url").trim()
+                if (subUrl.isEmpty()) continue
+                val langCode = normalizeLangCode(obj.optString("lang", "ar"))
+                list.add(
+                    SubtitleTrack(
+                        id = obj.optString("id", "panel_sub_$i"),
+                        languageCode = langCode,
+                        languageLabel = obj.optString("label", formatLangDisplayName(langCode, "Arabic")),
+                        releaseName = obj.optString("release", ""),
+                        url = subUrl
+                    )
+                )
+            }
+            list
+        }.getOrDefault(emptyList())
+
+        if (panelSubs.isNotEmpty()) return@withContext panelSubs
+
         val tracks = ArrayList<SubtitleTrack>()
 
         var resolvedImdbId = imdbId.trim()

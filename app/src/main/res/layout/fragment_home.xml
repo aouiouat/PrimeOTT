@@ -3,8 +3,9 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#08080C"
+    android:background="@drawable/bg_app_ambient_luxury"
     android:layoutDirection="ltr"
+    android:overScrollMode="never"
     android:scrollbars="none">
 
     <LinearLayout
@@ -13,7 +14,7 @@
         android:orientation="vertical"
         android:paddingBottom="90dp">
 
-        <!-- 1. Top Header: PRIME [Play] OTT + Custom Search Icon -->
+        <!-- 1. Top Header: REYZO [Play] TV + Search Icon -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="56dp"
@@ -25,36 +26,35 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="sans-serif-black"
-                android:letterSpacing="0.02"
-                android:text="ROYAL"
+                android:fontFamily="@font/product_sans_bold"
+                android:letterSpacing="0.03"
+                android:text="REYZO"
                 android:textColor="#E50914"
-                android:textSize="22sp"
-                android:textStyle="bold" />
+                android:textSize="22sp" />
 
             <FrameLayout
                 android:layout_width="28dp"
                 android:layout_height="22dp"
-                android:layout_marginHorizontal="5dp"
-                android:background="@drawable/bg_btn_watch_now_luxury">
+                android:layout_marginHorizontal="6dp"
+                android:background="@drawable/bg_btn_play_white_luxury">
 
                 <ImageView
-                    android:layout_width="12dp"
-                    android:layout_height="12dp"
+                    android:layout_width="11dp"
+                    android:layout_height="11dp"
                     android:layout_gravity="center"
-                    android:src="@drawable/ic_play_watch_now" />
+                    android:src="@drawable/ic_play_watch_now"
+                    app:tint="#16181E" />
             </FrameLayout>
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:fontFamily="sans-serif-black"
-                android:letterSpacing="0.02"
+                android:fontFamily="@font/product_sans_bold"
+                android:letterSpacing="0.03"
                 android:text="TV"
                 android:textColor="#FFFFFF"
-                android:textSize="22sp"
-                android:textStyle="bold" />
+                android:textSize="22sp" />
 
             <ImageView
                 android:id="@+id/btnHomeSearch"
@@ -75,7 +75,7 @@
             android:clipToPadding="false"
             android:paddingHorizontal="38dp" />
 
-        <!-- 3. Luxury Watch Now Button + Glass Favorite Icon Button (Zero Emojis) -->
+        <!-- 3. White Luxury Watch Now Button (نفس تصميم أزرار صفحة الفيلم) + Glass Favorite Button -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -86,44 +86,45 @@
             <LinearLayout
                 android:id="@+id/btnWatchFeatured"
                 android:layout_width="184dp"
-                android:layout_height="50dp"
-                android:background="@drawable/bg_btn_watch_now_luxury"
+                android:layout_height="46dp"
+                android:background="@drawable/bg_btn_play_white_luxury"
                 android:clickable="true"
+                android:elevation="3dp"
                 android:focusable="true"
                 android:gravity="center"
                 android:orientation="horizontal"
                 android:paddingHorizontal="18dp">
 
                 <ImageView
-                    android:layout_width="18dp"
-                    android:layout_height="18dp"
-                    android:src="@drawable/ic_play_watch_now" />
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@drawable/ic_play_watch_now"
+                    app:tint="#16181E" />
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="9dp"
-                    android:fontFamily="sans-serif-medium"
+                    android:layout_marginStart="8dp"
+                    android:fontFamily="@font/product_sans_bold"
                     android:letterSpacing="0.02"
                     android:text="Watch Now"
-                    android:textColor="#FFFFFF"
-                    android:textSize="15.5sp"
-                    android:textStyle="bold" />
+                    android:textColor="#16181E"
+                    android:textSize="14.5sp" />
             </LinearLayout>
 
             <ImageView
                 android:id="@+id/btnHeroFavorite"
-                android:layout_width="50dp"
-                android:layout_height="50dp"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
                 android:layout_marginStart="12dp"
                 android:background="@drawable/bg_btn_favorite_glass"
                 android:clickable="true"
                 android:focusable="true"
-                android:padding="13dp"
+                android:padding="12dp"
                 android:src="@drawable/ic_heart_outline" />
         </LinearLayout>
 
-        <!-- 4. Continue Watching Section (kima image_dbd5dd.jpg) -->
+        <!-- 4. Continue Watching Section -->
         <LinearLayout
             android:id="@+id/recentHeaderRow"
             android:layout_width="match_parent"
@@ -142,17 +143,16 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:fontFamily="sans-serif-medium"
-                android:letterSpacing="0.01"
+                android:fontFamily="@font/product_sans_bold"
+                android:letterSpacing="0.02"
                 android:text="Continue Watching"
                 android:textColor="#FFFFFF"
-                android:textSize="18.5sp"
-                android:textStyle="bold" />
+                android:textSize="18sp" />
 
             <ImageView
                 android:id="@+id/btnClearHistory"
-                android:layout_width="26dp"
-                android:layout_height="26dp"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
                 android:padding="3dp"
                 android:src="@drawable/ic_arrow_right" />
         </LinearLayout>
@@ -179,22 +179,20 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:fontFamily="sans-serif-medium"
-                android:letterSpacing="0.01"
+                android:fontFamily="@font/product_sans_bold"
+                android:letterSpacing="0.02"
                 android:text="Trending Today"
                 android:textColor="#FFFFFF"
-                android:textSize="18.5sp"
-                android:textStyle="bold" />
+                android:textSize="18sp" />
 
             <TextView
                 android:id="@+id/btnSeeAllMovies"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="sans-serif-medium"
+                android:fontFamily="@font/product_sans_egular"
                 android:text="See All"
-                android:textColor="#E50914"
-                android:textSize="13.5sp"
-                android:textStyle="bold" />
+                android:textColor="#CBD5E1"
+                android:textSize="13sp" />
         </LinearLayout>
 
         <androidx.recyclerview.widget.RecyclerView
@@ -218,22 +216,20 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:fontFamily="sans-serif-medium"
-                android:letterSpacing="0.01"
+                android:fontFamily="@font/product_sans_bold"
+                android:letterSpacing="0.02"
                 android:text="Popular Movies"
                 android:textColor="#FFFFFF"
-                android:textSize="18.5sp"
-                android:textStyle="bold" />
+                android:textSize="18sp" />
 
             <TextView
                 android:id="@+id/btnSeeAllSeries"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="sans-serif-medium"
+                android:fontFamily="@font/product_sans_egular"
                 android:text="See All"
-                android:textColor="#E50914"
-                android:textSize="13.5sp"
-                android:textStyle="bold" />
+                android:textColor="#CBD5E1"
+                android:textSize="13sp" />
         </LinearLayout>
 
         <androidx.recyclerview.widget.RecyclerView
