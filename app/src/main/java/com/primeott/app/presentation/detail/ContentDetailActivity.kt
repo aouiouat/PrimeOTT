@@ -798,8 +798,12 @@ class ContentDetailActivity : AppCompatActivity() {
             updateActorTabsCounts(cached)
             refreshActorOverlayGrid()
         } else {
-            actorPageSpinner.visibility = View.VISIBLE
-            rvActorCreditsGrid.adapter = null
+            actorPageSpinner.visibility = View.GONE
+            rvActorCreditsGrid.adapter = com.primeott.app.presentation.sections.PrimeSkeletonHelper.VodSkeletonAdapter(
+                itemCountToShow = 9,
+                isGrid = true,
+                isSeries = false
+            )
             tvActorMoviesTab.text = "Movies • ..."
             tvActorSeriesTab.text = "Series • ..."
             lifecycleScope.launch {
@@ -1658,6 +1662,21 @@ class ContentDetailActivity : AppCompatActivity() {
             bindMovieFullDetailsToUi(vod, cachedDetails)
         } else {
             crewMetadataContainer.visibility = View.GONE
+            // إظهار Skeleton خاص بالـ Cast (دائري) و Skeleton خاص بالـ Recommended قبل ما يطلعو
+            tvCastHeader.visibility = View.VISIBLE
+            rvCast.visibility = View.VISIBLE
+            rvCast.adapter = com.primeott.app.presentation.sections.PrimeSkeletonHelper.CastSkeletonAdapter(6)
+
+            rvRecommended.adapter = com.primeott.app.presentation.sections.PrimeSkeletonHelper.VodSkeletonAdapter(
+                itemCountToShow = 5,
+                isGrid = false,
+                isSeries = vod.isSeries
+            )
+            rvMoreLike.adapter = com.primeott.app.presentation.sections.PrimeSkeletonHelper.VodSkeletonAdapter(
+                itemCountToShow = 5,
+                isGrid = false,
+                isSeries = vod.isSeries
+            )
         }
 
         if (resetScroll) {
@@ -3095,14 +3114,22 @@ class ActorCreditsGridAdapter(
         val item = items[position]
         holder.tvTitle.text = item.title
         holder.tvYear.text = item.year.ifEmpty { "2025" }
+        val skeletonDrawable = com.primeott.app.presentation.sections.PrimeSkeletonHelper.createCardPlaceholderDrawable(
+            holder.itemView.context,
+            if (item.isSeries) com.primeott.app.presentation.sections.PrimeSkeletonHelper.MediaSkeletonType.SERIES
+            else com.primeott.app.presentation.sections.PrimeSkeletonHelper.MediaSkeletonType.MOVIE
+        )
         val img = item.posterUrl.ifEmpty { item.backdropUrl }
         if (img.isNotEmpty()) {
             Glide.with(holder.itemView.context)
                 .load(img)
+                .placeholder(skeletonDrawable)
+                .error(skeletonDrawable)
                 .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .centerCrop()
                 .into(holder.ivPoster)
+        } else {
+            holder.ivPoster.setImageDrawable(skeletonDrawable)
         }
-        holder.root.setOnClickListener { onVodClick(item) }
     }
 }

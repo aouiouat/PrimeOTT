@@ -402,6 +402,9 @@ class HomeFragment : Fragment() {
         binding.rvHomeChannels.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         binding.rvHomeSeries.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         binding.rvRecentWatched.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+        // 1. إظهار الـ Skeleton فوراً قبل ما يطلعو الأفلام من الإنترنت
+        binding.rvHomeChannels.adapter = PrimeSkeletonHelper.VodSkeletonAdapter(6, isGrid = false, isSeries = false)
+        binding.rvHomeSeries.adapter = PrimeSkeletonHelper.VodSkeletonAdapter(6, isGrid = false, isSeries = false)
 
         val parentLinear = binding.rvHomeSeries.parent as? LinearLayout
         val firstHeaderLayout = parentLinear?.getChildAt(parentLinear.indexOfChild(binding.rvHomeChannels) - 1) as? LinearLayout
@@ -426,21 +429,61 @@ class HomeFragment : Fragment() {
             }
             parentLinear.addView(extraSectionsContainer)
         }
-
+        // 2. إعداد الـ Hero Banner بتصميم مائل على الجوانب (Tilted 3D Carousel kima image_8ce4be.jpg)
         binding.heroViewPager.apply {
             clipToPadding = false
             clipChildren = false
             offscreenPageLimit = 3
-            (getChildAt(0) as? RecyclerView)?.overScrollMode = RecyclerView.OVER_SCROLL_NEVER
-            val transformer = CompositePageTransformer().apply {
-                addTransformer(MarginPageTransformer(20))
-                addTransformer { page, position ->
-                    val r = 1 - abs(position)
-                    page.scaleY = 0.85f + r * 0.15f
-                    page.alpha = 0.58f + r * 0.42f
+            (getChildAt(0) as? RecyclerView)?.apply {
+                overScrollMode = RecyclerView.OVER_SCROLL_NEVER
+                clipToPadding = false
+                clipChildren = false
+            }
+
+            val d = resources.displayMetrics.density
+            val cameraScale = resources.displayMetrics.density * 10000f
+
+            setPageTransformer { page, position ->
+                val clampedPos = position.coerceIn(-1.5f, 1.5f)
+                val absPos = abs(clampedPos)
+                val focusFactor = (1f - absPos).coerceAtLeast(0f)
+
+                // تفعيل منظور الكاميرا ثلاثي الأبعاد
+                page.cameraDistance = cameraScale
+                page.pivotX = page.width * 0.5f
+                page.pivotY = page.height * 0.5f
+
+                if (absPos < 0.001f) {
+                    // الكارت المركزي في الوسط: واضح، مسطح 100% وفي المقدمة
+                    page.rotationY = 0f
+                    page.rotation = 0f
+                    page.scaleX = 1.0f
+                    page.scaleY = 1.0f
+                    page.translationX = 0f
+                    page.translationY = 0f
+                    page.translationZ = 24f * d
+                    page.alpha = 1.0f
+                } else {
+                    // الكروت الجانبية: عكسنا الإشارة باش يدورو بالظهر تاعهم نحو الخارج (Reverse Y-axis Rotation)
+                    page.rotationY = clampedPos * 42f // إشارة موجبة بدل سالبة باش يلتف العكس
+
+                    // ميلان خفيف متناسق
+                    page.rotation = clampedPos * -5.0f
+
+                    // سحب الكروت الجانبية للخارج
+                    page.translationX = clampedPos * (page.width * 0.18f)
+                    page.translationY = absPos * (18f * d)
+
+                    // وضع الكروت الجانبية في الخلف عمودياً
+                    page.translationZ = (1f - absPos) * (-12f * d)
+
+                    // تصغير الحجم والتعتيم باش يبقى التركيز على الكارت الوسطاني
+                    page.scaleX = 0.82f + (focusFactor * 0.18f)
+                    page.scaleY = 0.80f + (focusFactor * 0.20f)
+                    page.alpha = 0.45f + (focusFactor * 0.55f)
                 }
             }
-            setPageTransformer(transformer)
+
             registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                 override fun onPageSelected(position: Int) {
                     super.onPageSelected(position)
@@ -448,6 +491,7 @@ class HomeFragment : Fragment() {
                 }
             })
         }
+
 
         AnimUtils.attachPressBounce(binding.btnWatchFeatured)
         AnimUtils.attachPressBounce(binding.btnHeroFavorite)
@@ -477,47 +521,78 @@ class HomeFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             val sections = OttRepository.fetchHomeSections()
-            heroItems = sections.heroItems
+
+            // جلب صفحات إضافية متجددة باش ما يبقاوش نفس الـ 20 فيلم تاع الصفحة الأولى لمدة 3 أيام
+            val freshMoviesPage2 = runCatching {
+                OttRepository.fetchVodCatalogPage(isSeries = false, page = (2..5).random(), filterCode = "ALL", sortMode = "POPULAR")
+            }.getOrDefault(emptyList())
+
+            val freshSeriesPage2 = runCatching {
+                OttRepository.fetchVodCatalogPage(isSeries = true, page = (2..4).random(), filterCode = "ALL", sortMode = "POPULAR")
+            }.getOrDefault(emptyList())
+
+            // دمج وتجديد قائمة الـ Hero Banner في كل دخلة للتطبيق
+            val combinedHeroPool = (sections.heroItems + sections.trendingToday.take(10) + freshMoviesPage2.take(6))
+                .distinctBy { it.id }
+                .filter { it.posterUrl.isNotEmpty() }
+                .shuffled()
+
+            heroItems = combinedHeroPool.ifEmpty { sections.heroItems }
 
             if (heroItems.isNotEmpty()) {
                 binding.heroViewPager.adapter = HeroBannerAdapter(heroItems) { vod ->
                     openVodDetail(vod)
                 }
+                val midStart = (Int.MAX_VALUE / 2) - ((Int.MAX_VALUE / 2) % heroItems.size)
+                binding.heroViewPager.setCurrentItem(midStart, false)
                 updateHeroFavoriteButtonIcon(binding)
                 startHeroAutoSlider(binding)
             }
 
-            binding.rvHomeChannels.adapter = VodGridAdapter(sections.trendingToday, isGrid = false) { vod ->
+            // تجديد ترتيب Trending Today و Popular Movies باش ديما يبانو أفلام جدد فـ الأول
+            val dynamicTrending = (sections.trendingToday + freshMoviesPage2.take(8))
+                .distinctBy { it.id }
+                .shuffled()
+
+            val dynamicPopularMovies = (sections.popularMovies + freshMoviesPage2.drop(8))
+                .distinctBy { it.id }
+                .shuffled()
+
+            val dynamicPopularSeries = (sections.popularTvShows + freshSeriesPage2)
+                .distinctBy { it.id }
+                .shuffled()
+
+            binding.rvHomeChannels.adapter = VodGridAdapter(dynamicTrending, isGrid = false) { vod ->
                 openVodDetail(vod)
             }
 
-            binding.rvHomeSeries.adapter = VodGridAdapter(sections.popularMovies, isGrid = false) { vod ->
+            binding.rvHomeSeries.adapter = VodGridAdapter(dynamicPopularMovies, isGrid = false) { vod ->
                 openVodDetail(vod)
             }
 
             extraSectionsContainer?.removeAllViews()
-            addHomeRowSection("Popular TV Shows", sections.popularTvShows, true, "")
-            addHomeRowSection("Top Rated Movies", sections.topRatedMovies, false, "TOP_MOVIE")
-            addHomeRowSection("Top Rated TV", sections.topRatedTv, true, "TOP_TV")
-            addHomeRowSection("Turkish Drama", sections.turkishDrama, true, "TR")
-            addHomeRowSection("Korean Drama", sections.koreanDrama, true, "KR")
-            addHomeRowSection("Action & Thriller", sections.actionMovies, false, "ACTION")
-            addHomeRowSection("Anime & Animation", sections.animeShows, true, "ANIME")
-            addHomeRowSection("Sci-Fi & Fantasy", sections.sciFiMovies, false, "SCIFI")
-            addHomeRowSection("Documentaries", sections.documentaries, false, "DOC")
+            addHomeRowSection("Popular TV Shows", dynamicPopularSeries, true, "")
+            addHomeRowSection("Top Rated Movies", sections.topRatedMovies.shuffled(), false, "TOP_MOVIE")
+            addHomeRowSection("Top Rated TV", sections.topRatedTv.shuffled(), true, "TOP_TV")
+            addHomeRowSection("Turkish Drama", sections.turkishDrama.shuffled(), true, "TR")
+            addHomeRowSection("Korean Drama", sections.koreanDrama.shuffled(), true, "KR")
+            addHomeRowSection("Action & Thriller", sections.actionMovies.shuffled(), false, "ACTION")
+            addHomeRowSection("Anime & Animation", sections.animeShows.shuffled(), true, "ANIME")
+            addHomeRowSection("Sci-Fi & Fantasy", sections.sciFiMovies.shuffled(), false, "SCIFI")
+            addHomeRowSection("Documentaries", sections.documentaries.shuffled(), false, "DOC")
         }
 
         binding.btnWatchFeatured.setOnClickListener {
             if (heroItems.isNotEmpty()) {
-                val currentIdx = binding.heroViewPager.currentItem.coerceIn(0, heroItems.lastIndex)
-                openVodDetail(heroItems[currentIdx])
+                val realIdx = binding.heroViewPager.currentItem % heroItems.size
+                openVodDetail(heroItems[realIdx])
             }
         }
 
         binding.btnHeroFavorite.setOnClickListener {
             if (heroItems.isNotEmpty()) {
-                val currentIdx = binding.heroViewPager.currentItem.coerceIn(0, heroItems.lastIndex)
-                val vod = heroItems[currentIdx]
+                val realIdx = binding.heroViewPager.currentItem % heroItems.size
+                val vod = heroItems[realIdx]
                 OttRepository.toggleFavorite(vod.id, requireContext())
                 updateHeroFavoriteButtonIcon(binding)
             }
@@ -526,8 +601,8 @@ class HomeFragment : Fragment() {
 
     private fun updateHeroFavoriteButtonIcon(binding: FragmentHomeBinding) {
         if (heroItems.isEmpty()) return
-        val currentIdx = binding.heroViewPager.currentItem.coerceIn(0, heroItems.lastIndex)
-        val vod = heroItems[currentIdx]
+        val realIdx = binding.heroViewPager.currentItem % heroItems.size
+        val vod = heroItems[realIdx]
         val isFav = OttRepository.isChannelFavorite(vod.id)
         binding.btnHeroFavorite.setImageResource(
             if (isFav) R.drawable.ic_heart_filled else R.drawable.ic_heart_outline
@@ -667,11 +742,10 @@ class HomeFragment : Fragment() {
         autoSlideJob?.cancel()
         autoSlideJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
-                delay(5000L)
-                val count = heroItems.size
-                if (count > 1) {
-                    val next = (binding.heroViewPager.currentItem + 1) % count
-                    binding.heroViewPager.setCurrentItem(next, true)
+                delay(4500L)
+                if (heroItems.size > 1) {
+                    // يمشي للقدام بلا ما يكمل وبلا ما يعاود يرجع للوراء!
+                    binding.heroViewPager.setCurrentItem(binding.heroViewPager.currentItem + 1, true)
                 }
             }
         }
@@ -1174,28 +1248,28 @@ class HeroBannerAdapter(
         val ivHeroPoster: ImageView,
         val tvHeroRating: TextView,
         val tvHeroYear: TextView,
-        val tvHeroTitle: TextView,
-        val tvHeroGenres: TextView
+        val tvHeroTitle: TextView
     ) : RecyclerView.ViewHolder(rootCard)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val ctx = parent.context
         val density = ctx.resources.displayMetrics.density
-        val titleFont = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-        val genreFont = Typeface.create("sans-serif-light", Typeface.BOLD)
-        val pillFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        val titleFont = androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.product_sans_bold)
+            ?: Typeface.create("sans-serif", Typeface.BOLD)
+        val pillFont = androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.product_sans_egular)
+            ?: Typeface.create("sans-serif-medium", Typeface.BOLD)
 
         val card = CardView(ctx).apply {
             layoutParams = ViewGroup.MarginLayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             ).apply {
-                val marginH = (6 * density).toInt()
+                val marginH = (4 * density).toInt()
                 setMargins(marginH, 0, marginH, 0)
             }
             radius = 22f * density
             cardElevation = 10f * density
-            setCardBackgroundColor(Color.parseColor("#101218"))
+            setCardBackgroundColor(Color.parseColor("#0D1015"))
         }
 
         val container = FrameLayout(ctx).apply {
@@ -1216,136 +1290,120 @@ class HeroBannerAdapter(
         val bottomOverlay = View(ctx).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                (195 * density).toInt(),
+                (155 * density).toInt(),
                 Gravity.BOTTOM
             )
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(
-                    Color.parseColor("#0008080C"),
-                    Color.parseColor("#7508080C"),
-                    Color.parseColor("#D808080C"),
-                    Color.parseColor("#FA08080C")
+                    Color.TRANSPARENT,
+                    Color.parseColor("#8005070A"),
+                    Color.parseColor("#E605070A")
                 )
             )
+        }
+
+        val badgeBg = {
+            GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 10f * density
+                setColor(Color.parseColor("#B80A0D12"))
+            }
         }
 
         val tvRating = TextView(ctx).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                (28 * density).toInt(),
+                (30 * density).toInt(),
                 Gravity.TOP or Gravity.START
             ).apply {
                 val m = (14 * density).toInt()
                 setMargins(m, m, m, m)
             }
-            setBackgroundResource(R.drawable.bg_rating_pill_dark)
+            background = badgeBg()
             setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_star_gold, 0, 0, 0)
-            compoundDrawablePadding = (4 * density).toInt()
+            compoundDrawablePadding = (5 * density).toInt()
             gravity = Gravity.CENTER
-            val padH = (10 * density).toInt()
+            val padH = (11 * density).toInt()
             setPadding(padH, 0, padH, 0)
-            setTextColor(Color.parseColor("#FFD700"))
-            textSize = 12f
-            typeface = pillFont
+            setTextColor(Color.parseColor("#FFC107"))
+            textSize = 13f
+            typeface = titleFont
         }
 
         val tvYear = TextView(ctx).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                (28 * density).toInt(),
+                (30 * density).toInt(),
                 Gravity.TOP or Gravity.END
             ).apply {
                 val m = (14 * density).toInt()
                 setMargins(m, m, m, m)
             }
-            setBackgroundResource(R.drawable.bg_rating_pill_dark)
+            background = badgeBg()
             gravity = Gravity.CENTER
-            val padH = (10 * density).toInt()
+            val padH = (11 * density).toInt()
             setPadding(padH, 0, padH, 0)
             setTextColor(Color.WHITE)
-            textSize = 12f
+            textSize = 13f
             typeface = pillFont
         }
 
-        val bottomMetaColumn = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
+        val tvTitle = TextView(ctx).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM
             ).apply {
-                setMargins((16 * density).toInt(), 0, (16 * density).toInt(), (16 * density).toInt())
+                setMargins((16 * density).toInt(), 0, (16 * density).toInt(), (20 * density).toInt())
             }
-        }
-
-        val tvTitle = TextView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
             ellipsize = TextUtils.TruncateAt.END
             gravity = Gravity.CENTER
-            maxLines = 2
-            letterSpacing = 0.04f
-            setShadowLayer(12f, 0f, 4f, Color.BLACK)
+            maxLines = 1
+            letterSpacing = 0.01f
+            setShadowLayer(10f, 0f, 3f, Color.BLACK)
             setTextColor(Color.WHITE)
             textSize = 24f
             typeface = titleFont
         }
 
-        // خط مختلف وأصغر شوية للأنواع (Drama • Horror • Action)
-        val tvGenres = TextView(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = (4 * density).toInt()
-            }
-            ellipsize = TextUtils.TruncateAt.END
-            gravity = Gravity.CENTER
-            maxLines = 1
-            letterSpacing = 0.05f
-            setShadowLayer(8f, 0f, 2f, Color.BLACK)
-            setTextColor(Color.parseColor("#CBD5E1"))
-            textSize = 11f
-            typeface = genreFont
-        }
-
-        bottomMetaColumn.addView(tvTitle)
-        bottomMetaColumn.addView(tvGenres)
-
         container.addView(ivPoster)
         container.addView(bottomOverlay)
         container.addView(tvRating)
         container.addView(tvYear)
-        container.addView(bottomMetaColumn)
+        container.addView(tvTitle)
         card.addView(container)
 
-        return VH(card, ivPoster, tvRating, tvYear, tvTitle, tvGenres)
+        return VH(card, ivPoster, tvRating, tvYear, tvTitle)
     }
 
-    override fun getItemCount(): Int = items.size
+    // عدد لا نهائي باش الـ Banner ما يحبسش وما يعاودش يرجع للوراء
+    override fun getItemCount(): Int = if (items.isEmpty()) 0 else Int.MAX_VALUE
 
     override fun onBindViewHolder(holder: VH, position: Int) {
-        val item = items[position]
-        holder.tvHeroTitle.text = item.title.uppercase(Locale.getDefault())
+        if (items.isEmpty()) return
+        val item = items[position % items.size]
+        val ctx = holder.itemView.context
+
+        holder.tvHeroTitle.text = item.title
         holder.tvHeroRating.text = item.rating
         holder.tvHeroYear.text = item.year
 
-        val rawCat = item.category.ifEmpty { if (item.isSeries) "Drama  •  Series" else "Action  •  Adventure" }
-        holder.tvHeroGenres.text = if (rawCat.contains("•")) {
-            rawCat
-        } else {
-            if (item.isSeries) "$rawCat  •  Drama  •  Mystery" else "$rawCat  •  Adventure  •  Action"
-        }
+        val placeholder = PrimeSkeletonHelper.createCardPlaceholderDrawable(
+            ctx,
+            if (item.isSeries) PrimeSkeletonHelper.MediaSkeletonType.SERIES
+            else PrimeSkeletonHelper.MediaSkeletonType.MOVIE
+        )
 
         if (item.posterUrl.isNotEmpty()) {
-            Glide.with(holder.itemView.context)
+            Glide.with(ctx)
                 .load(item.posterUrl)
+                .placeholder(placeholder)
+                .error(placeholder)
                 .centerCrop()
                 .into(holder.ivHeroPoster)
+        } else {
+            holder.ivHeroPoster.setImageDrawable(placeholder)
         }
         holder.rootCard.setOnClickListener { onClick(item) }
     }
@@ -1396,7 +1454,12 @@ class VodFragment : Fragment() {
             currentPage = 1
             isLoadingMore = false
             catalogList.clear()
-            gridAdapter.notifyDataSetChanged()
+            // عرض Skeleton خاص بـ Movies أو Series بينما توجد البيانات
+            binding.rvVodGrid.adapter = PrimeSkeletonHelper.VodSkeletonAdapter(
+                itemCountToShow = 12,
+                isGrid = true,
+                isSeries = isSeries
+            )
             isLoadingMore = true
             viewLifecycleOwner.lifecycleScope.launch {
                 val pageItems = OttRepository.fetchVodCatalogPage(
@@ -1405,6 +1468,7 @@ class VodFragment : Fragment() {
                     filterCode = selectedGenreCode,
                     sortMode = selectedSortMode
                 )
+                binding.rvVodGrid.adapter = gridAdapter
                 if (pageItems.isNotEmpty()) {
                     catalogList.addAll(pageItems)
                     gridAdapter.notifyDataSetChanged()
@@ -1710,10 +1774,25 @@ class VodGridAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = items[position]
+        val ctx = holder.itemView.context
         holder.binding.tvVodTitle.text = item.title
         holder.binding.tvVodMeta.text = item.rating
+
+        val skeletonDrawable = PrimeSkeletonHelper.createCardPlaceholderDrawable(
+            ctx,
+            if (item.isSeries) PrimeSkeletonHelper.MediaSkeletonType.SERIES
+            else PrimeSkeletonHelper.MediaSkeletonType.MOVIE
+        )
+
         if (item.posterUrl.isNotEmpty()) {
-            Glide.with(holder.itemView.context).load(item.posterUrl).centerCrop().into(holder.binding.ivPoster)
+            Glide.with(ctx)
+                .load(item.posterUrl)
+                .placeholder(skeletonDrawable)
+                .error(skeletonDrawable)
+                .centerCrop()
+                .into(holder.binding.ivPoster)
+        } else {
+            holder.binding.ivPoster.setImageDrawable(skeletonDrawable)
         }
         holder.binding.root.setOnClickListener { onClick(item) }
     }

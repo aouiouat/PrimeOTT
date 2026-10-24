@@ -10,6 +10,7 @@ import android.graphics.ColorFilter
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.RadialGradient
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.os.Bundle
@@ -265,64 +266,63 @@ class MainActivity : AppCompatActivity() {
 }
 
 /**
- * محرك الإضاءة المحيطية مطابق لـ ContentDetailActivity
- * (#233242 -> #000000) مع 5 درجات دمج أفقية وDITHER_FLAG لمنع تدرجات الألوان المقطعة.
+ * خلفية FlixVision الأصلية الداكنة (#1A232E الفوق يسار تتلاشى بنعومة للأسود الفخم #000000)
  */
-class FlixVisionStandardBgDrawable : Drawable() {
+class FlixVisionStandardBgDrawable : android.graphics.drawable.Drawable() {
 
-    private val mainPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
-    private val topVignettePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG)
+    private val basePaint = android.graphics.Paint(
+        android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.DITHER_FLAG
+    )
+    private val ambientGlowPaint = android.graphics.Paint(
+        android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.DITHER_FLAG
+    )
 
-    private val leftBrightColor = Color.parseColor("#233242")
-    private val rightDarkColor = Color.parseColor("#000000")
-
-    override fun draw(canvas: Canvas) {
+    override fun draw(canvas: android.graphics.Canvas) {
         val b = bounds
         val w = b.width().toFloat().coerceAtLeast(1f)
         val h = b.height().toFloat().coerceAtLeast(1f)
 
-        val midBlend1 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.25f)
-        val midBlend2 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.54f)
-        val midBlend3 = ColorUtils.blendARGB(leftBrightColor, rightDarkColor, 0.82f)
-
-        mainPaint.shader = LinearGradient(
-            0f, 0f, w, 0f,
+        // 1. تدرج أساسي داكن بزاف من اليسار لليمين (#0C1017 -> #05070A -> #000000)
+        basePaint.shader = android.graphics.LinearGradient(
+            0f, 0f, w, h * 0.6f,
             intArrayOf(
-                leftBrightColor,
-                midBlend1,
-                midBlend2,
-                midBlend3,
-                rightDarkColor
+                android.graphics.Color.parseColor("#0F151E"),
+                android.graphics.Color.parseColor("#080B10"),
+                android.graphics.Color.parseColor("#030406"),
+                android.graphics.Color.parseColor("#000000")
             ),
-            floatArrayOf(0f, 0.26f, 0.54f, 0.80f, 1f),
-            Shader.TileMode.CLAMP
+            floatArrayOf(0f, 0.35f, 0.70f, 1f),
+            android.graphics.Shader.TileMode.CLAMP
         )
-        canvas.drawRect(0f, 0f, w, h, mainPaint)
+        canvas.drawRect(0f, 0f, w, h, basePaint)
 
-        topVignettePaint.shader = LinearGradient(
-            0f, 0f, 0f, h,
+        // 2. إضاءة محيطية (Ambient Radial Glow) خفيفة الفوق على اليسار كيما فـ Screenshot
+        val radius = kotlin.math.max(w, h) * 0.72f
+        ambientGlowPaint.shader = android.graphics.RadialGradient(
+            w * 0.12f,
+            h * 0.08f,
+            radius,
             intArrayOf(
-                Color.parseColor("#55000000"),
-                Color.TRANSPARENT,
-                Color.TRANSPARENT,
-                Color.parseColor("#66000000")
+                android.graphics.Color.parseColor("#55222D3B"),
+                android.graphics.Color.parseColor("#2818202B"),
+                android.graphics.Color.TRANSPARENT
             ),
-            floatArrayOf(0f, 0.14f, 0.82f, 1f),
-            Shader.TileMode.CLAMP
+            floatArrayOf(0f, 0.48f, 1f),
+            android.graphics.Shader.TileMode.CLAMP
         )
-        canvas.drawRect(0f, 0f, w, h, topVignettePaint)
+        canvas.drawRect(0f, 0f, w, h, ambientGlowPaint)
     }
 
     override fun setAlpha(alpha: Int) {
-        mainPaint.alpha = alpha
-        topVignettePaint.alpha = alpha
+        basePaint.alpha = alpha
+        ambientGlowPaint.alpha = alpha
     }
 
-    override fun setColorFilter(colorFilter: ColorFilter?) {
-        mainPaint.colorFilter = colorFilter
-        topVignettePaint.colorFilter = colorFilter
+    override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {
+        basePaint.colorFilter = colorFilter
+        ambientGlowPaint.colorFilter = colorFilter
     }
 
     @Deprecated("Deprecated in Java")
-    override fun getOpacity(): Int = PixelFormat.OPAQUE
+    override fun getOpacity(): Int = android.graphics.PixelFormat.OPAQUE
 }

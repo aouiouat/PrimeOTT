@@ -4,6 +4,8 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@android:color/transparent"
+    android:clipChildren="false"
+    android:clipToPadding="false"
     android:layoutDirection="ltr"
     android:overScrollMode="never"
     android:scrollbars="none">
@@ -11,6 +13,8 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:clipChildren="false"
+        android:clipToPadding="false"
         android:orientation="vertical"
         android:paddingBottom="90dp">
 
@@ -65,21 +69,22 @@
                 android:src="@drawable/ic_search" />
         </LinearLayout>
 
-        <!-- 2. 3D Auto-Sliding Hero Banner Carousel -->
+        <!-- 2. 3D Tilted Infinite Hero Banner Carousel (kima image_8ce4be.jpg) -->
         <androidx.viewpager2.widget.ViewPager2
             android:id="@+id/heroViewPager"
             android:layout_width="match_parent"
-            android:layout_height="385dp"
+            android:layout_height="395dp"
             android:layout_marginTop="6dp"
             android:clipChildren="false"
             android:clipToPadding="false"
-            android:paddingHorizontal="38dp" />
+            android:paddingHorizontal="64dp"
+            android:paddingVertical="12dp" />
 
-        <!-- 3. White Luxury Watch Now Button (نفس تصميم أزرار صفحة الفيلم) + Glass Favorite Button -->
+        <!-- 3. White Luxury Watch Now Button + Glass Favorite Button -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
+            android:layout_marginTop="10dp"
             android:gravity="center"
             android:orientation="horizontal">
 
@@ -166,7 +171,7 @@
             android:paddingHorizontal="12dp"
             android:visibility="gone" />
 
-        <!-- 5. Trending Today Section -->
+        <!-- 5. Trending Today Section (See All bil Red #E50914) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -189,10 +194,10 @@
                 android:id="@+id/btnSeeAllMovies"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="@font/product_sans_egular"
+                android:fontFamily="@font/product_sans_bold"
                 android:text="See All"
-                android:textColor="#CBD5E1"
-                android:textSize="13sp" />
+                android:textColor="#E50914"
+                android:textSize="13.5sp" />
         </LinearLayout>
 
         <androidx.recyclerview.widget.RecyclerView
@@ -203,7 +208,7 @@
             android:clipToPadding="false"
             android:paddingHorizontal="10dp" />
 
-        <!-- 6. Popular Movies Section -->
+        <!-- 6. Popular Movies Section (See All bil Red #E50914) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -226,10 +231,10 @@
                 android:id="@+id/btnSeeAllSeries"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="@font/product_sans_egular"
+                android:fontFamily="@font/product_sans_bold"
                 android:text="See All"
-                android:textColor="#CBD5E1"
-                android:textSize="13sp" />
+                android:textColor="#E50914"
+                android:textSize="13.5sp" />
         </LinearLayout>
 
         <androidx.recyclerview.widget.RecyclerView
