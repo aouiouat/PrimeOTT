@@ -51,6 +51,37 @@ object PrimeVodExtractor {
         val profile: ContentProfile
     )
 
+    data class SmartServerSelection(
+        val servers: List<StreamSource>,
+        val bestStartIndex: Int,
+        val secondBestIndex: Int,
+        val rankedWorkingIndices: List<Int>
+    )
+
+    private enum class ServerEngine {
+        DIRECT_STREAM,
+        VIXSRC,
+        VIDEASY,
+        VIDLINK,
+        VIDFAST,
+        AUTOEMBED,
+        VIDSRC_CC,
+        VIDSRC_ICU,
+        MULTIEMBED,
+        EMBEDSU,
+        RIVESTREAM,
+        GENERIC_EMBED
+    }
+
+    private data class ProbedServerResult(
+        val originalIndex: Int,
+        val source: StreamSource,
+        val engine: ServerEngine,
+        val isAlive: Boolean,
+        val latencyMs: Long,
+        val smartScore: Int
+    )
+
     private val tmdbMetaCache = ConcurrentHashMap<String, TmdbContentMeta>()
 
     // مشاركة نفس CookieJar و ConnectionPool مع المشغل لتفادي خطأ 403 وتسريع فتح البث
@@ -176,10 +207,88 @@ object PrimeVodExtractor {
         ).also { tmdbMetaCache[cacheKey] = it }
     }
 
+    private fun detectServerEngine(url: String, isDirect: Boolean): ServerEngine {
+        if (isDirect) return ServerEngine.DIRECT_STREAM
+        val lower = url.lowercase(Locale.ROOT)
+        return when {
+            lower.contains("vixsrc") -> ServerEngine.VIXSRC
+            lower.contains("videasy") -> ServerEngine.VIDEASY
+            lower.contains("vidlink") -> ServerEngine.VIDLINK
+            lower.contains("vidfast") -> ServerEngine.VIDFAST
+            lower.contains("autoembed") -> ServerEngine.AUTOEMBED
+            lower.contains("vidsrc.cc") -> ServerEngine.VIDSRC_CC
+            lower.contains("vidsrc") -> ServerEngine.VIDSRC_ICU
+            lower.contains("multiembed") || lower.contains("superembed") -> ServerEngine.MULTIEMBED
+            lower.contains("embed.su") -> ServerEngine.EMBEDSU
+            lower.contains("rivestream") -> ServerEngine.RIVESTREAM
+            else -> ServerEngine.GENERIC_EMBED
+        }
+    }
+
     /**
-     * يبني قائمة المصادر الذكية حسب نوع العمل (تركي، كوري، أنمي، عالمي) مع الحفاظ على أسماء السيرفرات النقية (REYZO 1, REYZO 2...)
+     * يحسب درجة توافق كل سيرفر مع نوع الفيلم/المسلسل (أجنبي، كوري، تركي، أنمي)
      */
-    private fun buildSmartServersForProfile(
+    private fun computeEngineAffinityForProfile(engine: ServerEngine, profile: ContentProfile): Int {
+        if (engine == ServerEngine.DIRECT_STREAM) return 1200
+        return when (profile) {
+            ContentProfile.WESTERN_GLOBAL -> when (engine) {
+                ServerEngine.VIXSRC -> 1000
+                ServerEngine.VIDLINK -> 920
+                ServerEngine.VIDFAST -> 900
+                ServerEngine.VIDEASY -> 880
+                ServerEngine.VIDSRC_CC -> 840
+                ServerEngine.AUTOEMBED -> 800
+                ServerEngine.EMBEDSU -> 780
+                ServerEngine.VIDSRC_ICU -> 760
+                ServerEngine.MULTIEMBED -> 740
+                ServerEngine.RIVESTREAM -> 720
+                else -> 650
+            }
+            ContentProfile.KOREAN_ASIAN -> when (engine) {
+                ServerEngine.VIDEASY -> 980
+                ServerEngine.VIDLINK -> 950
+                ServerEngine.VIDSRC_CC -> 920
+                ServerEngine.EMBEDSU -> 890
+                ServerEngine.VIDFAST -> 860
+                ServerEngine.RIVESTREAM -> 840
+                ServerEngine.AUTOEMBED -> 810
+                ServerEngine.MULTIEMBED -> 790
+                ServerEngine.VIDSRC_ICU -> 760
+                // VixSrc يأخذ أولوية عالية فقط إذا وُجد فيه العمل فعلاً (يتحول إلى DIRECT_STREAM)، وإلا يُستبعد
+                ServerEngine.VIXSRC -> -500
+                else -> 650
+            }
+            ContentProfile.TURKISH -> when (engine) {
+                ServerEngine.AUTOEMBED -> 980
+                ServerEngine.VIDEASY -> 950
+                ServerEngine.MULTIEMBED -> 930
+                ServerEngine.VIDLINK -> 900
+                ServerEngine.VIDFAST -> 870
+                ServerEngine.VIDSRC_ICU -> 840
+                ServerEngine.VIDSRC_CC -> 810
+                ServerEngine.RIVESTREAM -> 790
+                ServerEngine.EMBEDSU -> 760
+                ServerEngine.VIXSRC -> -500
+                else -> 650
+            }
+            ContentProfile.ANIME -> when (engine) {
+                ServerEngine.VIDLINK -> 980
+                ServerEngine.VIDEASY -> 950
+                ServerEngine.VIDSRC_CC -> 930
+                ServerEngine.EMBEDSU -> 900
+                ServerEngine.VIDFAST -> 860
+                ServerEngine.AUTOEMBED -> 820
+                ServerEngine.VIXSRC -> -300
+                else -> 650
+            }
+        }
+    }
+
+    /**
+     * يحافظ على سيرفرات الـ Panel بأسمائها وترتيبها الأصلي (REYZO 1, REYZO 2...)،
+     * وإذا كان أحد السيرفرات في الـ Panel مكرراً أو معطلاً أو تنقصه محركات الكوري/التركي يرقيه تلقائياً
+     */
+    private fun enrichPanelServersPreservingOrder(
         panelServers: List<StreamSource>,
         cleanTmdbId: String,
         meta: TmdbContentMeta,
@@ -190,144 +299,138 @@ object PrimeVodExtractor {
         val imdb = meta.imdbId
         val targetId = imdb.ifBlank { cleanTmdbId }
 
-        // 1. الروابط المباشرة المضافة يدوياً في اللوحة تبقى دائماً في الأولوية الأولى
-        val customDirects = panelServers.filter { it.isDirectStream && it.url.isNotBlank() }
+        val fallbackEnginePool = listOf(
+            "https://vixsrc.to".let { host ->
+                if (isSeries) "$host/tv/$cleanTmdbId/$season/$episode" else "$host/movie/$cleanTmdbId"
+            },
+            "https://vidlink.pro".let { host ->
+                if (isSeries) "$host/tv/$cleanTmdbId/$season/$episode?autoplay=true" else "$host/movie/$cleanTmdbId?autoplay=true"
+            },
+            "https://player.videasy.net".let { host ->
+                if (isSeries) "$host/tv/$cleanTmdbId/$season/$episode?autoPlay=true" else "$host/movie/$cleanTmdbId?autoPlay=true"
+            },
+            "https://vidfast.pro".let { host ->
+                if (isSeries) "$host/tv/$targetId/$season/$episode?autoPlay=true&theme=E50914&sub=ar" else "$host/movie/$targetId?autoPlay=true&theme=E50914&sub=ar"
+            },
+            "https://player.autoembed.cc".let { host ->
+                if (isSeries) "$host/embed/tv/$cleanTmdbId/$season/$episode?autoplay=true" else "$host/embed/movie/$cleanTmdbId?autoplay=true"
+            },
+            "https://vidsrc.cc".let { host ->
+                if (isSeries) "$host/v2/embed/tv/$cleanTmdbId/$season/$episode?autoPlay=true" else "$host/v2/embed/movie/$cleanTmdbId?autoPlay=true"
+            },
+            "https://multiembed.mov".let { host ->
+                if (isSeries) {
+                    if (imdb.isNotBlank()) "$host/directstream.php?video_id=$imdb&s=$season&e=$episode"
+                    else "$host/directstream.php?video_id=$cleanTmdbId&tmdb=1&s=$season&e=$episode"
+                } else {
+                    if (imdb.isNotBlank()) "$host/directstream.php?video_id=$imdb"
+                    else "$host/directstream.php?video_id=$cleanTmdbId&tmdb=1"
+                }
+            },
+            "https://embed.su".let { host ->
+                if (isSeries) "$host/embed/tv/$cleanTmdbId/$season/$episode" else "$host/embed/movie/$cleanTmdbId"
+            }
+        )
 
-        // 2. تجهيز روابط المشغلات المتخصصة لكل نوع محتوى
-        val vixSrcUrl = if (isSeries) {
-            "https://vixsrc.to/tv/$cleanTmdbId/$season/$episode"
-        } else {
-            "https://vixsrc.to/movie/$cleanTmdbId"
+        if (panelServers.isEmpty()) {
+            return fallbackEnginePool.mapIndexed { idx, u ->
+                val origin = runCatching { val p = Uri.parse(u); "${p.scheme}://${p.host}" }.getOrDefault("https://vidlink.pro")
+                StreamSource(
+                    label = "REYZO ${idx + 1}",
+                    url = u,
+                    referer = "$origin/",
+                    origin = origin,
+                    userAgent = BROWSER_UA,
+                    isDirectStream = false
+                )
+            }
         }
-        val videasyUrl = if (isSeries) {
-            "https://player.videasy.net/tv/$cleanTmdbId/$season/$episode?autoPlay=true"
-        } else {
-            "https://player.videasy.net/movie/$cleanTmdbId?autoPlay=true"
+
+        val usedUrls = HashSet<String>()
+        var poolCursor = 0
+
+        fun nextUnusedFallbackUrl(): String {
+            while (poolCursor < fallbackEnginePool.size) {
+                val candidate = fallbackEnginePool[poolCursor++]
+                if (usedUrls.add(candidate)) return candidate
+            }
+            return fallbackEnginePool.first()
         }
-        val vidLinkUrl = if (isSeries) {
-            "https://vidlink.pro/tv/$cleanTmdbId/$season/$episode?autoplay=true"
-        } else {
-            "https://vidlink.pro/movie/$cleanTmdbId?autoplay=true"
-        }
-        val vidFastUrl = if (isSeries) {
-            "https://vidfast.pro/tv/$targetId/$season/$episode?autoPlay=true&theme=E50914&sub=ar"
-        } else {
-            "https://vidfast.pro/movie/$targetId?autoPlay=true&theme=E50914&sub=ar"
-        }
-        val autoEmbedUrl = if (isSeries) {
-            "https://player.autoembed.cc/embed/tv/$cleanTmdbId/$season/$episode?autoplay=true"
-        } else {
-            "https://player.autoembed.cc/embed/movie/$cleanTmdbId?autoplay=true"
-        }
-        val vidSrcCcUrl = if (isSeries) {
-            "https://vidsrc.cc/v2/embed/tv/$cleanTmdbId/$season/$episode?autoPlay=true"
-        } else {
-            "https://vidsrc.cc/v2/embed/movie/$cleanTmdbId?autoPlay=true"
-        }
-        val embedSuUrl = if (isSeries) {
-            "https://embed.su/embed/tv/$cleanTmdbId/$season/$episode"
-        } else {
-            "https://embed.su/embed/movie/$cleanTmdbId"
-        }
-        val multiEmbedUrl = if (isSeries) {
-            if (imdb.isNotBlank()) {
-                "https://multiembed.mov/directstream.php?video_id=$imdb&s=$season&e=$episode"
+
+        return panelServers.mapIndexed { idx, srv ->
+            val cleanLabel = srv.label.trim().ifEmpty { "REYZO ${idx + 1}" }
+            val isBrokenOrPromo = srv.url.isBlank() ||
+                    srv.url.contains("netnaija", ignoreCase = true) ||
+                    !usedUrls.add(srv.url)
+
+            if (srv.isDirectStream && !isBrokenOrPromo) {
+                srv.copy(label = cleanLabel)
+            } else if (isBrokenOrPromo) {
+                val replacementUrl = nextUnusedFallbackUrl()
+                val origin = runCatching {
+                    val p = Uri.parse(replacementUrl)
+                    "${p.scheme}://${p.host}"
+                }.getOrDefault("https://vidlink.pro")
+                srv.copy(
+                    label = cleanLabel,
+                    url = replacementUrl,
+                    referer = "$origin/",
+                    origin = origin,
+                    userAgent = BROWSER_UA,
+                    isDirectStream = false
+                )
             } else {
-                "https://multiembed.mov/directstream.php?video_id=$cleanTmdbId&tmdb=1&s=$season&e=$episode"
-            }
-        } else {
-            if (imdb.isNotBlank()) {
-                "https://multiembed.mov/directstream.php?video_id=$imdb"
-            } else {
-                "https://multiembed.mov/directstream.php?video_id=$cleanTmdbId&tmdb=1"
-            }
-        }
-        val vidSrcIcuUrl = if (isSeries) {
-            "https://vidsrc.icu/embed/tv/$targetId/$season/$episode"
-        } else {
-            "https://vidsrc.icu/embed/movie/$targetId"
-        }
-        val riveStreamUrl = if (isSeries) {
-            "https://rivestream.org/embed?type=tv&id=$cleanTmdbId&season=$season&episode=$episode"
-        } else {
-            "https://rivestream.org/embed?type=movie&id=$cleanTmdbId"
-        }
-
-        // نضع vixSrcUrl في جميع الأنواع ليتم فحصه بالتوازي في 0.4 ثانية:
-        // إذا كان الفيلم/المسلسل (أجنبي أو كوري أو تركي) متوفراً فيه يشتغل فوراً، وإذا غير متوفر يُحذف تلقائياً ولا يدخل للـ WebView!
-        val orderedUrlsForProfile: List<String> = when (meta.profile) {
-            ContentProfile.TURKISH -> listOf(
-                vixSrcUrl,
-                videasyUrl,
-                vidLinkUrl,
-                autoEmbedUrl,
-                multiEmbedUrl,
-                vidFastUrl,
-                riveStreamUrl,
-                vidSrcIcuUrl
-            )
-            ContentProfile.KOREAN_ASIAN -> listOf(
-                vixSrcUrl,
-                videasyUrl,
-                vidLinkUrl,
-                vidSrcCcUrl,
-                embedSuUrl,
-                vidFastUrl,
-                riveStreamUrl,
-                autoEmbedUrl
-            )
-            ContentProfile.ANIME -> listOf(
-                vixSrcUrl,
-                vidLinkUrl,
-                videasyUrl,
-                vidSrcCcUrl,
-                embedSuUrl,
-                vidFastUrl,
-                autoEmbedUrl
-            )
-            ContentProfile.WESTERN_GLOBAL -> listOf(
-                vixSrcUrl,
-                vidLinkUrl,
-                vidFastUrl,
-                videasyUrl,
-                vidSrcCcUrl,
-                autoEmbedUrl,
-                embedSuUrl,
-                vidSrcIcuUrl
-            )
-        }
-
-        // نأخذ أسماء السيرفرات المبرمجة في الـ Panel (REYZO 1, REYZO 2...) بدون أي أسماء عشوائية
-        val panelNonDirectLabels = panelServers.filter { !it.isDirectStream }.map { it.label }
-
-        val smartDynamicSources = orderedUrlsForProfile.mapIndexed { idx, targetUrl ->
-            val hostOrigin = runCatching {
-                val u = Uri.parse(targetUrl)
-                "${u.scheme}://${u.host}"
-            }.getOrDefault("https://vidlink.pro")
-
-            val cleanLabel = panelNonDirectLabels.getOrNull(idx)
-                ?.takeIf { it.isNotBlank() && !it.equals("QR", ignoreCase = true) }
-                ?: "REYZO ${idx + 1}"
-
-            StreamSource(
-                label = cleanLabel,
-                url = targetUrl,
-                referer = "$hostOrigin/",
-                origin = hostOrigin,
-                userAgent = BROWSER_UA,
-                isDirectStream = false
-            )
-        }
-
-        val combined = ArrayList<StreamSource>()
-        val seenUrls = HashSet<String>()
-        for (s in customDirects + smartDynamicSources) {
-            if (s.url.isNotBlank() && seenUrls.add(s.url)) {
-                combined.add(s)
+                val origin = srv.origin.ifBlank {
+                    runCatching {
+                        val p = Uri.parse(srv.url)
+                        "${p.scheme}://${p.host}"
+                    }.getOrDefault("")
+                }
+                srv.copy(
+                    label = cleanLabel,
+                    referer = srv.referer.ifBlank { if (origin.isNotEmpty()) "$origin/" else "" },
+                    origin = origin,
+                    userAgent = srv.userAgent.ifBlank { BROWSER_UA }
+                )
             }
         }
-        return combined
+    }
+
+    /**
+     * يفحص بسرعة ما إذا كان سيرفر الـ Embed حيّاً ويقيس سرعة استجابته بالمللي ثانية
+     */
+    private fun quickProbeEmbedAliveAndLatency(source: StreamSource): Pair<Boolean, Long> {
+        val t0 = System.currentTimeMillis()
+        return try {
+            val reqBuilder = Request.Builder()
+                .url(source.url)
+                .header("User-Agent", source.userAgent.ifBlank { BROWSER_UA })
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            if (source.referer.isNotBlank()) {
+                reqBuilder.header("Referer", source.referer)
+            }
+            fastClient.newCall(reqBuilder.build()).execute().use { resp ->
+                val elapsed = (System.currentTimeMillis() - t0).coerceAtLeast(1L)
+                if (resp.code in listOf(404, 410, 500, 502, 503, 520, 521, 522)) {
+                    return false to elapsed
+                }
+                val sample = resp.body?.source()?.let { src ->
+                    src.request(1400)
+                    src.buffer.clone().readUtf8(minOf(1400L, src.buffer.size))
+                }.orEmpty().lowercase(Locale.ROOT)
+
+                val isDeadMsg = sample.length in 1..600 && (
+                        sample.contains("404 not found") ||
+                                sample.contains("video not found") ||
+                                sample.contains("media is unavailable") ||
+                                sample.contains("no sources found") ||
+                                sample.contains("file was deleted")
+                        )
+                (!isDeadMsg) to elapsed
+            }
+        } catch (_: Exception) {
+            false to 3500L
+        }
     }
 
     suspend fun fetchActorCredits(actorId: String): List<VodItem> = withContext(Dispatchers.IO) {
@@ -415,75 +518,80 @@ object PrimeVodExtractor {
         if (u.isEmpty()) return u
 
         // تحديث دومين vidfast القديم إذا كان موجوداً في اللوحة
-        if (u.contains("vidfast.vc", ignoreCase = true)) {
+        if (u.contains("vidfast.vc", ignoreCase = true) || u.contains("vidfast.to", ignoreCase = true)) {
             u = u.replace("vidfast.vc", "vidfast.pro", ignoreCase = true)
+                .replace("vidfast.to", "vidfast.pro", ignoreCase = true)
         }
 
+        val targetId = imdbId.ifBlank { cleanTmdbId }
         val lower = u.lowercase(Locale.ROOT)
         return when {
-            lower.contains("vidsrc.cc") && lower.contains("/embed/") && !lower.contains("/v2/embed/") -> {
-                if (isSeries) {
-                    "https://vidsrc.cc/v2/embed/tv/$cleanTmdbId/$season/$episode?autoPlay=true"
-                } else {
-                    "https://vidsrc.cc/v2/embed/movie/$cleanTmdbId?autoPlay=true"
-                }
+            lower.contains("vixsrc.to") -> {
+                if (isSeries) "https://vixsrc.to/tv/$cleanTmdbId/$season/$episode"
+                else "https://vixsrc.to/movie/$cleanTmdbId"
             }
-            (lower.contains("vidsrc.to") || lower.contains("vidsrc.icu") || lower.contains("vidsrc.pro")) && lower.contains("?tmdb=") -> {
+            lower.contains("videasy.net") -> {
+                if (isSeries) "https://player.videasy.net/tv/$cleanTmdbId/$season/$episode?autoPlay=true"
+                else "https://player.videasy.net/movie/$cleanTmdbId?autoPlay=true"
+            }
+            lower.contains("vidlink.pro") -> {
+                if (isSeries) "https://vidlink.pro/tv/$cleanTmdbId/$season/$episode?autoplay=true"
+                else "https://vidlink.pro/movie/$cleanTmdbId?autoplay=true"
+            }
+            lower.contains("vidfast.pro") -> {
+                if (isSeries) "https://vidfast.pro/tv/$targetId/$season/$episode?autoPlay=true&theme=E50914&sub=ar"
+                else "https://vidfast.pro/movie/$targetId?autoPlay=true&theme=E50914&sub=ar"
+            }
+            lower.contains("vidsrc.cc") -> {
+                if (isSeries) "https://vidsrc.cc/v2/embed/tv/$cleanTmdbId/$season/$episode?autoPlay=true"
+                else "https://vidsrc.cc/v2/embed/movie/$cleanTmdbId?autoPlay=true"
+            }
+            (lower.contains("vidsrc.to") || lower.contains("vidsrc.icu") || lower.contains("vidsrc.pro") || lower.contains("vidsrc.xyz")) -> {
                 val host = runCatching {
                     val parsed = Uri.parse(u)
                     "${parsed.scheme}://${parsed.host}"
                 }.getOrDefault("https://vidsrc.icu")
+                if (isSeries) "$host/embed/tv/$targetId/$season/$episode"
+                else "$host/embed/movie/$targetId"
+            }
+            lower.contains("embed.su") -> {
+                if (isSeries) "https://embed.su/embed/tv/$cleanTmdbId/$season/$episode"
+                else "https://embed.su/embed/movie/$cleanTmdbId"
+            }
+            lower.contains("autoembed.cc") -> {
+                if (isSeries) "https://player.autoembed.cc/embed/tv/$cleanTmdbId/$season/$episode?autoplay=true"
+                else "https://player.autoembed.cc/embed/movie/$cleanTmdbId?autoplay=true"
+            }
+            lower.contains("multiembed.mov") || lower.contains("superembed") -> {
                 if (isSeries) {
-                    "$host/embed/tv/$cleanTmdbId/$season/$episode"
+                    if (imdbId.isNotBlank()) "https://multiembed.mov/directstream.php?video_id=$imdbId&s=$season&e=$episode"
+                    else "https://multiembed.mov/directstream.php?video_id=$cleanTmdbId&tmdb=1&s=$season&e=$episode"
                 } else {
-                    "$host/embed/movie/$cleanTmdbId"
+                    if (imdbId.isNotBlank()) "https://multiembed.mov/directstream.php?video_id=$imdbId"
+                    else "https://multiembed.mov/directstream.php?video_id=$cleanTmdbId&tmdb=1"
                 }
             }
-            lower.contains("embed.su") && !lower.contains("/embed/") -> {
-                if (isSeries) {
-                    "https://embed.su/embed/tv/$cleanTmdbId/$season/$episode"
-                } else {
-                    "https://embed.su/embed/movie/$cleanTmdbId"
-                }
-            }
-            lower.contains("autoembed.cc") && !lower.contains("/embed/") -> {
-                if (isSeries) {
-                    "https://player.autoembed.cc/embed/tv/$cleanTmdbId/$season/$episode?autoplay=true"
-                } else {
-                    "https://player.autoembed.cc/embed/movie/$cleanTmdbId?autoplay=true"
-                }
-            }
-            lower.contains("multiembed.mov") && lower.contains("/?video_id=") -> {
-                if (isSeries) {
-                    if (imdbId.isNotBlank()) {
-                        "https://multiembed.mov/directstream.php?video_id=$imdbId&s=$season&e=$episode"
-                    } else {
-                        "https://multiembed.mov/directstream.php?video_id=$cleanTmdbId&tmdb=1&s=$season&e=$episode"
-                    }
-                } else {
-                    if (imdbId.isNotBlank()) {
-                        "https://multiembed.mov/directstream.php?video_id=$imdbId"
-                    } else {
-                        "https://multiembed.mov/directstream.php?video_id=$cleanTmdbId&tmdb=1"
-                    }
-                }
+            lower.contains("rivestream.org") -> {
+                if (isSeries) "https://rivestream.org/embed?type=tv&id=$cleanTmdbId&season=$season&episode=$episode"
+                else "https://rivestream.org/embed?type=movie&id=$cleanTmdbId"
             }
             else -> u
         }
     }
 
     /**
-     * يجلب السيرفرات بسرعة فائقة مع تحديد ذكي لنوع العمل (تركي، كوري، أنمي، عالمي) وكشف فوري لأول سيرفر شغال
+     * يحلل سيرفرات الـ Panel في نفس اللحظة بالتوازي، ويكتشف تلقائياً نوع العمل (أجنبي، كوري، تركي، أنمي)
+     * ويختار وحده السيرفر الشغال والأسرع مباشرة دون التجريب بالواحد
      */
-    suspend fun fetchPanelConfiguredServers(
+    suspend fun fetchSmartPanelSelection(
         tmdbId: String,
         imdbId: String = "",
         title: String = "",
         isSeries: Boolean = false,
         season: Int = 1,
         episode: Int = 1,
-        onFastestDirectReady: (StreamSource) -> Unit = {}
-    ): List<StreamSource> = coroutineScope {
+        onFastestDirectReady: (Int, StreamSource) -> Unit = { _, _ -> }
+    ): SmartServerSelection = coroutineScope {
         val cleanTmdbId = tmdbId
             .replace("tmdb_movie_", "")
             .replace("tmdb_tv_", "")
@@ -526,7 +634,7 @@ object PrimeVodExtractor {
         }
 
         val meta = metaDeferred.await()
-        val rawPanelList = rawPanelDeferred.await().map { srv ->
+        val normalizedPanelList = rawPanelDeferred.await().map { srv ->
             srv.copy(
                 url = normalizePanelServerUrl(
                     rawUrl = srv.url,
@@ -539,8 +647,8 @@ object PrimeVodExtractor {
             )
         }
 
-        val smartServers = buildSmartServersForProfile(
-            panelServers = rawPanelList,
+        val enrichedPanelServers = enrichPanelServersPreservingOrder(
+            panelServers = normalizedPanelList,
             cleanTmdbId = cleanTmdbId,
             meta = meta,
             isSeries = isSeries,
@@ -548,58 +656,106 @@ object PrimeVodExtractor {
             episode = episode
         )
 
-        if (smartServers.isEmpty()) return@coroutineScope emptyList()
+        if (enrichedPanelServers.isEmpty()) {
+            return@coroutineScope SmartServerSelection(emptyList(), 0, 0, emptyList())
+        }
 
         val fastestDispatched = AtomicBoolean(false)
 
-        // سباق متوازي سريع (Parallel Race): يفحص السيرفرات المباشرة في نفس اللحظة، وأول سيرفر يرد بـ .m3u8 شغال يشتغل فوراً، وأي سيرفر فارغ (404) يُحذف تلقائياً!
-        val resolvedOrFiltered = smartServers.mapIndexed { idx, srv ->
+        // فحص متوازي لجميع سيرفرات الـ Panel في نفس اللحظة لاختيار السيرفر الشغال والأسرع حسب لغة الفيلم/المسلسل
+        val probedResults = enrichedPanelServers.mapIndexed { idx, srv ->
             async(Dispatchers.IO) {
+                val initialEngine = detectServerEngine(srv.url, srv.isDirectStream)
+                val t0 = System.currentTimeMillis()
+
                 if (srv.isDirectStream) {
-                    val alive = withTimeoutOrNull(2200L) { verifyDirectStreamAlive(srv) } ?: true
-                    if (alive) {
-                        if (fastestDispatched.compareAndSet(false, true)) {
-                            onFastestDirectReady(srv)
-                        }
-                        return@async srv
+                    val alive = withTimeoutOrNull(1600L) { verifyDirectStreamAlive(srv) } ?: true
+                    val latency = (System.currentTimeMillis() - t0).coerceAtLeast(1L)
+                    if (alive && fastestDispatched.compareAndSet(false, true)) {
+                        onFastestDirectReady(idx, srv)
                     }
-                    return@async null
+                    val score = if (alive) 2000 - (latency / 10).toInt() else -1000
+                    return@async ProbedServerResult(idx, srv, ServerEngine.DIRECT_STREAM, alive, latency, score)
                 }
 
-                val isVixSrc = srv.url.contains("vixsrc.to", true)
-                val isFastHtmlExtractor = isVixSrc ||
-                        srv.url.contains("vidsrc.icu", true) ||
-                        srv.url.contains("vidsrc.to", true) ||
-                        srv.url.contains("multiembed.mov", true)
+                val isFastHtmlExtractor = initialEngine == ServerEngine.VIXSRC ||
+                        initialEngine == ServerEngine.VIDSRC_ICU ||
+                        initialEngine == ServerEngine.MULTIEMBED
 
-                if (idx < 5 && isFastHtmlExtractor) {
-                    val extracted = withTimeoutOrNull(2600L) {
+                if (isFastHtmlExtractor) {
+                    val extracted = withTimeoutOrNull(1700L) {
                         tryExtractM3u8FromAdminServer(srv)
                     }
+                    val latency = (System.currentTimeMillis() - t0).coerceAtLeast(1L)
                     if (extracted != null) {
                         if (fastestDispatched.compareAndSet(false, true)) {
-                            onFastestDirectReady(extracted)
+                            onFastestDirectReady(idx, extracted)
                         }
-                        return@async extracted
+                        val score = 1850 - (latency / 10).toInt()
+                        return@async ProbedServerResult(idx, extracted, ServerEngine.DIRECT_STREAM, true, latency, score)
                     }
-                    // إذا كان السيرفر هو vixsrc ولم يجد الفيلم/المسلسل (مثلاً مسلسل تركي أو كوري غير موجود فيه)، نحذفه فوراً حتى لا يضيع الـ WebView أي ثانية فيه!
-                    if (isVixSrc) {
-                        return@async null
+                    // إذا كان VixSrc ولم يرجع ملف البث (مثلاً مسلسل تركي أو كوري غير متوفر فيه)، نستبعده فوراً
+                    if (initialEngine == ServerEngine.VIXSRC) {
+                        return@async ProbedServerResult(idx, srv, initialEngine, false, latency, -1000)
                     }
                 }
-                srv
-            }
-        }.awaitAll().filterNotNull()
 
-        // إعادة ترقيم الأسماء النظيفة من الـ Panel بعد حذف أي سيرفر فارغ، مع وضع السيرفر المباشر الشغال في المركز الأول
-        val panelLabels = rawPanelList.filter { !it.isDirectStream }.map { it.label }
-        val sortedByReady = resolvedOrFiltered.sortedByDescending { it.isDirectStream }
-        sortedByReady.mapIndexed { finalIdx, item ->
-            val cleanName = panelLabels.getOrNull(finalIdx)
-                ?.takeIf { it.isNotBlank() && !it.equals("QR", ignoreCase = true) }
-                ?: "REYZO ${finalIdx + 1}"
-            item.copy(label = cleanName)
+                val baseAffinity = computeEngineAffinityForProfile(initialEngine, meta.profile)
+                val (alive, latency) = withTimeoutOrNull(1350L) {
+                    quickProbeEmbedAliveAndLatency(srv)
+                } ?: (true to 1350L)
+
+                val speedBonus = ((1500L - latency.coerceAtMost(1500L)) / 8L).toInt()
+                val finalScore = if (alive) baseAffinity + speedBonus else -800
+                ProbedServerResult(idx, srv, initialEngine, alive, latency, finalScore)
+            }
+        }.awaitAll()
+
+        val finalServersInPanelOrder = probedResults
+            .sortedBy { it.originalIndex }
+            .map { it.source }
+
+        val rankedAlive = probedResults
+            .filter { it.isAlive && it.smartScore > 0 }
+            .sortedByDescending { it.smartScore }
+            .map { it.originalIndex }
+
+        val finalRankedIndices = if (rankedAlive.isNotEmpty()) {
+            rankedAlive + probedResults.map { it.originalIndex }.filter { it !in rankedAlive }
+        } else {
+            probedResults.sortedByDescending { it.smartScore }.map { it.originalIndex }
         }
+
+        val bestIdx = finalRankedIndices.firstOrNull() ?: 0
+        val secondIdx = finalRankedIndices.getOrNull(1) ?: bestIdx
+
+        SmartServerSelection(
+            servers = finalServersInPanelOrder,
+            bestStartIndex = bestIdx,
+            secondBestIndex = secondIdx,
+            rankedWorkingIndices = finalRankedIndices
+        )
+    }
+
+    suspend fun fetchPanelConfiguredServers(
+        tmdbId: String,
+        imdbId: String = "",
+        title: String = "",
+        isSeries: Boolean = false,
+        season: Int = 1,
+        episode: Int = 1,
+        onFastestDirectReady: (StreamSource) -> Unit = {}
+    ): List<StreamSource> {
+        val selection = fetchSmartPanelSelection(
+            tmdbId = tmdbId,
+            imdbId = imdbId,
+            title = title,
+            isSeries = isSeries,
+            season = season,
+            episode = episode,
+            onFastestDirectReady = { _, src -> onFastestDirectReady(src) }
+        )
+        return selection.servers
     }
 
     private fun tryExtractM3u8FromAdminServer(srv: StreamSource): StreamSource? {

@@ -1,5 +1,4 @@
 package com.primeott.app.presentation.sections
-import com.primeott.app.presentation.watch.WatchTogetherController
 
 import android.Manifest
 import android.app.AlertDialog
@@ -7,9 +6,11 @@ import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
@@ -21,6 +22,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -34,6 +36,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.cardview.widget.CardView
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -44,42 +47,79 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.viewpager2.widget.CompositePageTransformer
-import androidx.viewpager2.widget.MarginPageTransformer
 import androidx.viewpager2.widget.ViewPager2
 import com.bumptech.glide.Glide
+import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.bumptech.glide.request.target.CustomTarget
+import com.bumptech.glide.request.transition.Transition
+import com.primeott.app.MainActivity
 import com.primeott.app.R
 import com.primeott.app.data.remote.SessionManager
 import com.primeott.app.data.repository.OttRepository
 import com.primeott.app.databinding.FragmentHomeBinding
-import com.primeott.app.databinding.FragmentMatchCenterBinding
 import com.primeott.app.databinding.FragmentSettingsBinding
 import com.primeott.app.databinding.FragmentVodGridBinding
 import com.primeott.app.databinding.ItemMatchBinding
 import com.primeott.app.databinding.ItemVodCardBinding
-import com.primeott.app.domain.model.Category
 import com.primeott.app.domain.model.MatchFixture
 import com.primeott.app.domain.model.VodItem
 import com.primeott.app.domain.model.WatchHistoryEntry
 import com.primeott.app.presentation.common.AnimUtils
 import com.primeott.app.presentation.common.LocaleHelper
 import com.primeott.app.presentation.detail.ContentDetailActivity
-import com.primeott.app.presentation.livetv.CategoriesAdapter
-import com.primeott.app.presentation.player.PlayerActivity
-import com.primeott.app.presentation.watch.WatchRoomActivity
+import com.primeott.app.presentation.watch.WatchTogetherController
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
-/**
- * دالة مشتركة تخلي أي Dialog يدي الشاشة كاملة 100% (حتى فوق الـ Status Bar والكاميرا)
- * باش ما يبانش الكوفر تاع الخلفية من الفوق كيما كان فـ image_dd32d8.jpg
- */
+private val bannerColorCache = ConcurrentHashMap<String, Int>()
+
+private fun extractDominantBannerColor(bitmap: Bitmap): Int {
+    return try {
+        val scaled = Bitmap.createScaledBitmap(bitmap, 28, 28, true)
+        var rSum = 0L
+        var gSum = 0L
+        var bSum = 0L
+        var weightSum = 0L
+        val hsv = FloatArray(3)
+
+        for (y in 2 until 26) {
+            for (x in 2 until 26) {
+                val pixel = scaled.getPixel(x, y)
+                Color.colorToHSV(pixel, hsv)
+                val sat = hsv[1]
+                val v = hsv[2]
+                if (v in 0.15f..0.85f && sat >= 0.20f) {
+                    val w = ((sat * 100).toLong()).coerceAtLeast(10L)
+                    rSum += Color.red(pixel) * w
+                    gSum += Color.green(pixel) * w
+                    bSum += Color.blue(pixel) * w
+                    weightSum += w
+                }
+            }
+        }
+        if (weightSum > 0L) {
+            val r = (rSum / weightSum).toInt().coerceIn(0, 255)
+            val g = (gSum / weightSum).toInt().coerceIn(0, 255)
+            val b = (bSum / weightSum).toInt().coerceIn(0, 255)
+            Color.colorToHSV(Color.rgb(r, g, b), hsv)
+            hsv[1] = hsv[1].coerceIn(0.40f, 0.85f)
+            hsv[2] = hsv[2].coerceIn(0.28f, 0.46f)
+            Color.HSVToColor(hsv)
+        } else {
+            Color.parseColor("#1E3A5F")
+        }
+    } catch (_: Exception) {
+        Color.parseColor("#1E3A5F")
+    }
+}
+
 private fun applyTrueFullscreenDialog(dialog: Dialog, rootView: View) {
     dialog.window?.let { w ->
         WindowCompat.setDecorFitsSystemWindows(w, false)
@@ -110,14 +150,10 @@ private fun applyTrueFullscreenDialog(dialog: Dialog, rootView: View) {
     }
 }
 
-/**
- * Popup بحث فخمة ومنظمة (تعوض AlertDialog البشعة لي فـ image_dd32f6.jpg)
- * تخدم فـ Home (الكل)، وفـ Movies (أفلام برك)، وفـ Series (مسلسلات برك)
- */
 private fun showLuxurySearchDialog(
     ctx: Context,
     scope: LifecycleCoroutineScope,
-    filterType: String, // "ALL", "MOVIES", "SERIES"
+    filterType: String,
     onSelectVod: (VodItem) -> Unit
 ) {
     val d = ctx.resources.displayMetrics.density
@@ -145,7 +181,6 @@ private fun showLuxurySearchDialog(
         setPadding((18 * d).toInt(), (18 * d).toInt(), (18 * d).toInt(), (16 * d).toInt())
     }
 
-    // Header Row: Title + Close X
     val topRow = LinearLayout(ctx).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -185,7 +220,6 @@ private fun showLuxurySearchDialog(
     topRow.addView(btnClose)
     rootCard.addView(topRow)
 
-    // Search Input Box (b ic_search + design glass)
     val searchBoxRow = LinearLayout(ctx).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -238,7 +272,6 @@ private fun showLuxurySearchDialog(
     searchBoxRow.addView(spinner)
     rootCard.addView(searchBoxRow)
 
-    // Status / Results Header
     val tvStatus = TextView(ctx).apply {
         text = "Type at least 2 characters to search"
         setTextColor(Color.parseColor("#94A3B8"))
@@ -249,7 +282,6 @@ private fun showLuxurySearchDialog(
     }
     rootCard.addView(tvStatus)
 
-    // Results Grid (3 columns)
     val resultsList = mutableListOf<VodItem>()
     val rvResults = RecyclerView(ctx).apply {
         layoutManager = GridLayoutManager(ctx, 3)
@@ -268,7 +300,6 @@ private fun showLuxurySearchDialog(
     rvResults.adapter = resultsAdapter
     rootCard.addView(rvResults)
 
-    // Bottom Buttons Row (Cancel + Search)
     val btnsRow = LinearLayout(ctx).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
@@ -394,7 +425,7 @@ class HomeFragment : Fragment() {
         val binding = FragmentHomeBinding.bind(view)
         _binding = binding
 
-        // تطبيق خط العناوين المميز (sans-serif-condensed Bold) على عناوين Home
+        val d = resources.displayMetrics.density
         val titleTypeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
         binding.tvRecentHeader.typeface = titleTypeface
         binding.tvRecentHeader.letterSpacing = 0.02f
@@ -402,7 +433,7 @@ class HomeFragment : Fragment() {
         binding.rvHomeChannels.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         binding.rvHomeSeries.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
         binding.rvRecentWatched.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
-        // 1. إظهار الـ Skeleton فوراً قبل ما يطلعو الأفلام من الإنترنت
+
         binding.rvHomeChannels.adapter = PrimeSkeletonHelper.VodSkeletonAdapter(6, isGrid = false, isSeries = false)
         binding.rvHomeSeries.adapter = PrimeSkeletonHelper.VodSkeletonAdapter(6, isGrid = false, isSeries = false)
 
@@ -429,34 +460,50 @@ class HomeFragment : Fragment() {
             }
             parentLinear.addView(extraSectionsContainer)
         }
-        // 2. إعداد الـ Hero Banner بتصميم مائل على الجوانب (Tilted 3D Carousel kima image_8ce4be.jpg)
+
+        // إعداد الـ 3D Fanned Coverflow Banner كيما صورة Leviticus (الكرت الأوسط واقف والكروت الجانبية مائلة وتطل من الجانبين)
+        val sidePeekPadding = (48 * d).toInt()
+        (binding.heroViewPager.parent as? ViewGroup)?.apply {
+            clipChildren = false
+            clipToPadding = false
+        }
         binding.heroViewPager.apply {
             clipToPadding = false
             clipChildren = false
             offscreenPageLimit = 3
-            (getChildAt(0) as? RecyclerView)?.overScrollMode = RecyclerView.OVER_SCROLL_NEVER
-            val transformer = CompositePageTransformer().apply {
-                addTransformer(MarginPageTransformer(20))
-                addTransformer { page, position ->
-                    val r = 1 - abs(position)
-                    page.rotation = 0f
-                    page.rotationY = 0f
-                    page.translationX = 0f
-                    page.translationY = 0f
-                    page.scaleX = 1f
-                    page.scaleY = 0.85f + r * 0.15f
-                    page.alpha = 0.58f + r * 0.42f
-                }
+            setPadding(sidePeekPadding, (6 * d).toInt(), sidePeekPadding, (10 * d).toInt())
+            (getChildAt(0) as? RecyclerView)?.apply {
+                clipToPadding = false
+                clipChildren = false
+                overScrollMode = RecyclerView.OVER_SCROLL_NEVER
             }
-            setPageTransformer(transformer)
+            setPageTransformer { page, position ->
+                val clamped = position.coerceIn(-1.5f, 1.5f)
+                val absPos = abs(clamped)
+                val focus = (1f - absPos.coerceAtMost(1f))
+
+                page.cameraDistance = 15000f * d
+                // ميلان الكرت الأيسر لليسار (-8.5°) والكرت الأيمن لليمين (+8.5°) مثل صورة Leviticus
+                page.rotation = clamped * 8.5f
+                page.rotationY = clamped * -9.5f
+                // تقريب الكرتين الجانبيين ليظهرا خلف وجانب الكرت الرئيسي
+                page.translationX = -clamped * (18f * d)
+                page.translationY = absPos * (15f * d)
+
+                val scale = 0.84f + (focus * 0.16f)
+                page.scaleX = scale
+                page.scaleY = scale
+                page.alpha = (0.56f + focus * 0.44f).coerceIn(0.40f, 1f)
+                page.translationZ = focus * (18f * d)
+            }
             registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                 override fun onPageSelected(position: Int) {
                     super.onPageSelected(position)
                     updateHeroFavoriteButtonIcon(binding)
+                    syncHeroPosterAmbientColor(position)
                 }
             })
         }
-
 
         AnimUtils.attachPressBounce(binding.btnWatchFeatured)
         AnimUtils.attachPressBounce(binding.btnHeroFavorite)
@@ -487,7 +534,6 @@ class HomeFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             val sections = OttRepository.fetchHomeSections()
 
-            // جلب صفحات إضافية متجددة باش ما يبقاوش نفس الـ 20 فيلم تاع الصفحة الأولى لمدة 3 أيام
             val freshMoviesPage2 = runCatching {
                 OttRepository.fetchVodCatalogPage(isSeries = false, page = (2..5).random(), filterCode = "ALL", sortMode = "POPULAR")
             }.getOrDefault(emptyList())
@@ -496,7 +542,6 @@ class HomeFragment : Fragment() {
                 OttRepository.fetchVodCatalogPage(isSeries = true, page = (2..4).random(), filterCode = "ALL", sortMode = "POPULAR")
             }.getOrDefault(emptyList())
 
-            // دمج وتجديد قائمة الـ Hero Banner في كل دخلة للتطبيق
             val combinedHeroPool = (sections.heroItems + sections.trendingToday.take(10) + freshMoviesPage2.take(6))
                 .distinctBy { it.id }
                 .filter { it.posterUrl.isNotEmpty() }
@@ -511,10 +556,10 @@ class HomeFragment : Fragment() {
                 val midStart = (Int.MAX_VALUE / 2) - ((Int.MAX_VALUE / 2) % heroItems.size)
                 binding.heroViewPager.setCurrentItem(midStart, false)
                 updateHeroFavoriteButtonIcon(binding)
+                syncHeroPosterAmbientColor(midStart)
                 startHeroAutoSlider(binding)
             }
 
-            // تجديد ترتيب Trending Today و Popular Movies باش ديما يبانو أفلام جدد فـ الأول
             val dynamicTrending = (sections.trendingToday + freshMoviesPage2.take(8))
                 .distinctBy { it.id }
                 .shuffled()
@@ -562,6 +607,36 @@ class HomeFragment : Fragment() {
                 updateHeroFavoriteButtonIcon(binding)
             }
         }
+    }
+
+    private fun syncHeroPosterAmbientColor(pagerPos: Int) {
+        if (heroItems.isEmpty() || !isAdded) return
+        val vod = heroItems[pagerPos % heroItems.size]
+        val posterUrl = vod.posterUrl
+        if (posterUrl.isEmpty()) return
+
+        bannerColorCache[vod.id]?.let { cached ->
+            (activity as? MainActivity)?.updateAmbientColorFromHero(cached)
+            return
+        }
+
+        Glide.with(this)
+            .asBitmap()
+            .load(posterUrl)
+            .diskCacheStrategy(DiskCacheStrategy.ALL)
+            .into(object : CustomTarget<Bitmap>(120, 180) {
+                override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
+                    if (!isAdded) return
+                    val color = extractDominantBannerColor(resource)
+                    bannerColorCache[vod.id] = color
+                    val currentRealIdx = (_binding?.heroViewPager?.currentItem ?: 0) % heroItems.size.coerceAtLeast(1)
+                    if (heroItems.getOrNull(currentRealIdx)?.id == vod.id) {
+                        (activity as? MainActivity)?.updateAmbientColorFromHero(color)
+                    }
+                }
+
+                override fun onLoadCleared(placeholder: Drawable?) {}
+            })
     }
 
     private fun updateHeroFavoriteButtonIcon(binding: FragmentHomeBinding) {
@@ -709,7 +784,6 @@ class HomeFragment : Fragment() {
             while (isActive) {
                 delay(4500L)
                 if (heroItems.size > 1) {
-                    // يمشي للقدام بلا ما يكمل وبلا ما يعاود يرجع للوراء!
                     binding.heroViewPager.setCurrentItem(binding.heroViewPager.currentItem + 1, true)
                 }
             }
@@ -721,7 +795,6 @@ class HomeFragment : Fragment() {
         val vodWithProgress = if (savedEntry != null) {
             vod.copy(savedPositionMs = savedEntry.positionMs, totalDurationMs = savedEntry.durationMs)
         } else {
-            // ما نسجلوش الفيلم في Continue Watching حتى يدخل المستخدم ويدير Play صح!
             vod
         }
         startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
@@ -749,7 +822,6 @@ class HomeFragment : Fragment() {
     }
 
     private fun loadRecentHistorySection(binding: FragmentHomeBinding) {
-        // نفيشيو غير الأفلام لي المستخدم دارلهم Play وفيهم وقت مشاهدة حقيقي (positionMs > 0)
         val historyList = SessionManager.getWatchHistoryList(requireContext())
             .filter { it.positionMs > 1000L && it.durationMs > 0L }
 
@@ -870,9 +942,6 @@ class HomeFragment : Fragment() {
         dialog.window?.setLayout(widthPx, ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    /**
-     * صفحة Watch History الكاملة 100% Fullscreen (بلا ما يبان الكوفر الفوقاني)
-     */
     private fun showWatchHistoryFullDialog() {
         val ctx = requireContext()
         val dialog = Dialog(ctx, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
@@ -1165,7 +1234,6 @@ class RecentLandscapeAdapter(
 
         val posMs = item.positionMs
         val durMs = item.durationMs
-        // حساب البلاصة الحقيقية لي حبست فيها بالضبط بلا 0.28f الوهمية
         val ratio = if (posMs > 0L && durMs > 0L) {
             (posMs.toFloat() / durMs.toFloat()).coerceIn(0.02f, 1.0f)
         } else {
@@ -1207,6 +1275,9 @@ class RecentLandscapeAdapter(
     }
 }
 
+/**
+ * HeroBannerAdapter مطابق لتصميم صورة Leviticus (كروت بوستر 3D مائلة مع شارة ★ 6.8 وشارة 2026 وعنوان سفلي بارز وإطار زجاجي)
+ */
 class HeroBannerAdapter(
     private val items: List<VodItem>,
     private val onClick: (VodItem) -> Unit
@@ -1225,7 +1296,7 @@ class HeroBannerAdapter(
         val density = ctx.resources.displayMetrics.density
         val titleFont = androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.product_sans_bold)
             ?: Typeface.create("sans-serif", Typeface.BOLD)
-        val pillFont = androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.product_sans_egular)
+        val pillFont = androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.product_sans_bold)
             ?: Typeface.create("sans-serif-medium", Typeface.BOLD)
 
         val card = CardView(ctx).apply {
@@ -1233,12 +1304,12 @@ class HeroBannerAdapter(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             ).apply {
-                val marginH = (4 * density).toInt()
+                val marginH = (6 * density).toInt()
                 setMargins(marginH, 0, marginH, 0)
             }
-            radius = 22f * density
-            cardElevation = 0f // مهم جداً باش الـ 3D rotationY ما يتقصش بالـ Shadow تاع CardView
-            setCardBackgroundColor(Color.parseColor("#0D1015"))
+            radius = 24f * density
+            cardElevation = 0f
+            setCardBackgroundColor(Color.parseColor("#0A0D14"))
         }
 
         val container = FrameLayout(ctx).apply {
@@ -1256,34 +1327,65 @@ class HeroBannerAdapter(
             scaleType = ImageView.ScaleType.CENTER_CROP
         }
 
+        // تظليل علوي خفيف لإبراز شارات التقييم والسنة + تظليل سفلي عميق لإبراز اسم الفيلم مثل Leviticus
+        val topVignette = View(ctx).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                (76 * density).toInt(),
+                Gravity.TOP
+            )
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(
+                    Color.parseColor("#75030508"),
+                    Color.TRANSPARENT
+                )
+            )
+        }
+
         val bottomOverlay = View(ctx).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                (155 * density).toInt(),
+                (170 * density).toInt(),
                 Gravity.BOTTOM
             )
             background = GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
                 intArrayOf(
                     Color.TRANSPARENT,
-                    Color.parseColor("#8005070A"),
-                    Color.parseColor("#E605070A")
+                    Color.parseColor("#8804060A"),
+                    Color.parseColor("#F2030407")
                 )
             )
+        }
+
+        // إطار زجاجي رفيع يحيط بالكرت ليظهر بوضوح في الـ 3D Tilt
+        val glassBorderOverlay = View(ctx).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 24f * density
+                setColor(Color.TRANSPARENT)
+                setStroke((1.15f * density).toInt().coerceAtLeast(1), Color.parseColor("#2EFFFFFF"))
+            }
         }
 
         val badgeBg = {
             GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = 10f * density
-                setColor(Color.parseColor("#B80A0D12"))
+                cornerRadius = 11f * density
+                setColor(Color.parseColor("#CC07090E"))
+                setStroke((0.9f * density).toInt().coerceAtLeast(1), Color.parseColor("#26FFFFFF"))
             }
         }
 
         val tvRating = TextView(ctx).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                (30 * density).toInt(),
+                (32 * density).toInt(),
                 Gravity.TOP or Gravity.START
             ).apply {
                 val m = (14 * density).toInt()
@@ -1293,17 +1395,17 @@ class HeroBannerAdapter(
             setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_star_gold, 0, 0, 0)
             compoundDrawablePadding = (5 * density).toInt()
             gravity = Gravity.CENTER
-            val padH = (11 * density).toInt()
+            val padH = (12 * density).toInt()
             setPadding(padH, 0, padH, 0)
             setTextColor(Color.parseColor("#FFC107"))
-            textSize = 13f
+            textSize = 13.5f
             typeface = titleFont
         }
 
         val tvYear = TextView(ctx).apply {
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                (30 * density).toInt(),
+                (32 * density).toInt(),
                 Gravity.TOP or Gravity.END
             ).apply {
                 val m = (14 * density).toInt()
@@ -1311,10 +1413,10 @@ class HeroBannerAdapter(
             }
             background = badgeBg()
             gravity = Gravity.CENTER
-            val padH = (11 * density).toInt()
+            val padH = (12 * density).toInt()
             setPadding(padH, 0, padH, 0)
             setTextColor(Color.WHITE)
-            textSize = 13f
+            textSize = 13.5f
             typeface = pillFont
         }
 
@@ -1330,23 +1432,24 @@ class HeroBannerAdapter(
             gravity = Gravity.CENTER
             maxLines = 1
             letterSpacing = 0.01f
-            setShadowLayer(10f, 0f, 3f, Color.BLACK)
+            setShadowLayer(12f, 0f, 3f, Color.BLACK)
             setTextColor(Color.WHITE)
             textSize = 24f
             typeface = titleFont
         }
 
         container.addView(ivPoster)
+        container.addView(topVignette)
         container.addView(bottomOverlay)
         container.addView(tvRating)
         container.addView(tvYear)
         container.addView(tvTitle)
+        container.addView(glassBorderOverlay)
         card.addView(container)
 
         return VH(card, ivPoster, tvRating, tvYear, tvTitle)
     }
 
-    // عدد لا نهائي باش الـ Banner ما يحبسش وما يعاودش يرجع للوراء
     override fun getItemCount(): Int = if (items.isEmpty()) 0 else Int.MAX_VALUE
 
     override fun onBindViewHolder(holder: VH, position: Int) {
@@ -1379,7 +1482,7 @@ class HeroBannerAdapter(
 }
 
 /**
- * صفحة Movies و TV Shows (مع الفلتر المنبثق Order by + شريط الكروت الصغار تاع التصنيفات + البحث المخصص)
+ * صفحة Movies و TV Shows المتجددة (تخلط وتجلب صفحات متعددة حتى لا تبقى الأفلام ثابتة + أنيميشن دخول للكروت)
  */
 class VodFragment : Fragment() {
     companion object {
@@ -1393,6 +1496,7 @@ class VodFragment : Fragment() {
     private var isLoadingMore = false
     private var selectedSortMode = "POPULAR"
     private var selectedGenreCode = "ALL"
+    private val usedInitialPages = mutableSetOf<Int>()
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         return inflater.inflate(R.layout.fragment_vod_grid, container, false)
@@ -1412,7 +1516,6 @@ class VodFragment : Fragment() {
 
         val gridAdapter = VodGridAdapter(catalogList, isGrid = true) { vod ->
             val savedPos = SessionManager.getSavedPositionForVod(requireContext(), vod.id)
-            // نحينا saveWatchProgress باش ما يتحطش في Continue Watching غير بالدخول للكوفر
             startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
                 putExtra(ContentDetailActivity.EXTRA_VOD, vod.copy(savedPositionMs = savedPos))
             })
@@ -1420,27 +1523,60 @@ class VodFragment : Fragment() {
         binding.rvVodGrid.adapter = gridAdapter
 
         fun reloadCatalogFromFirstPage() {
-            currentPage = 1
-            isLoadingMore = false
+            isLoadingMore = true
             catalogList.clear()
-            // عرض Skeleton خاص بـ Movies أو Series بينما توجد البيانات
+            usedInitialPages.clear()
+            gridAdapter.resetAnimationTracking()
+
             binding.rvVodGrid.adapter = PrimeSkeletonHelper.VodSkeletonAdapter(
                 itemCountToShow = 12,
                 isGrid = true,
                 isSeries = isSeries
             )
-            isLoadingMore = true
+
             viewLifecycleOwner.lifecycleScope.launch {
-                val pageItems = OttRepository.fetchVodCatalogPage(
-                    isSeries = isSeries,
-                    page = 1,
-                    filterCode = selectedGenreCode,
-                    sortMode = selectedSortMode
+                // جلب صفحتين مختلفتين بالتوازي ودمجهما بذكاء باش ما تبقاش صفحة الأفلام جامدة بنفس الترتيب!
+                val dynamicBonusPage = (2..5).random()
+                usedInitialPages.add(1)
+                usedInitialPages.add(dynamicBonusPage)
+
+                val (page1Items, pageBonusItems) = awaitAll(
+                    async(Dispatchers.IO) {
+                        OttRepository.fetchVodCatalogPage(
+                            isSeries = isSeries,
+                            page = 1,
+                            filterCode = selectedGenreCode,
+                            sortMode = selectedSortMode
+                        )
+                    },
+                    async(Dispatchers.IO) {
+                        OttRepository.fetchVodCatalogPage(
+                            isSeries = isSeries,
+                            page = dynamicBonusPage,
+                            filterCode = selectedGenreCode,
+                            sortMode = selectedSortMode
+                        )
+                    }
                 )
+
+                val mergedFreshList = if (selectedSortMode == "POPULAR") {
+                    (page1Items + pageBonusItems).distinctBy { it.id }.shuffled()
+                } else {
+                    (page1Items + pageBonusItems).distinctBy { it.id }
+                }
+
                 binding.rvVodGrid.adapter = gridAdapter
-                if (pageItems.isNotEmpty()) {
-                    catalogList.addAll(pageItems)
+                if (mergedFreshList.isNotEmpty()) {
+                    catalogList.addAll(mergedFreshList)
                     gridAdapter.notifyDataSetChanged()
+                    binding.rvVodGrid.alpha = 0f
+                    binding.rvVodGrid.translationY = 18f * resources.displayMetrics.density
+                    binding.rvVodGrid.animate()
+                        .alpha(1f)
+                        .translationY(0f)
+                        .setDuration(260L)
+                        .setInterpolator(DecelerateInterpolator())
+                        .start()
                     currentPage = 2
                 }
                 isLoadingMore = false
@@ -1450,24 +1586,30 @@ class VodFragment : Fragment() {
         fun loadNextCatalogPage() {
             if (isLoadingMore) return
             isLoadingMore = true
+            while (usedInitialPages.contains(currentPage)) {
+                currentPage++
+            }
+            val pageToFetch = currentPage
+            usedInitialPages.add(pageToFetch)
+
             viewLifecycleOwner.lifecycleScope.launch {
                 val pageItems = OttRepository.fetchVodCatalogPage(
                     isSeries = isSeries,
-                    page = currentPage,
+                    page = pageToFetch,
                     filterCode = selectedGenreCode,
                     sortMode = selectedSortMode
-                )
+                ).filter { newItem -> catalogList.none { it.id == newItem.id } }
+
                 if (pageItems.isNotEmpty()) {
                     val start = catalogList.size
                     catalogList.addAll(pageItems)
                     gridAdapter.notifyItemRangeInserted(start, pageItems.size)
-                    currentPage++
+                    currentPage = pageToFetch + 1
                 }
                 isLoadingMore = false
             }
         }
 
-        // 1. إعداد شريط الكروت الصغار تاع التصنيفات (All, Action, Adventure, Animation...)
         val genres = if (isSeries) {
             listOf(
                 "ALL" to "All",
@@ -1497,7 +1639,9 @@ class VodFragment : Fragment() {
                 "9648" to "Mystery",
                 "10749" to "Romance",
                 "878" to "Sci-Fi",
-                "53" to "Thriller"
+                "53" to "Thriller",
+                "TR" to "Turkish",
+                "KR" to "Korean"
             )
         }
 
@@ -1508,7 +1652,6 @@ class VodFragment : Fragment() {
             reloadCatalogFromFirstPage()
         }
 
-        // 2. إعداد الفلتر المنبثق (Order by Popular / Top Rated / Upcoming / Now Playing) كيما image_dd35fc.png
         val sortOptions = if (isSeries) {
             listOf(
                 "POPULAR" to "Order by Popular",
@@ -1533,7 +1676,6 @@ class VodFragment : Fragment() {
             }
         }
 
-        // 3. إعداد زر البحث الخاص بـ Movies برك أو Series برك
         binding.btnVodSearch.setOnClickListener {
             showLuxurySearchDialog(
                 ctx = requireContext(),
@@ -1564,9 +1706,6 @@ class VodFragment : Fragment() {
         }
     }
 
-    /**
-     * نافذة الفلتر الصغيرة المنبثقة (PopupWindow) مطابقة لـ image_dd35fc.png
-     */
     private fun showOrderFilterPopupWindow(
         anchor: View,
         options: List<Pair<String, String>>,
@@ -1635,9 +1774,6 @@ class VodFragment : Fragment() {
     }
 }
 
-/**
- * Adapter تاع شريط كروت التصنيفات (All, Action, Adventure, Animation... كيما image_dd3621.jpg)
- */
 class GenreChipsAdapter(
     private val items: List<Pair<String, String>>,
     private var selectedCode: String,
@@ -1705,14 +1841,21 @@ class GenreChipsAdapter(
 }
 
 /**
- * VodGridAdapter (مضبوط التباعد فـ الـ Grid باش ما يتلاصقوش الكروت فـ بعضاهم كيما image_dd359d.jpg)
+ * VodGridAdapter مع أنيميشن دخول سلسة للكروت (Cascade Scale & Slide) وتأثير الضغط
  */
 class VodGridAdapter(
     private val items: List<VodItem>,
     private val isGrid: Boolean = false,
     private val onClick: (VodItem) -> Unit
 ) : RecyclerView.Adapter<VodGridAdapter.VH>() {
+
     class VH(val binding: ItemVodCardBinding) : RecyclerView.ViewHolder(binding.root)
+
+    private var lastAnimatedPosition = -1
+
+    fun resetAnimationTracking() {
+        lastAnimatedPosition = -1
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val b = ItemVodCardBinding.inflate(LayoutInflater.from(parent.context), parent, false)
@@ -1735,6 +1878,7 @@ class VodGridAdapter(
                 setMargins(mH, mV, mH, mV)
             }
         }
+        AnimUtils.attachPressBounce(b.root)
         return VH(b)
     }
 
@@ -1762,6 +1906,26 @@ class VodGridAdapter(
         } else {
             holder.binding.ivPoster.setImageDrawable(skeletonDrawable)
         }
+
+        if (isGrid && position > lastAnimatedPosition) {
+            lastAnimatedPosition = position
+            val v = holder.binding.root
+            v.animate().cancel()
+            v.alpha = 0f
+            v.scaleX = 0.91f
+            v.scaleY = 0.91f
+            v.translationY = 16f * ctx.resources.displayMetrics.density
+            v.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .translationY(0f)
+                .setDuration(240L)
+                .setStartDelay(((position % 3) * 35L))
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+        }
+
         holder.binding.root.setOnClickListener { onClick(item) }
     }
 }

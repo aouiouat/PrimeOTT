@@ -1,38 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- زجاج أسود قاتم بشفافية خفيفة برك (#F4 / #F8) -->
     <item>
         <shape android:shape="rectangle">
             <gradient
                 android:angle="270"
-                android:startColor="#F2101219"
-                android:centerColor="#F6090A0F"
-                android:endColor="#FA050608"
+                android:startColor="#F0131926"
+                android:centerColor="#F50D121C"
+                android:endColor="#FA080B12"
                 android:type="linear" />
-            <corners android:radius="28dp" />
+            <corners android:radius="30dp" />
             <stroke
-                android:width="1dp"
-                android:color="#30FFFFFF" />
+                android:width="1.2dp"
+                android:color="#3DFFFFFF" />
         </shape>
     </item>
-
-    <!-- لمعة الزجاج الفوقانية -->
     <item
-        android:bottom="27dp"
-        android:left="1dp"
-        android:right="1dp"
+        android:bottom="28dp"
+        android:left="2dp"
+        android:right="2dp"
         android:top="1dp">
         <shape android:shape="rectangle">
             <gradient
                 android:angle="270"
-                android:startColor="#1FFFFFFF"
+                android:startColor="#24FFFFFF"
                 android:endColor="#00FFFFFF"
                 android:type="linear" />
             <corners
                 android:bottomLeftRadius="0dp"
                 android:bottomRightRadius="0dp"
-                android:topLeftRadius="27dp"
-                android:topRightRadius="27dp" />
+                android:topLeftRadius="29dp"
+                android:topRightRadius="29dp" />
         </shape>
     </item>
 </layer-list>

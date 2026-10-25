@@ -274,7 +274,8 @@ class PrimePlayerEngine(
         playerView: PlayerView,
         sources: List<StreamSource>,
         startIndex: Int = 0,
-        startPositionMs: Long = 0L
+        startPositionMs: Long = 0L,
+        autoPlay: Boolean = true
     ) {
         if (sources.isEmpty()) return
         attachedPlayerView = playerView
@@ -286,14 +287,14 @@ class PrimePlayerEngine(
             if (attachedPlayerView?.player !== player) {
                 attachedPlayerView?.player = player
             }
-            player?.playWhenReady = true
+            player?.playWhenReady = autoPlay
             return
         }
 
         retryCount = 0
         userLockedQualityHeight = null
         failedLinkUrls.clear()
-        prepareOrSwitchPlayer(target, startPositionMs)
+        prepareOrSwitchPlayer(target, startPositionMs, autoPlay)
         onSourceSwitched(currentSourceIndex, target)
     }
 
@@ -316,7 +317,7 @@ class PrimePlayerEngine(
         currentLink = newLink
         retryCount = 0
         userLockedQualityHeight = null
-        prepareOrSwitchPlayer(newLink, seekToMs)
+        prepareOrSwitchPlayer(newLink, seekToMs, autoPlay = true)
         onSourceSwitched(currentSourceIndex, newLink)
     }
 
@@ -355,7 +356,11 @@ class PrimePlayerEngine(
     /**
      * يبدل الرابط أو يهيئ المشغل بنفس طريقة PrimeTV (إعادة استخدام ExoPlayer لتفادي التشنج والـ Crash)
      */
-    private fun prepareOrSwitchPlayer(link: StreamSource, seekToMs: Long) {
+    private fun prepareOrSwitchPlayer(
+        link: StreamSource,
+        seekToMs: Long,
+        autoPlay: Boolean = true
+    ) {
         retryJob?.cancel()
         cancelStallTimer()
 
@@ -427,7 +432,7 @@ class PrimePlayerEngine(
             val startPos = if (seekToMs > 0L && !isLiveStreamUrl(cleanUrl)) seekToMs else C.TIME_UNSET
             newExo.setMediaSource(mediaSource, startPos)
             newExo.prepare()
-            newExo.playWhenReady = true
+            newExo.playWhenReady = autoPlay
         } else {
             if (attachedPlayerView?.player !== existingExo) {
                 attachedPlayerView?.player = existingExo
@@ -435,7 +440,7 @@ class PrimePlayerEngine(
             val startPos = if (seekToMs > 0L && !isLiveStreamUrl(cleanUrl)) seekToMs else C.TIME_UNSET
             existingExo.setMediaSource(mediaSource, startPos)
             existingExo.prepare()
-            existingExo.playWhenReady = true
+            existingExo.playWhenReady = autoPlay
         }
     }
 
@@ -523,7 +528,7 @@ class PrimePlayerEngine(
         }.getOrDefault(50_000)
 
         return DefaultLoadControl.Builder()
-            .setBufferDurationsMs(20_000, maxBufferMs, 1_200, 2_500)
+            .setBufferDurationsMs(18_000, maxBufferMs, 650, 1_800)
             .setPrioritizeTimeOverSizeThresholds(true)
             .setTargetBufferBytes(C.LENGTH_UNSET)
             .setBackBuffer(15_000, true)
