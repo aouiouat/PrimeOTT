@@ -69,24 +69,23 @@
                 android:src="@drawable/ic_search" />
         </LinearLayout>
 
-        <!-- 2. 3D Tilted Infinite Hero Banner Carousel (kima image_8ce4be.jpg) -->
-        <!-- 2. 3D Auto-Sliding Hero Banner Carousel -->
+        <!-- 2. Smooth Hero Banner Carousel (مطابق لأبعاد وسلاسة الفيديو: أطول شوية 382dp وأرق 62dp) -->
         <androidx.viewpager2.widget.ViewPager2
             android:id="@+id/heroViewPager"
             android:layout_width="match_parent"
-            android:layout_height="362dp"
+            android:layout_height="382dp"
             android:layout_marginTop="4dp"
             android:clipChildren="false"
             android:clipToPadding="false"
-            android:paddingHorizontal="48dp"
+            android:paddingHorizontal="62dp"
             android:paddingTop="4dp"
             android:paddingBottom="6dp" />
 
-        <!-- 3. White Luxury Watch Now Button + Glass Favorite Button -->
+        <!-- 3. Watch Now Button + Glass Favorite Button -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="10dp"
             android:gravity="center"
             android:orientation="horizontal">
 
@@ -174,7 +173,7 @@
             android:paddingHorizontal="12dp"
             android:visibility="gone" />
 
-        <!-- 5. Trending Today Section (See All bil Red #E50914) -->
+        <!-- 5. Trending Today Section -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -197,11 +196,15 @@
             <TextView
                 android:id="@+id/btnSeeAllMovies"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:layout_height="28dp"
+                android:background="@drawable/bg_btn_see_all_pill"
                 android:fontFamily="@font/product_sans_bold"
-                android:text="See All"
-                android:textColor="#E50914"
-                android:textSize="13.5sp" />
+                android:gravity="center"
+                android:letterSpacing="0.02"
+                android:paddingHorizontal="12dp"
+                android:text="See All ›"
+                android:textColor="#FF2E3B"
+                android:textSize="12.5sp" />
         </LinearLayout>
 
         <androidx.recyclerview.widget.RecyclerView
@@ -212,7 +215,7 @@
             android:clipToPadding="false"
             android:paddingHorizontal="10dp" />
 
-        <!-- 6. Popular Movies Section (See All bil Red #E50914) -->
+        <!-- 6. Popular Movies Section -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -235,11 +238,15 @@
             <TextView
                 android:id="@+id/btnSeeAllSeries"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                android:layout_height="28dp"
+                android:background="@drawable/bg_btn_see_all_pill"
                 android:fontFamily="@font/product_sans_bold"
-                android:text="See All"
-                android:textColor="#E50914"
-                android:textSize="13.5sp" />
+                android:gravity="center"
+                android:letterSpacing="0.02"
+                android:paddingHorizontal="12dp"
+                android:text="See All ›"
+                android:textColor="#FF2E3B"
+                android:textSize="12.5sp" />
         </LinearLayout>
 
         <androidx.recyclerview.widget.RecyclerView

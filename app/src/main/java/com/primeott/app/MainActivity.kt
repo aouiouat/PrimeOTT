@@ -53,6 +53,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var activePillGlowDrawable: ActiveNavPillGlowDrawable
 
     private var lastHomeHeroColor: Int = Color.parseColor("#1B2838")
+    private var lastMoviesHeroColor: Int = Color.parseColor("#1B2838")
+    private var lastSeriesHeroColor: Int = Color.parseColor("#1B2838")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -114,18 +116,41 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun updateAmbientColorFromHero(extractedColor: Int) {
-        lastHomeHeroColor = extractedColor
-        if (activeTag == "HOME") {
+        updateAmbientColorForTab("HOME", extractedColor)
+    }
+
+    /**
+     * تحديث لون خلفية التطبيق حسب أول فيلم في Home أو Movies أو Series
+     */
+    fun updateAmbientColorForTab(tabTag: String, extractedColor: Int) {
+        when (tabTag) {
+            "HOME" -> lastHomeHeroColor = extractedColor
+            "MOVIES" -> lastMoviesHeroColor = extractedColor
+            "SERIES" -> lastSeriesHeroColor = extractedColor
+        }
+        if (activeTag == tabTag) {
             animateAmbientThemeTo(extractedColor)
+        }
+    }
+
+    /**
+     * تحديث لحظي للون الخلفية أثناء سحب البانر بالإصبع (Live Color Cross-fade)
+     */
+    fun setAmbientColorImmediateForHome(blendedColor: Int) {
+        lastHomeHeroColor = blendedColor
+        if (activeTag == "HOME") {
+            ambientColorAnimator?.cancel()
+            ambientBgDrawable.updateAccentColor(blendedColor)
         }
     }
 
     private fun animateAmbientThemeTo(targetColor: Int) {
         ambientColorAnimator?.cancel()
         val startColor = ambientBgDrawable.currentAccentColor
+        if (startColor == targetColor) return
         val evaluator = ArgbEvaluator()
         ambientColorAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 650L
+            duration = 550L
             interpolator = DecelerateInterpolator(1.4f)
             addUpdateListener { va ->
                 val blended = evaluator.evaluate(va.animatedFraction, startColor, targetColor) as Int
@@ -188,7 +213,6 @@ class MainActivity : AppCompatActivity() {
 
         tx.commitNowAllowingStateLoss()
 
-        // تهدئة سرعة الانتقال بين الصفحات (360ms بدلاً من 190ms) مع تلاشي وانسياب هادئ باش ما ترمشش الشاشة وتحس بالسلاسة
         if (animate) {
             target.view?.let { pageView ->
                 val density = resources.displayMetrics.density
@@ -212,7 +236,12 @@ class MainActivity : AppCompatActivity() {
 
         activeTag = tag
 
-        val tabThemeColor = if (tag == "HOME") lastHomeHeroColor else Color.parseColor("#182230")
+        val tabThemeColor = when (tag) {
+            "HOME" -> lastHomeHeroColor
+            "MOVIES" -> lastMoviesHeroColor
+            "SERIES" -> lastSeriesHeroColor
+            else -> Color.parseColor("#182230")
+        }
         animateAmbientThemeTo(tabThemeColor)
 
         updateBottomBarIcons(tag, animate, tabDistance)
@@ -336,8 +365,8 @@ class FlixVisionStandardBgDrawable : Drawable() {
         val w = b.width().toFloat().coerceAtLeast(1f)
         val h = b.height().toFloat().coerceAtLeast(1f)
 
-        val deepTop = ColorUtils.blendARGB(Color.parseColor("#0B0F17"), currentAccentColor, 0.18f)
-        val deepMid = ColorUtils.blendARGB(Color.parseColor("#06080D"), currentAccentColor, 0.08f)
+        val deepTop = ColorUtils.blendARGB(Color.parseColor("#0B0F17"), currentAccentColor, 0.22f)
+        val deepMid = ColorUtils.blendARGB(Color.parseColor("#06080D"), currentAccentColor, 0.10f)
         basePaint.shader = LinearGradient(
             0f, 0f, w, h,
             intArrayOf(
@@ -346,20 +375,20 @@ class FlixVisionStandardBgDrawable : Drawable() {
                 Color.parseColor("#040508"),
                 Color.parseColor("#000000")
             ),
-            floatArrayOf(0f, 0.36f, 0.72f, 1f),
+            floatArrayOf(0f, 0.38f, 0.74f, 1f),
             Shader.TileMode.CLAMP
         )
         canvas.drawRect(0f, 0f, w, h, basePaint)
 
-        val topRadius = max(w, h) * 0.62f
-        val glowCore = ColorUtils.setAlphaComponent(currentAccentColor, 85)
-        val glowMid = ColorUtils.setAlphaComponent(currentAccentColor, 32)
+        val topRadius = max(w, h) * 0.65f
+        val glowCore = ColorUtils.setAlphaComponent(currentAccentColor, 95)
+        val glowMid = ColorUtils.setAlphaComponent(currentAccentColor, 38)
         topAuroraPaint.shader = RadialGradient(
             w * 0.50f,
-            h * 0.16f,
+            h * 0.18f,
             topRadius,
             intArrayOf(glowCore, glowMid, Color.TRANSPARENT),
-            floatArrayOf(0f, 0.55f, 1f),
+            floatArrayOf(0f, 0.58f, 1f),
             Shader.TileMode.CLAMP
         )
         canvas.drawRect(0f, 0f, w, h, topAuroraPaint)

@@ -42,6 +42,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.cardview.widget.CardView
 import androidx.core.content.ContextCompat
 import androidx.core.content.res.ResourcesCompat
+import androidx.core.graphics.ColorUtils
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -490,6 +491,7 @@ class HomeFragment : Fragment() {
     private var autoSlideJob: Job? = null
     private var heroItems: List<VodItem> = emptyList()
     private var extraSectionsContainer: LinearLayout? = null
+    private var lastUserSwipeTimeMs: Long = 0L
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         return inflater.inflate(R.layout.fragment_home, container, false)
@@ -534,10 +536,11 @@ class HomeFragment : Fragment() {
             parentLinear.addView(extraSectionsContainer)
         }
 
-        // عرض رشيق (58dp) وطول متوازن غير مبالغ فيه (342dp) باش يبان الكوفر الجاي واللي فات بوضوح بلا ما يهبط بزاف لتحت
-        val sidePeekPadding = (58 * d).toInt()
+        // إعداد الـ Hero Banner مطابق 100% لفيديو Prime OTT:
+        // أطول شوية (382dp) وأرق في العرض (62dp) مع حركة أفقية مستقيمة وسلسة جداً بلا عوجان
+        val sidePeekPadding = (62 * d).toInt()
         binding.heroViewPager.layoutParams = binding.heroViewPager.layoutParams.apply {
-            height = (362 * d).toInt()
+            height = (382 * d).toInt()
         }
         binding.heroViewPager.apply {
             clipToPadding = false
@@ -554,23 +557,50 @@ class HomeFragment : Fragment() {
                 val absPos = abs(clamped)
                 val focus = (1f - absPos.coerceAtMost(1f))
 
-                page.cameraDistance = 18000f * d
-                page.rotation = clamped * 5.8f
-                page.rotationY = clamped * -9.5f
-                page.translationX = -clamped * (20f * d)
-                page.translationY = absPos * (12f * d)
+                // حركة أفقية مستقيمة وناعمة كيما فيديو Prime OTT (بدون عوجان rotation)
+                page.rotation = 0f
+                page.rotationY = 0f
+                page.translationY = 0f
+                page.translationX = -clamped * (6f * d)
 
-                val scale = 0.86f + (focus * 0.14f)
+                val scale = 0.85f + (focus * 0.15f)
                 page.scaleX = scale
                 page.scaleY = scale
-                page.alpha = (0.68f + focus * 0.32f).coerceIn(0.60f, 1f)
-                page.translationZ = focus * (16f * d)
+                page.alpha = (0.48f + focus * 0.52f).coerceIn(0.42f, 1f)
+                page.translationZ = focus * (14f * d)
             }
             registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+                override fun onPageScrollStateChanged(state: Int) {
+                    super.onPageScrollStateChanged(state)
+                    if (state == ViewPager2.SCROLL_STATE_DRAGGING) {
+                        lastUserSwipeTimeMs = System.currentTimeMillis()
+                    }
+                }
+
+                override fun onPageScrolled(
+                    position: Int,
+                    positionOffset: Float,
+                    positionOffsetPixels: Int
+                ) {
+                    super.onPageScrolled(position, positionOffset, positionOffsetPixels)
+                    if (heroItems.size > 1 && positionOffset > 0.02f) {
+                        val curVod = heroItems[position % heroItems.size]
+                        val nextVod = heroItems[(position + 1) % heroItems.size]
+                        val c1 = bannerColorCache[curVod.id]
+                        val c2 = bannerColorCache[nextVod.id]
+                        if (c1 != null && c2 != null) {
+                            val blended = ColorUtils.blendARGB(c1, c2, positionOffset)
+                            (activity as? MainActivity)?.setAmbientColorImmediateForHome(blended)
+                        }
+                    }
+                }
+
                 override fun onPageSelected(position: Int) {
                     super.onPageSelected(position)
                     updateHeroFavoriteButtonIcon(binding)
                     syncHeroPosterAmbientColor(position)
+                    // تحضير لون الكوفر الجاي واللي فات مسبقاً باش كي تسوايبي يتبدل لون الخلفية لحظياً بلا تأخير
+                    preloadNeighborHeroColors(position)
                 }
             })
         }
@@ -616,10 +646,10 @@ class HomeFragment : Fragment() {
                 binding.heroViewPager.setCurrentItem(midStart, false)
                 updateHeroFavoriteButtonIcon(binding)
                 syncHeroPosterAmbientColor(midStart)
+                preloadNeighborHeroColors(midStart)
                 startHeroAutoSlider(binding)
             }
 
-            // عرض الصفوف فوراً وبالتدريج باش الكوفرات يطلعو بالواحد بنعومة كيما Netflix
             binding.rvHomeChannels.adapter = VodGridAdapter(sections.trendingToday, isGrid = false) { vod ->
                 openVodDetail(vod)
             }
@@ -657,6 +687,27 @@ class HomeFragment : Fragment() {
         }
     }
 
+    private fun preloadNeighborHeroColors(centerPos: Int) {
+        if (heroItems.isEmpty() || !isAdded) return
+        listOf(centerPos - 1, centerPos + 1).forEach { pos ->
+            if (pos >= 0) {
+                val vod = heroItems[pos % heroItems.size]
+                if (!bannerColorCache.containsKey(vod.id) && vod.posterUrl.isNotEmpty()) {
+                    Glide.with(this)
+                        .asBitmap()
+                        .load(optimizeCardPosterUrl(vod.posterUrl))
+                        .diskCacheStrategy(DiskCacheStrategy.ALL)
+                        .into(object : CustomTarget<Bitmap>(100, 150) {
+                            override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
+                                bannerColorCache[vod.id] = extractDominantBannerColor(resource)
+                            }
+                            override fun onLoadCleared(placeholder: Drawable?) {}
+                        })
+                }
+            }
+        }
+    }
+
     private fun syncHeroPosterAmbientColor(pagerPos: Int) {
         if (heroItems.isEmpty() || !isAdded) return
         val vod = heroItems[pagerPos % heroItems.size]
@@ -670,7 +721,7 @@ class HomeFragment : Fragment() {
 
         Glide.with(this)
             .asBitmap()
-            .load(posterUrl)
+            .load(optimizeCardPosterUrl(posterUrl))
             .diskCacheStrategy(DiskCacheStrategy.ALL)
             .into(object : CustomTarget<Bitmap>(120, 180) {
                 override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
@@ -781,16 +832,14 @@ class HomeFragment : Fragment() {
         autoSlideJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
                 delay(4800L)
-                if (heroItems.size > 1 && binding.heroViewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE) {
+                val idleLongEnough = (System.currentTimeMillis() - lastUserSwipeTimeMs) > 3800L
+                if (heroItems.size > 1 && idleLongEnough && binding.heroViewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE) {
                     binding.heroViewPager.setCurrentItem(binding.heroViewPager.currentItem + 1, true)
                 }
             }
         }
     }
 
-    /**
-     * فتح صفحة الفيلم مباشرة في 0ms بلا قراءة ملف JSON على الـ Main Thread
-     */
     private fun openVodDetail(vod: VodItem) {
         startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
             putExtra(ContentDetailActivity.EXTRA_VOD, vod)
@@ -1355,6 +1404,7 @@ class VodFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         val binding = FragmentVodGridBinding.bind(view)
         val isSeries = arguments?.getBoolean("IS_SERIES") ?: false
+        val tabTag = if (isSeries) "SERIES" else "MOVIES"
         val ctx = requireContext()
 
         binding.tvSectionHeader.text = buildTwoToneHeaderTitle(
@@ -1370,6 +1420,33 @@ class VodFragment : Fragment() {
             })
         }
         binding.rvVodGrid.adapter = gridAdapter
+
+        fun syncFirstItemAmbientColor(firstItem: VodItem?) {
+            val vod = firstItem ?: return
+            if (!isAdded || vod.posterUrl.isEmpty()) return
+
+            bannerColorCache[vod.id]?.let { cached ->
+                (activity as? MainActivity)?.updateAmbientColorForTab(tabTag, cached)
+                return
+            }
+
+            Glide.with(this)
+                .asBitmap()
+                .load(optimizeCardPosterUrl(vod.posterUrl))
+                .diskCacheStrategy(DiskCacheStrategy.ALL)
+                .into(object : CustomTarget<Bitmap>(120, 180) {
+                    override fun onResourceReady(resource: Bitmap, transition: Transition<in Bitmap>?) {
+                        if (!isAdded) return
+                        val color = extractDominantBannerColor(resource)
+                        bannerColorCache[vod.id] = color
+                        if (catalogList.firstOrNull()?.id == vod.id) {
+                            (activity as? MainActivity)?.updateAmbientColorForTab(tabTag, color)
+                        }
+                    }
+
+                    override fun onLoadCleared(placeholder: Drawable?) {}
+                })
+        }
 
         fun reloadCatalogFromFirstPage() {
             isLoadingMore = true
@@ -1399,6 +1476,8 @@ class VodFragment : Fragment() {
                     catalogList.addAll(firstPageItems)
                     gridAdapter.notifyItemRangeInserted(0, firstPageItems.size)
                     currentPage = 2
+                    // أخذ لون أول فيلم في الصفحة وتطبيقه على الخلفية كيما Home
+                    syncFirstItemAmbientColor(firstPageItems.firstOrNull())
                 }
                 isLoadingMore = false
 
@@ -1541,6 +1620,8 @@ class VodFragment : Fragment() {
 
         if (catalogList.isEmpty()) {
             reloadCatalogFromFirstPage()
+        } else {
+            syncFirstItemAmbientColor(catalogList.firstOrNull())
         }
     }
 
