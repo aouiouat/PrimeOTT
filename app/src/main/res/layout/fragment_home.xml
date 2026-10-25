@@ -70,15 +70,15 @@
         </LinearLayout>
 
         <!-- 2. 3D Tilted Infinite Hero Banner Carousel (kima image_8ce4be.jpg) -->
+        <!-- 2. 3D Auto-Sliding Hero Banner Carousel -->
         <androidx.viewpager2.widget.ViewPager2
             android:id="@+id/heroViewPager"
             android:layout_width="match_parent"
-            android:layout_height="395dp"
+            android:layout_height="385dp"
             android:layout_marginTop="6dp"
             android:clipChildren="false"
             android:clipToPadding="false"
-            android:paddingHorizontal="64dp"
-            android:paddingVertical="12dp" />
+            android:paddingHorizontal="38dp" />
 
         <!-- 3. White Luxury Watch Now Button + Glass Favorite Button -->
         <LinearLayout

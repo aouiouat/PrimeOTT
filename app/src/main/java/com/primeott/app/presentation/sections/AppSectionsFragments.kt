@@ -434,57 +434,21 @@ class HomeFragment : Fragment() {
             clipToPadding = false
             clipChildren = false
             offscreenPageLimit = 3
-            (getChildAt(0) as? RecyclerView)?.apply {
-                overScrollMode = RecyclerView.OVER_SCROLL_NEVER
-                clipToPadding = false
-                clipChildren = false
-            }
-
-            val d = resources.displayMetrics.density
-            val cameraScale = resources.displayMetrics.density * 10000f
-
-            setPageTransformer { page, position ->
-                val clampedPos = position.coerceIn(-1.5f, 1.5f)
-                val absPos = abs(clampedPos)
-                val focusFactor = (1f - absPos).coerceAtLeast(0f)
-
-                // تفعيل العمق ثلاثي الأبعاد (3D Perspective Camera)
-                page.cameraDistance = cameraScale
-                page.pivotX = page.width * 0.5f
-                page.pivotY = page.height * 0.5f
-
-                if (absPos < 0.001f) {
-                    // 1. الـ Cover المركزي في الوسط: عادي، مسطح 100%، واضح وفوق الجميع
-                    page.rotationY = 0f
+            (getChildAt(0) as? RecyclerView)?.overScrollMode = RecyclerView.OVER_SCROLL_NEVER
+            val transformer = CompositePageTransformer().apply {
+                addTransformer(MarginPageTransformer(20))
+                addTransformer { page, position ->
+                    val r = 1 - abs(position)
                     page.rotation = 0f
-                    page.scaleX = 1.0f
-                    page.scaleY = 1.0f
+                    page.rotationY = 0f
                     page.translationX = 0f
                     page.translationY = 0f
-                    page.translationZ = 24f * d
-                    page.alpha = 1.0f
-                } else {
-                    // 2. الكروت الجانبية (السابق والتالي):
-                    // تدور حول المحور العمودي Y-axis بزاوية متعاكسة للخارج (Coverflow Backside Angle)
-                    page.rotationY = clampedPos * -38f
-
-                    // ميلان سينمائي خفيف للأطراف كيما فـ image_8ce4be.jpg
-                    page.rotation = clampedPos * 5.5f
-
-                    // سحب الكروت الجانبية لتدخل تحت أطراف الكارت المركزي
-                    page.translationX = -clampedPos * (page.width * 0.22f)
-                    page.translationY = absPos * (16f * d)
-
-                    // وضع الكروت الجانبية خلف الكارت المركزي في العمق Z
-                    page.translationZ = (1f - absPos) * (10f * d)
-
-                    // تصغير وتعتيم خفيف باش يبرز الكارت الوسطاني
-                    page.scaleX = 0.84f + (focusFactor * 0.16f)
-                    page.scaleY = 0.82f + (focusFactor * 0.18f)
-                    page.alpha = 0.50f + (focusFactor * 0.50f)
+                    page.scaleX = 1f
+                    page.scaleY = 0.85f + r * 0.15f
+                    page.alpha = 0.58f + r * 0.42f
                 }
             }
-
+            setPageTransformer(transformer)
             registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                 override fun onPageSelected(position: Int) {
                     super.onPageSelected(position)
@@ -757,7 +721,7 @@ class HomeFragment : Fragment() {
         val vodWithProgress = if (savedEntry != null) {
             vod.copy(savedPositionMs = savedEntry.positionMs, totalDurationMs = savedEntry.durationMs)
         } else {
-            SessionManager.saveWatchProgress(requireContext(), vod, 0L, 0L)
+            // ما نسجلوش الفيلم في Continue Watching حتى يدخل المستخدم ويدير Play صح!
             vod
         }
         startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
@@ -785,7 +749,10 @@ class HomeFragment : Fragment() {
     }
 
     private fun loadRecentHistorySection(binding: FragmentHomeBinding) {
+        // نفيشيو غير الأفلام لي المستخدم دارلهم Play وفيهم وقت مشاهدة حقيقي (positionMs > 0)
         val historyList = SessionManager.getWatchHistoryList(requireContext())
+            .filter { it.positionMs > 1000L && it.durationMs > 0L }
+
         if (historyList.isEmpty()) {
             binding.recentHeaderRow.visibility = View.GONE
             binding.rvRecentWatched.visibility = View.GONE
@@ -1198,10 +1165,11 @@ class RecentLandscapeAdapter(
 
         val posMs = item.positionMs
         val durMs = item.durationMs
-        val ratio = if (posMs > 5000L && durMs > 10000L) {
-            (posMs.toFloat() / durMs.toFloat()).coerceIn(0.12f, 1.0f)
+        // حساب البلاصة الحقيقية لي حبست فيها بالضبط بلا 0.28f الوهمية
+        val ratio = if (posMs > 0L && durMs > 0L) {
+            (posMs.toFloat() / durMs.toFloat()).coerceIn(0.02f, 1.0f)
         } else {
-            0.28f
+            0f
         }
         holder.progressFillView.layoutParams = FrameLayout.LayoutParams(
             (cardWidthPx * ratio).toInt(),
@@ -1269,7 +1237,7 @@ class HeroBannerAdapter(
                 setMargins(marginH, 0, marginH, 0)
             }
             radius = 22f * density
-            cardElevation = 10f * density
+            cardElevation = 0f // مهم جداً باش الـ 3D rotationY ما يتقصش بالـ Shadow تاع CardView
             setCardBackgroundColor(Color.parseColor("#0D1015"))
         }
 
@@ -1444,7 +1412,7 @@ class VodFragment : Fragment() {
 
         val gridAdapter = VodGridAdapter(catalogList, isGrid = true) { vod ->
             val savedPos = SessionManager.getSavedPositionForVod(requireContext(), vod.id)
-            SessionManager.saveWatchProgress(requireContext(), vod, savedPos, 0L)
+            // نحينا saveWatchProgress باش ما يتحطش في Continue Watching غير بالدخول للكوفر
             startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
                 putExtra(ContentDetailActivity.EXTRA_VOD, vod.copy(savedPositionMs = savedPos))
             })
@@ -1573,7 +1541,6 @@ class VodFragment : Fragment() {
                 filterType = if (isSeries) "SERIES" else "MOVIES"
             ) { vod ->
                 val savedPos = SessionManager.getSavedPositionForVod(requireContext(), vod.id)
-                SessionManager.saveWatchProgress(requireContext(), vod, savedPos, 0L)
                 startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
                     putExtra(ContentDetailActivity.EXTRA_VOD, vod.copy(savedPositionMs = savedPos))
                 })
