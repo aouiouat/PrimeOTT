@@ -159,6 +159,7 @@ class ContentDetailActivity : AppCompatActivity() {
     @Volatile
     private var hasLockedPrimaryStream: Boolean = false
     private var isPlayerModeActive: Boolean = false
+    private var isSnifferInitialized: Boolean = false
 
     private var selectedSeason: Int = 1
     private var selectedEpisode: Int = 1
@@ -289,6 +290,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 }
             },
             onServerSelected = { srvIdx, server ->
+                ensureSnifferReady()
                 playerEngine.player?.let { exo ->
                     if (exo.currentPosition > 3000L) {
                         pendingResumePositionMs = exo.currentPosition
@@ -390,9 +392,16 @@ class ContentDetailActivity : AppCompatActivity() {
             getCurrentProviderIdx = { currentProviderIndex }
         )
 
-        setupInvisibleStreamSniffer()
+        // فتح صفحة الفيلم فوراً في 0ms عند الضغط على الكرت، وتهيئة الـ WebView في الإطار التالي بعد رسم الواجهة
         loadVodItemIntoScreen(item, resetScroll = true, animatePageEntry = false)
         moviePlayerController.startProgressAndNetworkLoop(playerEngine)
+    }
+
+    private fun ensureSnifferReady() {
+        if (!isSnifferInitialized && !isDestroyed && !isFinishing) {
+            isSnifferInitialized = true
+            setupInvisibleStreamSniffer()
+        }
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean) {
@@ -1007,6 +1016,7 @@ class ContentDetailActivity : AppCompatActivity() {
     }
 
     private fun activateInlinePlayerSmoothly() {
+        ensureSnifferReady()
         isPlayerModeActive = true
         fullScreenAmbientDrawable.setPlayerModeActive(true)
 
@@ -1040,7 +1050,6 @@ class ContentDetailActivity : AppCompatActivity() {
         } else {
             moviePlayerController.setLoadingState(true)
             val vod = currentVod ?: return
-            // إذا كان الفحص الذكي أو السباق في الخلفية جارياً لا نلغيه ولا نعيده من الصفر
             if (streamFetchJob?.isActive == true || snifferTimeoutJob?.isActive == true) {
                 return
             }
@@ -1111,6 +1120,7 @@ class ContentDetailActivity : AppCompatActivity() {
     }
 
     private fun handleDirectMovieDownload() {
+        ensureSnifferReady()
         val directUrl = resolvedDirectStreams.firstOrNull()?.url
         if (!directUrl.isNullOrEmpty() && !directUrl.contains(".m3u8", ignoreCase = true)) {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(directUrl)))
@@ -1145,7 +1155,6 @@ class ContentDetailActivity : AppCompatActivity() {
         )
         if (forbiddenExts.any { cleanPath.endsWith(it) }) return false
 
-        // التأكد أن الرابط ليس قطعة .ts داخل بروكسي
         val innerTarget = decoded.substringAfter("url=", decoded).substringBefore("&")
         if (forbiddenExts.any { innerTarget.endsWith(it) }) return false
 
@@ -1518,7 +1527,6 @@ class ContentDetailActivity : AppCompatActivity() {
             hasLockedPrimaryStream = true
         }
 
-        // تحويل أي رابط vixsrc يحتوي على b=1 (Base64) إلى h=1 (HLS #EXTM3U) لكي يشتغل فوراً في ExoPlayer بدون خطأ
         val normalizedStreamUrl = if (url.contains("vixsrc.to/playlist/", ignoreCase = true)) {
             var fixed = url.replace("?b=1&", "?").replace("&b=1", "").replace("?b=1", "")
             if (!fixed.contains("h=1")) {
@@ -1534,15 +1542,17 @@ class ContentDetailActivity : AppCompatActivity() {
             if (winningProviderIndex in providerTargets.indices) {
                 currentProviderIndex = winningProviderIndex
             }
-            headlessSnifferWebView.evaluateJavascript(
-                "try { var v = document.querySelector('video'); if(v){ v.pause(); v.removeAttribute('src'); v.load(); } } catch(e){}",
-                null
-            )
-            headlessSnifferWebView.stopLoading()
-            headlessSnifferWebView.loadUrl("about:blank")
-            headlessSnifferWebView.onPause()
-            stopParallelBackupSniffer()
-            headlessSnifferWebView.pauseTimers()
+            if (isSnifferInitialized) {
+                headlessSnifferWebView.evaluateJavascript(
+                    "try { var v = document.querySelector('video'); if(v){ v.pause(); v.removeAttribute('src'); v.load(); } } catch(e){}",
+                    null
+                )
+                headlessSnifferWebView.stopLoading()
+                headlessSnifferWebView.loadUrl("about:blank")
+                headlessSnifferWebView.onPause()
+                stopParallelBackupSniffer()
+                headlessSnifferWebView.pauseTimers()
+            }
 
             val providerLabel = explicitLabel
                 ?: providerTargets.getOrNull(currentProviderIndex)?.label
@@ -1570,7 +1580,6 @@ class ContentDetailActivity : AppCompatActivity() {
 
             moviePlayerController.setServerBadgeLabel(providerLabel)
 
-            // تجهيز المشغل مسبقاً في الخلفية (Pre-Buffer) حتى لو لم يضغط المستخدم على PLAY بعد، ليفتح الفيديو في 0.1 ثانية!
             playerEngine.playSources(
                 moviePlayerController.playerView,
                 resolvedDirectStreams.toList(),
@@ -1600,11 +1609,13 @@ class ContentDetailActivity : AppCompatActivity() {
         providerTargets = emptyList()
         smartRankedIndices = emptyList()
 
-        headlessSnifferWebView.stopLoading()
-        headlessSnifferWebView.loadUrl("about:blank")
-        headlessSnifferWebView.onPause()
-        stopParallelBackupSniffer()
-        headlessSnifferWebView.pauseTimers()
+        if (isSnifferInitialized) {
+            headlessSnifferWebView.stopLoading()
+            headlessSnifferWebView.loadUrl("about:blank")
+            headlessSnifferWebView.onPause()
+            stopParallelBackupSniffer()
+            headlessSnifferWebView.pauseTimers()
+        }
 
         moviePlayerController.resetForNewStream(
             isActiveMode = isPlayerModeActive,
@@ -1645,7 +1656,6 @@ class ContentDetailActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // إذا كان لدينا رابط مباشر مخبأ في الذاكرة المؤقتة لهذا الفيلم نشغله فوراً
             resolvedStreamCache[cacheKey]?.let { (cachedIdx, cachedSource) ->
                 if (!hasLockedPrimaryStream && cachedIdx in panelServers.indices) {
                     onRawStreamIntercepted(
@@ -1660,7 +1670,6 @@ class ContentDetailActivity : AppCompatActivity() {
                 }
             }
 
-            // إذا تم قفل أسرع سيرفر مباشر أثناء الفحص المتوازي نحدث فقط الشارة والروابط الاحتياطية
             if (hasLockedPrimaryStream) {
                 val activeUrl = resolvedDirectStreams.firstOrNull()?.url
                 val matchedIdx = panelServers.indexOfFirst { it.url == activeUrl }
@@ -1673,7 +1682,6 @@ class ContentDetailActivity : AppCompatActivity() {
                 return@launch
             }
 
-            // اختيار السيرفر الأفضل والأسرع تلقائياً حسب نوع العمل (أجنبي، كوري، تركي، أنمي) دون المرور على السيرفرات بالواحد
             val bestIdx = smartSelection.bestStartIndex.coerceIn(0, panelServers.lastIndex)
             currentProviderIndex = bestIdx
             val chosenServer = panelServers[bestIdx]
@@ -1689,6 +1697,7 @@ class ContentDetailActivity : AppCompatActivity() {
                     winningProviderIndex = bestIdx
                 )
             } else if (runWebViewNow || isPlayerModeActive) {
+                ensureSnifferReady()
                 loadProviderInHeadlessSniffer(
                     index = bestIdx,
                     allowParallelRace = true,
@@ -1704,6 +1713,7 @@ class ContentDetailActivity : AppCompatActivity() {
         backupRaceIndex: Int = -1
     ) {
         if (providerTargets.isEmpty() || hasLockedPrimaryStream) return
+        ensureSnifferReady()
         currentProviderIndex = index.coerceIn(0, providerTargets.lastIndex)
         val target = providerTargets[currentProviderIndex]
         moviePlayerController.setServerBadgeLabel(target.label)
@@ -1714,7 +1724,6 @@ class ContentDetailActivity : AppCompatActivity() {
         val headers = if (target.referer.isNotEmpty()) mapOf("Referer" to target.referer) else emptyMap()
         headlessSnifferWebView.loadUrl(target.url, headers)
 
-        // تشغيل السيرفر الثاني المتوافق بالتوازي في نفس اللحظة لضمان فتح الكوري والتركي في أقل من 2.5 ثانية
         val secondCandidateIdx = if (backupRaceIndex in providerTargets.indices && backupRaceIndex != currentProviderIndex) {
             backupRaceIndex
         } else {
@@ -1753,11 +1762,13 @@ class ContentDetailActivity : AppCompatActivity() {
 
         if (triedServersCount >= orderedList.size) {
             snifferTimeoutJob?.cancel()
-            headlessSnifferWebView.stopLoading()
-            headlessSnifferWebView.loadUrl("about:blank")
-            headlessSnifferWebView.onPause()
-            stopParallelBackupSniffer()
-            headlessSnifferWebView.pauseTimers()
+            if (isSnifferInitialized) {
+                headlessSnifferWebView.stopLoading()
+                headlessSnifferWebView.loadUrl("about:blank")
+                headlessSnifferWebView.onPause()
+                stopParallelBackupSniffer()
+                headlessSnifferWebView.pauseTimers()
+            }
             if (isPlayerModeActive) {
                 moviePlayerController.onAllServersExhausted()
             } else {
@@ -1947,11 +1958,19 @@ class ContentDetailActivity : AppCompatActivity() {
         isOverviewExpanded = false
         moviePlayerController.updateAvailableSubtitles(emptyList(), emptyList(), "")
 
-        val savedForThisMovie = SessionManager.getSavedPositionForVod(this, vod.id)
-            .coerceAtLeast(vod.savedPositionMs)
-        pendingResumePositionMs = if (savedForThisMovie > 15_000L) savedForThisMovie else 0L
-
+        pendingResumePositionMs = if (vod.savedPositionMs > 15_000L) vod.savedPositionMs else 0L
         tvPlayNowBtnLabel.text = if (pendingResumePositionMs > 15_000L) "RESUME" else "PLAY"
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val savedPos = SessionManager.getSavedPositionForVod(this@ContentDetailActivity, vod.id)
+                .coerceAtLeast(vod.savedPositionMs)
+            if (savedPos > 15_000L && currentVod?.id == vod.id) {
+                pendingResumePositionMs = savedPos
+                withContext(Dispatchers.Main) {
+                    tvPlayNowBtnLabel.text = "RESUME"
+                }
+            }
+        }
 
         moviePlayerController.setTitle(vod.title)
         tvMovieTitle.text = vod.title
@@ -2020,8 +2039,12 @@ class ContentDetailActivity : AppCompatActivity() {
                 .start()
         }
 
-        // نجهز السيرفر الشغال فوراً في الخلفية بمجرد فتح الصفحة لكي يشتغل الفيديو فوراً عند ضغط PLAY
-        startStreamExtractionForEpisodeOrMovie(vod, 1, 1, runWebViewNow = true)
+        // تأجيل تهيئة الـ WebView لجزء من الثانية بعد رسم الصفحة باش كي تضغط على الكرت تفتح الصفحة فوراً بلا أي ثقل
+        window.decorView.post {
+            if (!isDestroyed && !isFinishing && currentVod?.id == vod.id) {
+                startStreamExtractionForEpisodeOrMovie(vod, 1, 1, runWebViewNow = true)
+            }
+        }
 
         detailsFetchJob = lifecycleScope.launch {
             val details = cachedDetails ?: withContext(Dispatchers.IO) {
@@ -2347,7 +2370,9 @@ class ContentDetailActivity : AppCompatActivity() {
         moviePlayerController.release()
         parallelBackupSnifferWebView?.destroy()
         parallelBackupSnifferWebView = null
-        headlessSnifferWebView.destroy()
+        if (isSnifferInitialized) {
+            headlessSnifferWebView.destroy()
+        }
         playerEngine.release()
         super.onDestroy()
     }

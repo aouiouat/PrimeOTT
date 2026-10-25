@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="116dp"
-    android:layout_height="188dp"
-    android:layout_margin="6dp"
-    app:cardBackgroundColor="#10151D"
-    app:cardCornerRadius="14dp"
-    app:cardElevation="0dp">
+    android:layout_width="124dp"
+    android:layout_height="196dp"
+    android:layout_marginHorizontal="5.5dp"
+    android:layout_marginVertical="4dp"
+    app:cardBackgroundColor="#1B1E26"
+    app:cardCornerRadius="15dp"
+    app:cardElevation="3dp">
 
     <FrameLayout
         android:layout_width="match_parent"
@@ -17,6 +18,21 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:scaleType="centerCrop" />
+
+        <!-- شارة السنة أعلى اليسار -->
+        <TextView
+            android:id="@+id/tvVodYear"
+            android:layout_width="wrap_content"
+            android:layout_height="21dp"
+            android:layout_gravity="top|start"
+            android:layout_margin="6dp"
+            android:background="@drawable/bg_year_pill_dark"
+            android:fontFamily="@font/product_sans_bold"
+            android:gravity="center"
+            android:paddingHorizontal="7dp"
+            android:text="2026"
+            android:textColor="#E2E8F0"
+            android:textSize="10sp" />
 
         <!-- التقييم بخط product_sans_bold -->
         <TextView
@@ -30,10 +46,10 @@
             android:drawablePadding="3dp"
             android:fontFamily="@font/product_sans_bold"
             android:gravity="center_vertical"
-            android:paddingHorizontal="6.5dp"
+            android:paddingHorizontal="7dp"
             android:text="8.5"
-            android:textColor="#FFFFFF"
-            android:textSize="10sp" />
+            android:textColor="#FFC107"
+            android:textSize="10.5sp" />
 
         <View
             android:layout_width="match_parent"
@@ -48,19 +64,25 @@
             android:layout_height="wrap_content"
             android:layout_gravity="bottom"
             android:ellipsize="end"
-            android:fontFamily="@font/product_sans_egular"
+            android:fontFamily="@font/product_sans_bold"
             android:letterSpacing="0.01"
-            android:lineSpacingExtra="1dp"
-            android:maxLines="2"
+            android:maxLines="1"
             android:paddingHorizontal="8dp"
             android:paddingBottom="8dp"
-            android:shadowColor="#DD000000"
+            android:shadowColor="#000000"
             android:shadowDx="0"
-            android:shadowDy="1"
-            android:shadowRadius="3"
+            android:shadowDy="2"
+            android:shadowRadius="8"
+            android:singleLine="true"
             android:text="Movie Title"
-            android:textColor="#F1F5F9"
-            android:textSize="11.5sp" />
+            android:textColor="#FFFFFF"
+            android:textSize="12.5sp" />
+
+        <!-- إطار زجاجي رفيع -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_glass_card_border" />
 
     </FrameLayout>
 </androidx.cardview.widget.CardView>

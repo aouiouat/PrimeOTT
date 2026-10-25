@@ -14,15 +14,20 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.OvershootInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -36,7 +41,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.cardview.widget.CardView
 import androidx.core.content.ContextCompat
-import androidx.core.graphics.ColorUtils
+import androidx.core.content.res.ResourcesCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -50,6 +55,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.bumptech.glide.Glide
 import com.bumptech.glide.load.engine.DiskCacheStrategy
+import com.bumptech.glide.load.resource.drawable.DrawableTransitionOptions
 import com.bumptech.glide.request.target.CustomTarget
 import com.bumptech.glide.request.transition.Transition
 import com.primeott.app.MainActivity
@@ -59,6 +65,7 @@ import com.primeott.app.data.repository.OttRepository
 import com.primeott.app.databinding.FragmentHomeBinding
 import com.primeott.app.databinding.FragmentSettingsBinding
 import com.primeott.app.databinding.FragmentVodGridBinding
+import com.primeott.app.databinding.ItemHeroBannerBinding
 import com.primeott.app.databinding.ItemMatchBinding
 import com.primeott.app.databinding.ItemVodCardBinding
 import com.primeott.app.domain.model.MatchFixture
@@ -70,15 +77,82 @@ import com.primeott.app.presentation.detail.ContentDetailActivity
 import com.primeott.app.presentation.watch.WatchTogetherController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
 private val bannerColorCache = ConcurrentHashMap<String, Int>()
+
+private fun optimizeCardPosterUrl(rawUrl: String): String {
+    if (rawUrl.isEmpty()) return ""
+    return rawUrl.replace("/w500/", "/w342/")
+}
+
+/**
+ * استجابة لمس فورية وخفيفة جداً للكروت بلا ما تثقل فتح الفيلم
+ */
+@Suppress("ClickableViewAccessibility")
+private fun attachSnappyCardTouch(view: View) {
+    view.setOnTouchListener { v, event ->
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                v.animate().cancel()
+                v.animate()
+                    .scaleX(0.96f)
+                    .scaleY(0.96f)
+                    .setDuration(55L)
+                    .start()
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                v.animate().cancel()
+                v.animate()
+                    .scaleX(1.0f)
+                    .scaleY(1.0f)
+                    .setDuration(85L)
+                    .setInterpolator(DecelerateInterpolator())
+                    .start()
+            }
+        }
+        false
+    }
+}
+
+/**
+ * تنسيق عنوان مزدوج اللون (أبيض + أحمر سينمائي) لصفحات Movies / TV Shows / See All
+ */
+private fun buildTwoToneHeaderTitle(rawTitle: String): SpannableStringBuilder {
+    val clean = rawTitle.trim().uppercase()
+    val words = clean.split(" ").filter { it.isNotBlank() }
+    val ssb = SpannableStringBuilder()
+    if (words.size >= 2) {
+        val firstPart = words.dropLast(1).joinToString(" ") + " "
+        val lastWord = words.last()
+        ssb.append(firstPart)
+        val start = ssb.length
+        ssb.append(lastWord)
+        ssb.setSpan(
+            ForegroundColorSpan(Color.parseColor("#FF2A36")),
+            start,
+            ssb.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+    } else {
+        val half = (clean.length / 2).coerceAtLeast(2)
+        ssb.append(clean.substring(0, half))
+        val start = ssb.length
+        ssb.append(clean.substring(half))
+        ssb.setSpan(
+            ForegroundColorSpan(Color.parseColor("#E50914")),
+            start,
+            ssb.length,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+    }
+    return ssb
+}
 
 private fun extractDominantBannerColor(bitmap: Bitmap): Int {
     return try {
@@ -162,9 +236,10 @@ private fun showLuxurySearchDialog(
     dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
     dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 
-    val headerFont = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-    val bodyFont = Typeface.create("sans-serif", Typeface.NORMAL)
-    val btnFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
+    val headerFont = ResourcesCompat.getFont(ctx, R.font.product_sans_bold)
+        ?: Typeface.create("sans-serif-condensed", Typeface.BOLD)
+    val bodyFont = ResourcesCompat.getFont(ctx, R.font.product_sans_egular)
+        ?: Typeface.create("sans-serif", Typeface.NORMAL)
 
     val screenW = ctx.resources.displayMetrics.widthPixels
     val screenH = ctx.resources.displayMetrics.heightPixels
@@ -206,7 +281,7 @@ private fun showLuxurySearchDialog(
         text = "✕"
         setTextColor(Color.parseColor("#94A3B8"))
         textSize = 16f
-        typeface = btnFont
+        typeface = headerFont
         gravity = Gravity.CENTER
         background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
@@ -244,8 +319,8 @@ private fun showLuxurySearchDialog(
     }
 
     val hintText = when (filterType) {
-        "MOVIES" -> "Type movie title (e.g. Spider-Man, Batman)..."
-        "SERIES" -> "Type series title (e.g. Breaking Bad, From)..."
+        "MOVIES" -> "Type movie title..."
+        "SERIES" -> "Type series title..."
         else -> "Search among 1,000,000+ Movies & Series..."
     }
 
@@ -316,7 +391,7 @@ private fun showLuxurySearchDialog(
         text = "Cancel"
         setTextColor(Color.parseColor("#E2E8F0"))
         textSize = 14f
-        typeface = btnFont
+        typeface = headerFont
         gravity = Gravity.CENTER
         background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -363,7 +438,7 @@ private fun showLuxurySearchDialog(
         text = "Search"
         setTextColor(Color.WHITE)
         textSize = 14f
-        typeface = btnFont
+        typeface = headerFont
         gravity = Gravity.CENTER
         setBackgroundResource(R.drawable.bg_btn_watch_now_luxury)
         layoutParams = LinearLayout.LayoutParams(0, (44 * d).toInt(), 1f).apply {
@@ -381,7 +456,7 @@ private fun showLuxurySearchDialog(
         if (q.length >= 2) {
             searchJob?.cancel()
             searchJob = scope.launch {
-                delay(320L)
+                delay(300L)
                 triggerSearch(q)
             }
         } else {
@@ -425,33 +500,31 @@ class HomeFragment : Fragment() {
         val binding = FragmentHomeBinding.bind(view)
         _binding = binding
 
+        val ctx = requireContext()
         val d = resources.displayMetrics.density
-        val titleTypeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-        binding.tvRecentHeader.typeface = titleTypeface
-        binding.tvRecentHeader.letterSpacing = 0.02f
+        val sectionTitleTypeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
 
-        binding.rvHomeChannels.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
-        binding.rvHomeSeries.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
-        binding.rvRecentWatched.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+        binding.tvRecentHeader.typeface = sectionTitleTypeface
+
+        binding.rvHomeChannels.layoutManager = LinearLayoutManager(ctx, LinearLayoutManager.HORIZONTAL, false)
+        binding.rvHomeSeries.layoutManager = LinearLayoutManager(ctx, LinearLayoutManager.HORIZONTAL, false)
+        binding.rvRecentWatched.layoutManager = LinearLayoutManager(ctx, LinearLayoutManager.HORIZONTAL, false)
 
         binding.rvHomeChannels.adapter = PrimeSkeletonHelper.VodSkeletonAdapter(6, isGrid = false, isSeries = false)
         binding.rvHomeSeries.adapter = PrimeSkeletonHelper.VodSkeletonAdapter(6, isGrid = false, isSeries = false)
 
         val parentLinear = binding.rvHomeSeries.parent as? LinearLayout
         val firstHeaderLayout = parentLinear?.getChildAt(parentLinear.indexOfChild(binding.rvHomeChannels) - 1) as? LinearLayout
-        (firstHeaderLayout?.getChildAt(0) as? TextView)?.apply {
-            typeface = titleTypeface
-            letterSpacing = 0.02f
-        }
+        (firstHeaderLayout?.getChildAt(0) as? TextView)?.typeface = sectionTitleTypeface
+
         val secondHeaderLayout = parentLinear?.getChildAt(parentLinear.indexOfChild(binding.rvHomeSeries) - 1) as? LinearLayout
         (secondHeaderLayout?.getChildAt(0) as? TextView)?.apply {
             text = "Popular Movies"
-            typeface = titleTypeface
-            letterSpacing = 0.02f
+            typeface = sectionTitleTypeface
         }
 
         if (parentLinear != null && extraSectionsContainer == null) {
-            extraSectionsContainer = LinearLayout(requireContext()).apply {
+            extraSectionsContainer = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -461,17 +534,16 @@ class HomeFragment : Fragment() {
             parentLinear.addView(extraSectionsContainer)
         }
 
-        // إعداد الـ 3D Fanned Coverflow Banner كيما صورة Leviticus (الكرت الأوسط واقف والكروت الجانبية مائلة وتطل من الجانبين)
-        val sidePeekPadding = (48 * d).toInt()
-        (binding.heroViewPager.parent as? ViewGroup)?.apply {
-            clipChildren = false
-            clipToPadding = false
+        // عرض رشيق (58dp) وطول متوازن غير مبالغ فيه (342dp) باش يبان الكوفر الجاي واللي فات بوضوح بلا ما يهبط بزاف لتحت
+        val sidePeekPadding = (58 * d).toInt()
+        binding.heroViewPager.layoutParams = binding.heroViewPager.layoutParams.apply {
+            height = (362 * d).toInt()
         }
         binding.heroViewPager.apply {
             clipToPadding = false
             clipChildren = false
             offscreenPageLimit = 3
-            setPadding(sidePeekPadding, (6 * d).toInt(), sidePeekPadding, (10 * d).toInt())
+            setPadding(sidePeekPadding, (4 * d).toInt(), sidePeekPadding, (6 * d).toInt())
             (getChildAt(0) as? RecyclerView)?.apply {
                 clipToPadding = false
                 clipChildren = false
@@ -482,19 +554,17 @@ class HomeFragment : Fragment() {
                 val absPos = abs(clamped)
                 val focus = (1f - absPos.coerceAtMost(1f))
 
-                page.cameraDistance = 15000f * d
-                // ميلان الكرت الأيسر لليسار (-8.5°) والكرت الأيمن لليمين (+8.5°) مثل صورة Leviticus
-                page.rotation = clamped * 8.5f
+                page.cameraDistance = 18000f * d
+                page.rotation = clamped * 5.8f
                 page.rotationY = clamped * -9.5f
-                // تقريب الكرتين الجانبيين ليظهرا خلف وجانب الكرت الرئيسي
-                page.translationX = -clamped * (18f * d)
-                page.translationY = absPos * (15f * d)
+                page.translationX = -clamped * (20f * d)
+                page.translationY = absPos * (12f * d)
 
-                val scale = 0.84f + (focus * 0.16f)
+                val scale = 0.86f + (focus * 0.14f)
                 page.scaleX = scale
                 page.scaleY = scale
-                page.alpha = (0.56f + focus * 0.44f).coerceIn(0.40f, 1f)
-                page.translationZ = focus * (18f * d)
+                page.alpha = (0.68f + focus * 0.32f).coerceIn(0.60f, 1f)
+                page.translationZ = focus * (16f * d)
             }
             registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                 override fun onPageSelected(position: Int) {
@@ -518,7 +588,7 @@ class HomeFragment : Fragment() {
         }
 
         binding.btnHomeSearch.setOnClickListener {
-            showLuxurySearchDialog(requireContext(), viewLifecycleOwner.lifecycleScope, "ALL") { vod ->
+            showLuxurySearchDialog(ctx, viewLifecycleOwner.lifecycleScope, "ALL") { vod ->
                 openVodDetail(vod)
             }
         }
@@ -534,20 +604,9 @@ class HomeFragment : Fragment() {
         viewLifecycleOwner.lifecycleScope.launch {
             val sections = OttRepository.fetchHomeSections()
 
-            val freshMoviesPage2 = runCatching {
-                OttRepository.fetchVodCatalogPage(isSeries = false, page = (2..5).random(), filterCode = "ALL", sortMode = "POPULAR")
-            }.getOrDefault(emptyList())
-
-            val freshSeriesPage2 = runCatching {
-                OttRepository.fetchVodCatalogPage(isSeries = true, page = (2..4).random(), filterCode = "ALL", sortMode = "POPULAR")
-            }.getOrDefault(emptyList())
-
-            val combinedHeroPool = (sections.heroItems + sections.trendingToday.take(10) + freshMoviesPage2.take(6))
+            heroItems = (sections.heroItems + sections.trendingToday.take(8))
                 .distinctBy { it.id }
                 .filter { it.posterUrl.isNotEmpty() }
-                .shuffled()
-
-            heroItems = combinedHeroPool.ifEmpty { sections.heroItems }
 
             if (heroItems.isNotEmpty()) {
                 binding.heroViewPager.adapter = HeroBannerAdapter(heroItems) { vod ->
@@ -560,36 +619,25 @@ class HomeFragment : Fragment() {
                 startHeroAutoSlider(binding)
             }
 
-            val dynamicTrending = (sections.trendingToday + freshMoviesPage2.take(8))
-                .distinctBy { it.id }
-                .shuffled()
-
-            val dynamicPopularMovies = (sections.popularMovies + freshMoviesPage2.drop(8))
-                .distinctBy { it.id }
-                .shuffled()
-
-            val dynamicPopularSeries = (sections.popularTvShows + freshSeriesPage2)
-                .distinctBy { it.id }
-                .shuffled()
-
-            binding.rvHomeChannels.adapter = VodGridAdapter(dynamicTrending, isGrid = false) { vod ->
+            // عرض الصفوف فوراً وبالتدريج باش الكوفرات يطلعو بالواحد بنعومة كيما Netflix
+            binding.rvHomeChannels.adapter = VodGridAdapter(sections.trendingToday, isGrid = false) { vod ->
                 openVodDetail(vod)
             }
 
-            binding.rvHomeSeries.adapter = VodGridAdapter(dynamicPopularMovies, isGrid = false) { vod ->
+            binding.rvHomeSeries.adapter = VodGridAdapter(sections.popularMovies, isGrid = false) { vod ->
                 openVodDetail(vod)
             }
 
             extraSectionsContainer?.removeAllViews()
-            addHomeRowSection("Popular TV Shows", dynamicPopularSeries, true, "")
-            addHomeRowSection("Top Rated Movies", sections.topRatedMovies.shuffled(), false, "TOP_MOVIE")
-            addHomeRowSection("Top Rated TV", sections.topRatedTv.shuffled(), true, "TOP_TV")
-            addHomeRowSection("Turkish Drama", sections.turkishDrama.shuffled(), true, "TR")
-            addHomeRowSection("Korean Drama", sections.koreanDrama.shuffled(), true, "KR")
-            addHomeRowSection("Action & Thriller", sections.actionMovies.shuffled(), false, "ACTION")
-            addHomeRowSection("Anime & Animation", sections.animeShows.shuffled(), true, "ANIME")
-            addHomeRowSection("Sci-Fi & Fantasy", sections.sciFiMovies.shuffled(), false, "SCIFI")
-            addHomeRowSection("Documentaries", sections.documentaries.shuffled(), false, "DOC")
+            addHomeRowSection("Popular TV Shows", sections.popularTvShows, true, "")
+            addHomeRowSection("Top Rated Movies", sections.topRatedMovies, false, "TOP_MOVIE")
+            addHomeRowSection("Top Rated TV", sections.topRatedTv, true, "TOP_TV")
+            addHomeRowSection("Turkish Drama", sections.turkishDrama, true, "TR")
+            addHomeRowSection("Korean Drama", sections.koreanDrama, true, "KR")
+            addHomeRowSection("Action & Thriller", sections.actionMovies, false, "ACTION")
+            addHomeRowSection("Anime & Animation", sections.animeShows, true, "ANIME")
+            addHomeRowSection("Sci-Fi & Fantasy", sections.sciFiMovies, false, "SCIFI")
+            addHomeRowSection("Documentaries", sections.documentaries, false, "DOC")
         }
 
         binding.btnWatchFeatured.setOnClickListener {
@@ -651,99 +699,49 @@ class HomeFragment : Fragment() {
 
     private fun addHomeRowSection(title: String, items: List<VodItem>, isSeries: Boolean, filterCode: String) {
         if (items.isEmpty()) return
-        val ctx = requireContext()
-        val d = ctx.resources.displayMetrics.density
         val container = extraSectionsContainer ?: return
-        val headerFont = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-        val actionFont = Typeface.create("sans-serif-medium", Typeface.BOLD)
+        val rowView = layoutInflater.inflate(R.layout.item_home_section_row, container, false)
 
-        val headerRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding((16 * d).toInt(), (18 * d).toInt(), (16 * d).toInt(), (8 * d).toInt())
-        }
-        val tvTitle = TextView(ctx).apply {
-            text = title
-            setTextColor(Color.WHITE)
-            textSize = 19f
-            typeface = headerFont
-            letterSpacing = 0.02f
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        val tvSeeAll = TextView(ctx).apply {
-            text = "See All"
-            setTextColor(Color.parseColor("#E50914"))
-            textSize = 13f
-            typeface = actionFont
-            setOnClickListener {
-                showSeeAllInfiniteDialog(title, isSeries, filterCode)
-            }
-        }
-        headerRow.addView(tvTitle)
-        headerRow.addView(tvSeeAll)
-        container.addView(headerRow)
+        val tvTitle = rowView.findViewById<TextView>(R.id.tvSectionRowTitle)
+        val btnSeeAll = rowView.findViewById<TextView>(R.id.btnSectionRowSeeAll)
+        val rvRow = rowView.findViewById<RecyclerView>(R.id.rvSectionRowItems)
 
-        val rv = RecyclerView(ctx).apply {
-            layoutManager = LinearLayoutManager(ctx, LinearLayoutManager.HORIZONTAL, false)
-            clipToPadding = false
-            setPadding((10 * d).toInt(), 0, (10 * d).toInt(), 0)
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (202 * d).toInt())
-            adapter = VodGridAdapter(items, isGrid = false) { vod -> openVodDetail(vod) }
+        tvTitle.text = title
+        tvTitle.typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+        btnSeeAll.setOnClickListener {
+            showSeeAllInfiniteDialog(title, isSeries, filterCode)
         }
-        container.addView(rv)
+
+        rvRow.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+        rvRow.adapter = VodGridAdapter(items, isGrid = false) { vod -> openVodDetail(vod) }
+        container.addView(rowView)
     }
 
     private fun showSeeAllInfiniteDialog(sectionTitle: String, isSeries: Boolean, filterCode: String) {
         val ctx = requireContext()
         val dialog = Dialog(ctx, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        val d = ctx.resources.displayMetrics.density
-        val headerFont = Typeface.create("sans-serif-condensed", Typeface.BOLD)
 
-        val root = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            background = com.primeott.app.FlixVisionStandardBgDrawable()
-            setPadding((8 * d).toInt(), (12 * d).toInt(), (8 * d).toInt(), 0)
-        }
+        val root = layoutInflater.inflate(R.layout.dialog_see_all_grid, null, false)
+        root.background = com.primeott.app.FlixVisionStandardBgDrawable()
 
-        val topBar = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding((6 * d).toInt(), (4 * d).toInt(), (6 * d).toInt(), (12 * d).toInt())
-        }
-        val btnBack = ImageView(ctx).apply {
-            setImageResource(R.drawable.ic_back_chevron)
-            setPadding((8 * d).toInt(), (8 * d).toInt(), (12 * d).toInt(), (8 * d).toInt())
-            layoutParams = LinearLayout.LayoutParams((40 * d).toInt(), (40 * d).toInt())
-            setOnClickListener { dialog.dismiss() }
-        }
-        val tvHeader = TextView(ctx).apply {
-            text = sectionTitle
-            setTextColor(Color.WHITE)
-            textSize = 21f
-            typeface = headerFont
-            letterSpacing = 0.02f
-        }
-        topBar.addView(btnBack)
-        topBar.addView(tvHeader)
-        root.addView(topBar)
+        val btnBack = root.findViewById<ImageView>(R.id.btnSeeAllBack)
+        val tvHeader = root.findViewById<TextView>(R.id.tvSeeAllHeaderTitle)
+        val rv = root.findViewById<RecyclerView>(R.id.rvSeeAllGrid)
+
+        btnBack.setOnClickListener { dialog.dismiss() }
+        tvHeader.text = buildTwoToneHeaderTitle(sectionTitle)
 
         val allItems = mutableListOf<VodItem>()
         var currentPage = 1
         var isLoadingPage = false
 
         val gridLayoutManager = GridLayoutManager(ctx, 3)
-        val rv = RecyclerView(ctx).apply {
-            layoutManager = gridLayoutManager
-            clipToPadding = false
-            setPadding(0, 0, 0, (24 * d).toInt())
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-        }
+        rv.layoutManager = gridLayoutManager
         val gridAdapter = VodGridAdapter(allItems, isGrid = true) { vod ->
             openVodDetail(vod)
         }
         rv.adapter = gridAdapter
-        root.addView(rv)
 
         fun loadNextPage() {
             if (isLoadingPage) return
@@ -782,23 +780,20 @@ class HomeFragment : Fragment() {
         autoSlideJob?.cancel()
         autoSlideJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
-                delay(4500L)
-                if (heroItems.size > 1) {
+                delay(4800L)
+                if (heroItems.size > 1 && binding.heroViewPager.scrollState == ViewPager2.SCROLL_STATE_IDLE) {
                     binding.heroViewPager.setCurrentItem(binding.heroViewPager.currentItem + 1, true)
                 }
             }
         }
     }
 
+    /**
+     * فتح صفحة الفيلم مباشرة في 0ms بلا قراءة ملف JSON على الـ Main Thread
+     */
     private fun openVodDetail(vod: VodItem) {
-        val savedEntry = SessionManager.getWatchHistoryList(requireContext()).firstOrNull { it.id == vod.id }
-        val vodWithProgress = if (savedEntry != null) {
-            vod.copy(savedPositionMs = savedEntry.positionMs, totalDurationMs = savedEntry.durationMs)
-        } else {
-            vod
-        }
         startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
-            putExtra(ContentDetailActivity.EXTRA_VOD, vodWithProgress)
+            putExtra(ContentDetailActivity.EXTRA_VOD, vod)
         })
     }
 
@@ -822,30 +817,34 @@ class HomeFragment : Fragment() {
     }
 
     private fun loadRecentHistorySection(binding: FragmentHomeBinding) {
-        val historyList = SessionManager.getWatchHistoryList(requireContext())
-            .filter { it.positionMs > 1000L && it.durationMs > 0L }
-
-        if (historyList.isEmpty()) {
-            binding.recentHeaderRow.visibility = View.GONE
-            binding.rvRecentWatched.visibility = View.GONE
-            return
-        }
-        binding.recentHeaderRow.visibility = View.VISIBLE
-        binding.rvRecentWatched.visibility = View.VISIBLE
-        binding.rvRecentWatched.adapter = RecentLandscapeAdapter(
-            items = historyList,
-            onClick = { entry -> openHistoryEntryDetail(entry) },
-            onRemoveRequest = { entry ->
-                showRemoveWatchHistoryPopup(
-                    titleText = "Remove from Continue Watching?",
-                    messageText = "Remove \"${entry.title}\" from your watch history?",
-                    confirmLabel = "Remove"
-                ) {
-                    SessionManager.deleteWatchHistoryItems(requireContext(), setOf(entry.id))
-                    _binding?.let { loadRecentHistorySection(it) }
-                }
+        viewLifecycleOwner.lifecycleScope.launch {
+            val historyList = withContext(Dispatchers.IO) {
+                SessionManager.getWatchHistoryList(requireContext())
+                    .filter { it.positionMs > 1000L && it.durationMs > 0L }
             }
-        )
+
+            if (historyList.isEmpty()) {
+                binding.recentHeaderRow.visibility = View.GONE
+                binding.rvRecentWatched.visibility = View.GONE
+                return@launch
+            }
+            binding.recentHeaderRow.visibility = View.VISIBLE
+            binding.rvRecentWatched.visibility = View.VISIBLE
+            binding.rvRecentWatched.adapter = RecentLandscapeAdapter(
+                items = historyList,
+                onClick = { entry -> openHistoryEntryDetail(entry) },
+                onRemoveRequest = { entry ->
+                    showRemoveWatchHistoryPopup(
+                        titleText = "Remove from Continue Watching?",
+                        messageText = "Remove \"${entry.title}\" from your watch history?",
+                        confirmLabel = "Remove"
+                    ) {
+                        SessionManager.deleteWatchHistoryItems(requireContext(), setOf(entry.id))
+                        _binding?.let { loadRecentHistorySection(it) }
+                    }
+                }
+            )
+        }
     }
 
     private fun showRemoveWatchHistoryPopup(
@@ -860,8 +859,10 @@ class HomeFragment : Fragment() {
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         dialog.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
-        val mediumFont = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-        val regularFont = Typeface.create("sans-serif", Typeface.NORMAL)
+        val mediumFont = ResourcesCompat.getFont(ctx, R.font.product_sans_bold)
+            ?: Typeface.create("sans-serif-condensed", Typeface.BOLD)
+        val regularFont = ResourcesCompat.getFont(ctx, R.font.product_sans_egular)
+            ?: Typeface.create("sans-serif", Typeface.NORMAL)
 
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -900,7 +901,7 @@ class HomeFragment : Fragment() {
             text = "Cancel"
             setTextColor(Color.parseColor("#E2E8F0"))
             textSize = 14f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            typeface = mediumFont
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
@@ -918,7 +919,7 @@ class HomeFragment : Fragment() {
             text = confirmLabel
             setTextColor(Color.WHITE)
             textSize = 14f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            typeface = mediumFont
             gravity = Gravity.CENTER
             setBackgroundResource(R.drawable.bg_btn_watch_now_luxury)
             layoutParams = LinearLayout.LayoutParams(0, (44 * d).toInt(), 1f).apply {
@@ -947,7 +948,8 @@ class HomeFragment : Fragment() {
         val dialog = Dialog(ctx, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
         val d = ctx.resources.displayMetrics.density
-        val headerFont = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+        val headerFont = ResourcesCompat.getFont(ctx, R.font.product_sans_bold)
+            ?: Typeface.create("sans-serif-condensed", Typeface.BOLD)
 
         var isSelectionMode = false
         val selectedIds = mutableSetOf<String>()
@@ -1138,7 +1140,8 @@ class RecentLandscapeAdapter(
             (170 * d).toInt()
         }
         val cardHeightPx = (cardWidthPx * 0.56f).toInt()
-        val itemTitleFont = Typeface.create("sans-serif", Typeface.BOLD)
+        val itemTitleFont = ResourcesCompat.getFont(ctx, R.font.product_sans_bold)
+            ?: Typeface.create("sans-serif", Typeface.BOLD)
 
         val wrap = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -1210,6 +1213,7 @@ class RecentLandscapeAdapter(
 
         wrap.addView(card)
         wrap.addView(tv)
+        attachSnappyCardTouch(card)
         return VH(wrap, card, iv, selBadge, progressFill, tv)
     }
 
@@ -1228,8 +1232,16 @@ class RecentLandscapeAdapter(
 
         holder.tvTitle.text = item.title
         val thumbUrl = item.backdropUrl.ifEmpty { item.posterUrl }
+        val placeholder = PrimeSkeletonHelper.createCardPlaceholderDrawable(ctx, PrimeSkeletonHelper.MediaSkeletonType.MOVIE)
         if (thumbUrl.isNotEmpty()) {
-            Glide.with(ctx).load(thumbUrl).centerCrop().into(holder.ivThumb)
+            Glide.with(ctx)
+                .load(thumbUrl)
+                .placeholder(placeholder)
+                .transition(DrawableTransitionOptions.withCrossFade(220))
+                .centerCrop()
+                .into(holder.ivThumb)
+        } else {
+            holder.ivThumb.setImageDrawable(placeholder)
         }
 
         val posMs = item.positionMs
@@ -1275,179 +1287,17 @@ class RecentLandscapeAdapter(
     }
 }
 
-/**
- * HeroBannerAdapter مطابق لتصميم صورة Leviticus (كروت بوستر 3D مائلة مع شارة ★ 6.8 وشارة 2026 وعنوان سفلي بارز وإطار زجاجي)
- */
 class HeroBannerAdapter(
     private val items: List<VodItem>,
     private val onClick: (VodItem) -> Unit
 ) : RecyclerView.Adapter<HeroBannerAdapter.VH>() {
 
-    class VH(
-        val rootCard: CardView,
-        val ivHeroPoster: ImageView,
-        val tvHeroRating: TextView,
-        val tvHeroYear: TextView,
-        val tvHeroTitle: TextView
-    ) : RecyclerView.ViewHolder(rootCard)
+    class VH(val binding: ItemHeroBannerBinding) : RecyclerView.ViewHolder(binding.root)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val ctx = parent.context
-        val density = ctx.resources.displayMetrics.density
-        val titleFont = androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.product_sans_bold)
-            ?: Typeface.create("sans-serif", Typeface.BOLD)
-        val pillFont = androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.product_sans_bold)
-            ?: Typeface.create("sans-serif-medium", Typeface.BOLD)
-
-        val card = CardView(ctx).apply {
-            layoutParams = ViewGroup.MarginLayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            ).apply {
-                val marginH = (6 * density).toInt()
-                setMargins(marginH, 0, marginH, 0)
-            }
-            radius = 24f * density
-            cardElevation = 0f
-            setCardBackgroundColor(Color.parseColor("#0A0D14"))
-        }
-
-        val container = FrameLayout(ctx).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        val ivPoster = ImageView(ctx).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            scaleType = ImageView.ScaleType.CENTER_CROP
-        }
-
-        // تظليل علوي خفيف لإبراز شارات التقييم والسنة + تظليل سفلي عميق لإبراز اسم الفيلم مثل Leviticus
-        val topVignette = View(ctx).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                (76 * density).toInt(),
-                Gravity.TOP
-            )
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(
-                    Color.parseColor("#75030508"),
-                    Color.TRANSPARENT
-                )
-            )
-        }
-
-        val bottomOverlay = View(ctx).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                (170 * density).toInt(),
-                Gravity.BOTTOM
-            )
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(
-                    Color.TRANSPARENT,
-                    Color.parseColor("#8804060A"),
-                    Color.parseColor("#F2030407")
-                )
-            )
-        }
-
-        // إطار زجاجي رفيع يحيط بالكرت ليظهر بوضوح في الـ 3D Tilt
-        val glassBorderOverlay = View(ctx).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 24f * density
-                setColor(Color.TRANSPARENT)
-                setStroke((1.15f * density).toInt().coerceAtLeast(1), Color.parseColor("#2EFFFFFF"))
-            }
-        }
-
-        val badgeBg = {
-            GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 11f * density
-                setColor(Color.parseColor("#CC07090E"))
-                setStroke((0.9f * density).toInt().coerceAtLeast(1), Color.parseColor("#26FFFFFF"))
-            }
-        }
-
-        val tvRating = TextView(ctx).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                (32 * density).toInt(),
-                Gravity.TOP or Gravity.START
-            ).apply {
-                val m = (14 * density).toInt()
-                setMargins(m, m, m, m)
-            }
-            background = badgeBg()
-            setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_star_gold, 0, 0, 0)
-            compoundDrawablePadding = (5 * density).toInt()
-            gravity = Gravity.CENTER
-            val padH = (12 * density).toInt()
-            setPadding(padH, 0, padH, 0)
-            setTextColor(Color.parseColor("#FFC107"))
-            textSize = 13.5f
-            typeface = titleFont
-        }
-
-        val tvYear = TextView(ctx).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                (32 * density).toInt(),
-                Gravity.TOP or Gravity.END
-            ).apply {
-                val m = (14 * density).toInt()
-                setMargins(m, m, m, m)
-            }
-            background = badgeBg()
-            gravity = Gravity.CENTER
-            val padH = (12 * density).toInt()
-            setPadding(padH, 0, padH, 0)
-            setTextColor(Color.WHITE)
-            textSize = 13.5f
-            typeface = pillFont
-        }
-
-        val tvTitle = TextView(ctx).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM
-            ).apply {
-                setMargins((16 * density).toInt(), 0, (16 * density).toInt(), (20 * density).toInt())
-            }
-            ellipsize = TextUtils.TruncateAt.END
-            gravity = Gravity.CENTER
-            maxLines = 1
-            letterSpacing = 0.01f
-            setShadowLayer(12f, 0f, 3f, Color.BLACK)
-            setTextColor(Color.WHITE)
-            textSize = 24f
-            typeface = titleFont
-        }
-
-        container.addView(ivPoster)
-        container.addView(topVignette)
-        container.addView(bottomOverlay)
-        container.addView(tvRating)
-        container.addView(tvYear)
-        container.addView(tvTitle)
-        container.addView(glassBorderOverlay)
-        card.addView(container)
-
-        return VH(card, ivPoster, tvRating, tvYear, tvTitle)
+        val binding = ItemHeroBannerBinding.inflate(LayoutInflater.from(parent.context), parent, false)
+        attachSnappyCardTouch(binding.root)
+        return VH(binding)
     }
 
     override fun getItemCount(): Int = if (items.isEmpty()) 0 else Int.MAX_VALUE
@@ -1457,9 +1307,9 @@ class HeroBannerAdapter(
         val item = items[position % items.size]
         val ctx = holder.itemView.context
 
-        holder.tvHeroTitle.text = item.title
-        holder.tvHeroRating.text = item.rating
-        holder.tvHeroYear.text = item.year
+        holder.binding.tvHeroTitle.text = item.title
+        holder.binding.tvHeroRating.text = item.rating
+        holder.binding.tvHeroYear.text = item.year
 
         val placeholder = PrimeSkeletonHelper.createCardPlaceholderDrawable(
             ctx,
@@ -1470,20 +1320,19 @@ class HeroBannerAdapter(
         if (item.posterUrl.isNotEmpty()) {
             Glide.with(ctx)
                 .load(item.posterUrl)
+                .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .placeholder(placeholder)
                 .error(placeholder)
+                .transition(DrawableTransitionOptions.withCrossFade(240))
                 .centerCrop()
-                .into(holder.ivHeroPoster)
+                .into(holder.binding.ivHeroPoster)
         } else {
-            holder.ivHeroPoster.setImageDrawable(placeholder)
+            holder.binding.ivHeroPoster.setImageDrawable(placeholder)
         }
-        holder.rootCard.setOnClickListener { onClick(item) }
+        holder.binding.root.setOnClickListener { onClick(item) }
     }
 }
 
-/**
- * صفحة Movies و TV Shows المتجددة (تخلط وتجلب صفحات متعددة حتى لا تبقى الأفلام ثابتة + أنيميشن دخول للكروت)
- */
 class VodFragment : Fragment() {
     companion object {
         fun newInstance(isSeries: Boolean) = VodFragment().apply {
@@ -1506,18 +1355,18 @@ class VodFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         val binding = FragmentVodGridBinding.bind(view)
         val isSeries = arguments?.getBoolean("IS_SERIES") ?: false
+        val ctx = requireContext()
 
-        binding.tvSectionHeader.typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
-        binding.tvSectionHeader.letterSpacing = 0.03f
-        binding.tvSectionHeader.text = if (isSeries) "TV Shows" else "Movies"
+        binding.tvSectionHeader.text = buildTwoToneHeaderTitle(
+            if (isSeries) "TV SHOWS" else "MOVIES"
+        )
 
-        val gridLayoutManager = GridLayoutManager(requireContext(), 3)
+        val gridLayoutManager = GridLayoutManager(ctx, 3)
         binding.rvVodGrid.layoutManager = gridLayoutManager
 
         val gridAdapter = VodGridAdapter(catalogList, isGrid = true) { vod ->
-            val savedPos = SessionManager.getSavedPositionForVod(requireContext(), vod.id)
-            startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
-                putExtra(ContentDetailActivity.EXTRA_VOD, vod.copy(savedPositionMs = savedPos))
+            startActivity(Intent(ctx, ContentDetailActivity::class.java).apply {
+                putExtra(ContentDetailActivity.EXTRA_VOD, vod)
             })
         }
         binding.rvVodGrid.adapter = gridAdapter
@@ -1535,51 +1384,41 @@ class VodFragment : Fragment() {
             )
 
             viewLifecycleOwner.lifecycleScope.launch {
-                // جلب صفحتين مختلفتين بالتوازي ودمجهما بذكاء باش ما تبقاش صفحة الأفلام جامدة بنفس الترتيب!
-                val dynamicBonusPage = (2..5).random()
                 usedInitialPages.add(1)
-                usedInitialPages.add(dynamicBonusPage)
-
-                val (page1Items, pageBonusItems) = awaitAll(
-                    async(Dispatchers.IO) {
-                        OttRepository.fetchVodCatalogPage(
-                            isSeries = isSeries,
-                            page = 1,
-                            filterCode = selectedGenreCode,
-                            sortMode = selectedSortMode
-                        )
-                    },
-                    async(Dispatchers.IO) {
-                        OttRepository.fetchVodCatalogPage(
-                            isSeries = isSeries,
-                            page = dynamicBonusPage,
-                            filterCode = selectedGenreCode,
-                            sortMode = selectedSortMode
-                        )
-                    }
-                )
-
-                val mergedFreshList = if (selectedSortMode == "POPULAR") {
-                    (page1Items + pageBonusItems).distinctBy { it.id }.shuffled()
-                } else {
-                    (page1Items + pageBonusItems).distinctBy { it.id }
+                val firstPageItems = withContext(Dispatchers.IO) {
+                    OttRepository.fetchVodCatalogPage(
+                        isSeries = isSeries,
+                        page = 1,
+                        filterCode = selectedGenreCode,
+                        sortMode = selectedSortMode
+                    )
                 }
 
                 binding.rvVodGrid.adapter = gridAdapter
-                if (mergedFreshList.isNotEmpty()) {
-                    catalogList.addAll(mergedFreshList)
-                    gridAdapter.notifyDataSetChanged()
-                    binding.rvVodGrid.alpha = 0f
-                    binding.rvVodGrid.translationY = 18f * resources.displayMetrics.density
-                    binding.rvVodGrid.animate()
-                        .alpha(1f)
-                        .translationY(0f)
-                        .setDuration(260L)
-                        .setInterpolator(DecelerateInterpolator())
-                        .start()
+                if (firstPageItems.isNotEmpty()) {
+                    catalogList.addAll(firstPageItems)
+                    gridAdapter.notifyItemRangeInserted(0, firstPageItems.size)
                     currentPage = 2
                 }
                 isLoadingMore = false
+
+                val bonusPage = (2..4).random()
+                if (usedInitialPages.add(bonusPage)) {
+                    val bonusItems = withContext(Dispatchers.IO) {
+                        OttRepository.fetchVodCatalogPage(
+                            isSeries = isSeries,
+                            page = bonusPage,
+                            filterCode = selectedGenreCode,
+                            sortMode = selectedSortMode
+                        )
+                    }.filter { b -> catalogList.none { it.id == b.id } }
+
+                    if (bonusItems.isNotEmpty()) {
+                        val insertStart = catalogList.size
+                        catalogList.addAll(bonusItems)
+                        gridAdapter.notifyItemRangeInserted(insertStart, bonusItems.size)
+                    }
+                }
             }
         }
 
@@ -1646,7 +1485,7 @@ class VodFragment : Fragment() {
         }
 
         binding.rvGenreChips.layoutManager =
-            LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+            LinearLayoutManager(ctx, LinearLayoutManager.HORIZONTAL, false)
         binding.rvGenreChips.adapter = GenreChipsAdapter(genres, selectedGenreCode) { code ->
             selectedGenreCode = code
             reloadCatalogFromFirstPage()
@@ -1678,13 +1517,12 @@ class VodFragment : Fragment() {
 
         binding.btnVodSearch.setOnClickListener {
             showLuxurySearchDialog(
-                ctx = requireContext(),
+                ctx = ctx,
                 scope = viewLifecycleOwner.lifecycleScope,
                 filterType = if (isSeries) "SERIES" else "MOVIES"
             ) { vod ->
-                val savedPos = SessionManager.getSavedPositionForVod(requireContext(), vod.id)
-                startActivity(Intent(requireContext(), ContentDetailActivity::class.java).apply {
-                    putExtra(ContentDetailActivity.EXTRA_VOD, vod.copy(savedPositionMs = savedPos))
+                startActivity(Intent(ctx, ContentDetailActivity::class.java).apply {
+                    putExtra(ContentDetailActivity.EXTRA_VOD, vod)
                 })
             }
         }
@@ -1714,7 +1552,8 @@ class VodFragment : Fragment() {
     ) {
         val ctx = requireContext()
         val d = ctx.resources.displayMetrics.density
-        val itemFont = Typeface.create("sans-serif", Typeface.BOLD)
+        val itemFont = ResourcesCompat.getFont(ctx, R.font.product_sans_bold)
+            ?: Typeface.create("sans-serif", Typeface.BOLD)
 
         val container = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -1780,26 +1619,17 @@ class GenreChipsAdapter(
     private val onSelectGenre: (String) -> Unit
 ) : RecyclerView.Adapter<GenreChipsAdapter.VH>() {
 
-    class VH(val tvChip: TextView) : RecyclerView.ViewHolder(tvChip)
+    class VH(
+        val chipContainer: View,
+        val dotIndicator: View,
+        val tvChip: TextView
+    ) : RecyclerView.ViewHolder(chipContainer)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val ctx = parent.context
-        val d = ctx.resources.displayMetrics.density
-        val tv = TextView(ctx).apply {
-            gravity = Gravity.CENTER
-            textSize = 12.5f
-            typeface = Typeface.create("sans-serif", Typeface.BOLD)
-            setPadding((16 * d).toInt(), 0, (16 * d).toInt(), 0)
-            layoutParams = RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                (34 * d).toInt()
-            ).apply {
-                marginEnd = (8 * d).toInt()
-                topMargin = (3 * d).toInt()
-                bottomMargin = (3 * d).toInt()
-            }
-        }
-        return VH(tv)
+        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_genre_chip, parent, false)
+        val dot = view.findViewById<View>(R.id.vChipDot)
+        val tv = view.findViewById<TextView>(R.id.tvChipLabel)
+        return VH(view, dot, tv)
     }
 
     override fun getItemCount(): Int = items.size
@@ -1810,39 +1640,42 @@ class GenreChipsAdapter(
         val d = holder.itemView.context.resources.displayMetrics.density
 
         holder.tvChip.text = label
+        holder.chipContainer.isSelected = isSelected
+
         if (isSelected) {
+            holder.dotIndicator.visibility = View.VISIBLE
             holder.tvChip.setTextColor(Color.WHITE)
-            holder.tvChip.background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 10f * d
-                setColor(Color.parseColor("#E50914"))
-                setStroke((1 * d).toInt(), Color.parseColor("#80FF6B72"))
-            }
-            holder.tvChip.animate().scaleX(1.05f).scaleY(1.05f).setDuration(150).start()
+            holder.chipContainer.elevation = 6f * d
+            holder.chipContainer.animate()
+                .scaleX(1.04f)
+                .scaleY(1.04f)
+                .setDuration(180L)
+                .setInterpolator(OvershootInterpolator(1.2f))
+                .start()
         } else {
-            holder.tvChip.setTextColor(Color.parseColor("#D5D9E2"))
-            holder.tvChip.background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 10f * d
-                setColor(Color.parseColor("#11131A"))
-                setStroke((1.1f * d).toInt(), Color.parseColor("#38FFFFFF"))
-            }
-            holder.tvChip.animate().scaleX(1.0f).scaleY(1.0f).setDuration(150).start()
+            holder.dotIndicator.visibility = View.GONE
+            holder.tvChip.setTextColor(Color.parseColor("#CBD5E1"))
+            holder.chipContainer.elevation = 0f
+            holder.chipContainer.animate()
+                .scaleX(1.0f)
+                .scaleY(1.0f)
+                .setDuration(150L)
+                .start()
         }
 
-        holder.tvChip.setOnClickListener {
+        holder.chipContainer.setOnClickListener {
             if (selectedCode != code) {
+                val prevCode = selectedCode
                 selectedCode = code
-                notifyDataSetChanged()
+                val prevIdx = items.indexOfFirst { it.first == prevCode }
+                if (prevIdx != -1) notifyItemChanged(prevIdx)
+                notifyItemChanged(position)
                 onSelectGenre(code)
             }
         }
     }
 }
 
-/**
- * VodGridAdapter مع أنيميشن دخول سلسة للكروت (Cascade Scale & Slide) وتأثير الضغط
- */
 class VodGridAdapter(
     private val items: List<VodItem>,
     private val isGrid: Boolean = false,
@@ -1858,27 +1691,30 @@ class VodGridAdapter(
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val b = ItemVodCardBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-        val d = parent.context.resources.displayMetrics.density
+        val ctx = parent.context
+        val b = ItemVodCardBinding.inflate(LayoutInflater.from(ctx), parent, false)
+        val d = ctx.resources.displayMetrics.density
+
         if (isGrid) {
             b.root.layoutParams = ViewGroup.MarginLayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                (186 * d).toInt()
+                (194 * d).toInt()
             ).apply {
                 val m = (5.5f * d).toInt()
                 setMargins(m, m, m, m)
             }
         } else {
             b.root.layoutParams = ViewGroup.MarginLayoutParams(
-                (116 * d).toInt(),
-                (188 * d).toInt()
+                (124 * d).toInt(),
+                (196 * d).toInt()
             ).apply {
                 val mH = (5.5f * d).toInt()
                 val mV = (4 * d).toInt()
                 setMargins(mH, mV, mH, mV)
             }
         }
-        AnimUtils.attachPressBounce(b.root)
+
+        attachSnappyCardTouch(b.root)
         return VH(b)
     }
 
@@ -1888,7 +1724,8 @@ class VodGridAdapter(
         val item = items[position]
         val ctx = holder.itemView.context
         holder.binding.tvVodTitle.text = item.title
-        holder.binding.tvVodMeta.text = item.rating
+        holder.binding.tvVodMeta.text = item.rating.ifEmpty { "7.5" }
+        holder.binding.tvVodYear.text = item.year.ifEmpty { "2026" }
 
         val skeletonDrawable = PrimeSkeletonHelper.createCardPlaceholderDrawable(
             ctx,
@@ -1896,34 +1733,37 @@ class VodGridAdapter(
             else PrimeSkeletonHelper.MediaSkeletonType.MOVIE
         )
 
-        if (item.posterUrl.isNotEmpty()) {
+        val fastPosterUrl = optimizeCardPosterUrl(item.posterUrl)
+        if (fastPosterUrl.isNotEmpty()) {
             Glide.with(ctx)
-                .load(item.posterUrl)
+                .load(fastPosterUrl)
+                .diskCacheStrategy(DiskCacheStrategy.ALL)
                 .placeholder(skeletonDrawable)
                 .error(skeletonDrawable)
+                .transition(DrawableTransitionOptions.withCrossFade(250))
                 .centerCrop()
                 .into(holder.binding.ivPoster)
         } else {
             holder.binding.ivPoster.setImageDrawable(skeletonDrawable)
         }
 
-        if (isGrid && position > lastAnimatedPosition) {
+        if (position > lastAnimatedPosition) {
             lastAnimatedPosition = position
             val v = holder.binding.root
             v.animate().cancel()
             v.alpha = 0f
-            v.scaleX = 0.91f
-            v.scaleY = 0.91f
-            v.translationY = 16f * ctx.resources.displayMetrics.density
+            v.translationY = 14f * ctx.resources.displayMetrics.density
+            val staggerDelay = ((position % 6) * 35L).coerceAtMost(180L)
             v.animate()
                 .alpha(1f)
-                .scaleX(1f)
-                .scaleY(1f)
                 .translationY(0f)
-                .setDuration(240L)
-                .setStartDelay(((position % 3) * 35L))
+                .setStartDelay(staggerDelay)
+                .setDuration(230L)
                 .setInterpolator(DecelerateInterpolator())
                 .start()
+        } else {
+            holder.binding.root.alpha = 1f
+            holder.binding.root.translationY = 0f
         }
 
         holder.binding.root.setOnClickListener { onClick(item) }

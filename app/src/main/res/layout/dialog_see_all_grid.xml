@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <!-- ترويسة صفحة See All الفخمة بنفس تصميم صفحة Movies & Series ومرفوعة عن الحافة العلوية -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp">
+
+        <ImageView
+            android:id="@+id/btnSeeAllBack"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/search_bg"
+            android:padding="9dp"
+            android:src="@drawable/ic_back_chevron" />
+
+        <View
+            android:layout_width="4.5dp"
+            android:layout_height="24dp"
+            android:layout_marginEnd="10dp"
+            android:background="@drawable/bg_header_accent_bar" />
+
+        <TextView
+            android:id="@+id/tvSeeAllHeaderTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:fontFamily="@font/product_sans_bold"
+            android:letterSpacing="0.03"
+            android:maxLines="1"
+            android:shadowColor="#000000"
+            android:shadowDx="0"
+            android:shadowDy="3"
+            android:shadowRadius="10"
+            android:singleLine="true"
+            android:text="POPULAR MOVIES"
+            android:textColor="#FFFFFF"
+            android:textSize="20.5sp" />
+    </LinearLayout>
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvSeeAllGrid"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:paddingBottom="28dp" />
+
+</LinearLayout>

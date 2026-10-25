@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="36dp"
+    android:layout_marginEnd="8dp"
+    android:background="@drawable/bg_genre_chip_selector"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center"
+    android:orientation="horizontal"
+    android:paddingHorizontal="12dp">
+
+    <View
+        android:id="@+id/vChipDot"
+        android:layout_width="6dp"
+        android:layout_height="6dp"
+        android:layout_marginEnd="7dp"
+        android:background="@drawable/bg_chip_active_dot"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/tvChipLabel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:fontFamily="@font/product_sans_bold"
+        android:gravity="center"
+        android:letterSpacing="0.02"
+        android:singleLine="true"
+        android:text="Action"
+        android:textColor="#CBD5E1"
+        android:textSize="12.5sp" />
+
+</LinearLayout>
