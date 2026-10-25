@@ -37,6 +37,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -117,6 +118,12 @@ class ContentDetailActivity : AppCompatActivity() {
         private val paletteCache = ConcurrentHashMap<String, Pair<Int, Int>>()
         private val distinctCoverCache = ConcurrentHashMap<String, String>()
         private val actorCreditsCache = ConcurrentHashMap<String, List<VodItem>>()
+
+        private val AD_BLOCK_KEYWORDS = listOf(
+            "doubleclick", "googlesyndication", "popads", "popcash", "adsterra",
+            "propellerads", "exoclick", "juicyads", "clickadu", "adnxs", "taboola",
+            "outbrain", "histats", "yandex.ru/metrika", "google-analytics", "sbx.pages.dev"
+        )
     }
 
     private sealed class NavHistoryEntry {
@@ -291,7 +298,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 moviePlayerController.onServerSwitchingStarted(server.label)
 
                 if (server.isDirectStream) {
-                    onRawStreamIntercepted(server.url, server.referer, server.origin, server.userAgent)
+                    onRawStreamIntercepted(server.url, server.referer, server.origin, server.userAgent, server.label)
                 } else {
                     loadProviderInHeadlessSniffer(srvIdx)
                 }
@@ -716,12 +723,9 @@ class ContentDetailActivity : AppCompatActivity() {
 
         val evaluator = ArgbEvaluator()
         val initialBlack = "#000000".toColorInt()
-        val standardGreyLeft = FLIX_INITIAL_LEFT_COLOR // #233242 (Screen 2 Standard Grey)
-        val standardGreyRight = FLIX_INITIAL_RIGHT_COLOR // #000000
+        val standardGreyLeft = FLIX_INITIAL_LEFT_COLOR
+        val standardGreyRight = FLIX_INITIAL_RIGHT_COLOR
 
-        // Animation fiha el marahel f nafs el حركة:
-        // 0.0 -> 0.35 : men Black (Screen 1) lel Grey Standard (Screen 2)
-        // 0.35 -> 1.0 : men Grey Standard (Screen 2) lel Dynamic Color ta3 el Cover
         colorExtractionAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             startDelay = 0L
             duration = 1650L
@@ -1022,6 +1026,10 @@ class ContentDetailActivity : AppCompatActivity() {
         } else {
             moviePlayerController.setLoadingState(true)
             val vod = currentVod ?: return
+            // إذا كان البحث في الخلفية أو الـ WebView جارياً بالفعل لا نلغيه ولا نعيد تحميله من الصفر!
+            if (streamFetchJob?.isActive == true || snifferTimeoutJob?.isActive == true) {
+                return
+            }
             if (providerTargets.isEmpty()) {
                 startStreamExtractionForEpisodeOrMovie(vod, selectedSeason, selectedEpisode, runWebViewNow = true)
             } else {
@@ -1033,7 +1041,7 @@ class ContentDetailActivity : AppCompatActivity() {
     private fun switchToPosterShowcaseMode(saveCurrentPlayerPos: Boolean, animateTransition: Boolean) {
         if (saveCurrentPlayerPos && isPlayerModeActive) {
             playerEngine.player?.let { exo ->
-                if (exo.currentPosition > 5000L && exo.duration > 10000L) {
+                if (exo.currentPosition > 1000L && exo.duration > 0L) {
                     pendingResumePositionMs = exo.currentPosition
                     currentVod?.let { v ->
                         SessionManager.saveWatchProgress(this, v, exo.currentPosition, exo.duration)
@@ -1108,11 +1116,46 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
+    private fun isLikelyPlayableStreamUrl(rawUrl: String): Boolean {
+        val lower = rawUrl.lowercase(Locale.ROOT)
+        val decoded = runCatching { Uri.decode(lower) }.getOrDefault(lower)
+        if (AD_BLOCK_KEYWORDS.any { decoded.contains(it) }) return false
+        if (decoded.contains("netnaija.film/wp-content") || decoded.contains("promo") || decoded.contains("trailer")) {
+            return false
+        }
+        val cleanPath = lower.substringBefore("?").substringBefore("#")
+        val forbiddenExts = listOf(
+            ".js", ".css", ".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif",
+            ".woff", ".woff2", ".ttf", ".ico", ".json", ".xml", ".html", ".htm",
+            ".php", ".vtt", ".srt", ".ass", ".wasm", ".ts", ".m4s", ".key"
+        )
+        if (forbiddenExts.any { cleanPath.endsWith(it) }) return false
+
+        // التأكد أن الرابط ليس قطعة .ts داخل بروكسي
+        val innerTarget = decoded.substringAfter("url=", decoded).substringBefore("&")
+        if (forbiddenExts.any { innerTarget.endsWith(it) }) return false
+
+        return cleanPath.endsWith(".m3u8") ||
+                decoded.contains(".m3u8") ||
+                cleanPath.endsWith(".mp4") ||
+                decoded.contains(".mp4?") ||
+                Regex(".*/playlist/\\d+.*").containsMatchIn(decoded) ||
+                decoded.contains("master.txt") ||
+                decoded.contains("index.txt") ||
+                decoded.contains("m3u8-proxy") ||
+                decoded.contains("mime=video") ||
+                cleanPath.endsWith(".mpd")
+    }
+
     @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
     private fun setupInvisibleStreamSniffer() {
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(headlessSnifferWebView, true)
+
         headlessSnifferWebView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
+            databaseEnabled = true
             mediaPlaybackRequiresUserGesture = false
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             userAgentString = SNIFFER_UA
@@ -1122,100 +1165,198 @@ class ContentDetailActivity : AppCompatActivity() {
 
         headlessSnifferWebView.addJavascriptInterface(object {
             @JavascriptInterface
-            fun onStreamCaptured(streamUrl: String, pageOrigin: String) {
-                if (streamUrl.startsWith("http") && !streamUrl.contains("doubleclick")) {
+            fun onStreamCaptured(streamUrl: String, pageOrigin: String, pageHref: String) {
+                if (streamUrl.startsWith("http") && isLikelyPlayableStreamUrl(streamUrl)) {
+                    val currentProvider = providerTargets.getOrNull(currentProviderIndex)
+                    val label = currentProvider?.label ?: "REYZO ${currentProviderIndex + 1}"
+                    val validOrigin = if (pageOrigin.startsWith("http", ignoreCase = true)) {
+                        pageOrigin
+                    } else {
+                        currentProvider?.origin.orEmpty()
+                    }
+                    val validReferer = when {
+                        pageHref.startsWith("http", ignoreCase = true) -> pageHref
+                        validOrigin.isNotEmpty() -> "$validOrigin/"
+                        else -> currentProvider?.referer.orEmpty()
+                    }
                     onRawStreamIntercepted(
                         url = streamUrl,
-                        referer = "$pageOrigin/",
-                        origin = pageOrigin,
-                        userAgent = SNIFFER_UA
+                        referer = validReferer,
+                        origin = validOrigin,
+                        userAgent = SNIFFER_UA,
+                        explicitLabel = label
                     )
                 }
             }
 
             @JavascriptInterface
-            fun onDeadServerDetected() {
-                runOnUiThread {
-                    if (!hasLockedPrimaryStream) {
+            fun onVerifiedHlsCaptured(streamUrl: String, pageOrigin: String, pageHref: String) {
+                val lower = streamUrl.lowercase(Locale.ROOT)
+                if (!lower.startsWith("http") || AD_BLOCK_KEYWORDS.any { lower.contains(it) }) return
+                val cleanPath = lower.substringBefore("?").substringBefore("#")
+                if (cleanPath.endsWith(".ts") || cleanPath.endsWith(".m4s") || cleanPath.endsWith(".vtt") || cleanPath.endsWith(".srt")) return
+
+                val currentProvider = providerTargets.getOrNull(currentProviderIndex)
+                val label = currentProvider?.label ?: "REYZO ${currentProviderIndex + 1}"
+                val validOrigin = if (pageOrigin.startsWith("http", ignoreCase = true)) {
+                    pageOrigin
+                } else {
+                    currentProvider?.origin.orEmpty()
+                }
+                val validReferer = when {
+                    pageHref.startsWith("http", ignoreCase = true) -> pageHref
+                    validOrigin.isNotEmpty() -> "$validOrigin/"
+                    else -> currentProvider?.referer.orEmpty()
+                }
+                onRawStreamIntercepted(
+                    url = streamUrl,
+                    referer = validReferer,
+                    origin = validOrigin,
+                    userAgent = SNIFFER_UA,
+                    explicitLabel = label
+                )
+            }
+
+            @JavascriptInterface
+            fun onProviderDead() {
+                if (!hasLockedPrimaryStream) {
+                    runOnUiThread {
+                        snifferTimeoutJob?.cancel()
                         tryNextProviderInBackground()
                     }
                 }
             }
         }, "PrimeSnifferBridge")
 
+        val snifferHookJs = """
+            (function() {
+                if (window.__primeHooked) return;
+                window.__primeHooked = true;
+                try {
+                    Object.defineProperty(document, 'hidden', { get: function() { return false; } });
+                    Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; } });
+                } catch(e) {}
+
+                function reportUrl(u, isVerifiedHls) {
+                    if (!u || typeof u !== 'string') return;
+                    if (u.indexOf('//') === 0) u = 'https:' + u;
+                    if (u.indexOf('http') === 0) {
+                        try {
+                            if (isVerifiedHls) {
+                                window.PrimeSnifferBridge.onVerifiedHlsCaptured(u, window.location.origin || '', window.location.href || '');
+                            } else {
+                                window.PrimeSnifferBridge.onStreamCaptured(u, window.location.origin || '', window.location.href || '');
+                            }
+                        } catch(e) {}
+                    }
+                }
+
+                var origOpen = XMLHttpRequest.prototype.open;
+                var origSend = XMLHttpRequest.prototype.send;
+                XMLHttpRequest.prototype.open = function(method, url) {
+                    this.__reqUrl = url;
+                    if (typeof url === 'string' && (url.indexOf('.m3u8') !== -1 || url.indexOf('master.txt') !== -1)) {
+                        reportUrl(url, false);
+                    }
+                    return origOpen.apply(this, arguments);
+                };
+                XMLHttpRequest.prototype.send = function() {
+                    this.addEventListener('readystatechange', function() {
+                        if (this.readyState === 4 && this.status >= 200 && this.status < 300) {
+                            try {
+                                if (!this.responseType || this.responseType === 'text') {
+                                    var txt = (this.responseText || '').substring(0, 140).trim();
+                                    if (txt.indexOf('#EXTM3U') === 0) {
+                                        reportUrl(this.responseURL || this.__reqUrl, true);
+                                    }
+                                }
+                            } catch(e) {}
+                        }
+                    });
+                    return origSend.apply(this, arguments);
+                };
+
+                if (window.fetch) {
+                    var origFetch = window.fetch;
+                    window.fetch = function(input, init) {
+                        var reqUrl = (typeof input === 'string') ? input : (input && input.url ? input.url : '');
+                        if (reqUrl && (reqUrl.indexOf('.m3u8') !== -1 || reqUrl.indexOf('master.txt') !== -1)) {
+                            reportUrl(reqUrl, false);
+                        }
+                        return origFetch.apply(this, arguments).then(function(res) {
+                            try {
+                                var fUrl = res.url || reqUrl;
+                                if (fUrl && (fUrl.indexOf('.m3u8') !== -1 || fUrl.indexOf('master.txt') !== -1)) {
+                                    reportUrl(fUrl, false);
+                                } else {
+                                    res.clone().text().then(function(t) {
+                                        if (t && t.substring(0, 140).trim().indexOf('#EXTM3U') === 0) {
+                                            reportUrl(fUrl, true);
+                                        }
+                                    }).catch(function(){});
+                                }
+                            } catch(e) {}
+                            return res;
+                        });
+                    };
+                }
+
+                var count = 0;
+                var timer = setInterval(function() {
+                    count++;
+                    if (count > 18) { clearInterval(timer); return; }
+                    if (count >= 2 && document.body) {
+                        var bodyTxt = (document.body.innerText || '').toLowerCase();
+                        if (bodyTxt.length > 0 && bodyTxt.length < 320 &&
+                            (bodyTxt.indexOf('404 not found') !== -1 ||
+                             bodyTxt.indexOf('video not found') !== -1 ||
+                             bodyTxt.indexOf('media is unavailable') !== -1 ||
+                             bodyTxt.indexOf('no sources found') !== -1 ||
+                             bodyTxt.indexOf('could not find') !== -1)) {
+                            clearInterval(timer);
+                            try { window.PrimeSnifferBridge.onProviderDead(); } catch(e) {}
+                            return;
+                        }
+                    }
+                    var v = document.querySelector('video');
+                    if (v) {
+                        v.muted = true;
+                        if (v.paused) { try { v.play(); } catch(e) {} }
+                        var vSrc = v.currentSrc || v.src || '';
+                        if (vSrc.indexOf('http') === 0) {
+                            reportUrl(vSrc, true);
+                            clearInterval(timer);
+                            return;
+                        }
+                    }
+                    var btns = document.querySelectorAll('.play-btn, .jw-icon-display, .vjs-big-play-button, [aria-label="Play"], #play-button, .plyr__control--overlaid, button');
+                    for (var i = 0; i < btns.length && i < 8; i++) {
+                        try { btns[i].click(); } catch(e) {}
+                    }
+                }, 260);
+            })();
+        """.trimIndent()
+
         headlessSnifferWebView.webChromeClient = WebChromeClient()
         headlessSnifferWebView.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                val target = request?.url?.toString() ?: return true
-                val allowed = listOf(
-                    "vidfast", "vixsrc", "netnaija", "vidlink", "multiembed", "2embed",
-                    "vidsrc", "embed.su", "autoembed", "superembed", "cloudnestra",
-                    "tmstr", "rabbitstream", "megacloud", "vidplay", "filemoon", "aoneroom"
-                )
-                return !allowed.any { target.contains(it, ignoreCase = true) }
+                val reqUrl = request?.url?.toString() ?: return true
+                val lower = reqUrl.lowercase(Locale.ROOT)
+                if (!lower.startsWith("http://") && !lower.startsWith("https://")) return true
+                if (AD_BLOCK_KEYWORDS.any { lower.contains(it) }) return true
+                return false
             }
 
-            override fun onReceivedHttpError(
-                view: WebView?,
-                request: WebResourceRequest?,
-                errorResponse: WebResourceResponse?
-            ) {
-                super.onReceivedHttpError(view, request, errorResponse)
-                val status = errorResponse?.statusCode ?: 200
-                if (request?.isForMainFrame == true && (status == 403 || status == 404 || status >= 500)) {
-                    if (!hasLockedPrimaryStream) {
-                        tryNextProviderInBackground()
-                    }
-                }
-            }
-
-            override fun onReceivedError(
-                view: WebView?,
-                request: WebResourceRequest?,
-                error: android.webkit.WebResourceError?
-            ) {
-                super.onReceivedError(view, request, error)
-                if (request?.isForMainFrame == true && !hasLockedPrimaryStream) {
-                    tryNextProviderInBackground()
-                }
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                if (hasLockedPrimaryStream || url.isNullOrEmpty() || url == "about:blank") return
+                view?.evaluateJavascript(snifferHookJs, null)
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 if (hasLockedPrimaryStream || url.isNullOrEmpty() || url == "about:blank") return
-                // Click only known play controls; never click generic buttons (Pause/seek).
-                val autoClickAndCheckDeadJs = """
-                    (function() {
-                        var bodyTxt = (document.body && document.body.innerText) ? document.body.innerText.toLowerCase() : "";
-                        if (bodyTxt.indexOf("not found") !== -1 || bodyTxt.indexOf("unavailable") !== -1 || bodyTxt.indexOf("no sources") !== -1) {
-                            window.PrimeSnifferBridge.onDeadServerDetected();
-                            return;
-                        }
-                        var count = 0;
-                        var timer = setInterval(function() {
-                            count++;
-                            if (count > 10) { clearInterval(timer); return; }
-                            var v = document.querySelector('video');
-                            if (v) {
-                                v.muted = true;
-                                if (v.paused) {
-                                    try { v.play(); } catch(e) {}
-                                }
-                                if (v.src && v.src.indexOf('http') === 0) {
-                                    window.PrimeSnifferBridge.onStreamCaptured(v.src, window.location.origin);
-                                    clearInterval(timer);
-                                    return;
-                                }
-                            } else {
-                                var btns = document.querySelectorAll('.play-btn, .jw-icon-display, .vjs-big-play-button, [aria-label="Play"], #play-button, .plyr__control--overlaid');
-                                for (var i = 0; i < btns.length; i++) {
-                                    try { btns[i].click(); } catch(e) {}
-                                }
-                            }
-                        }, 350);
-                    })();
-                """.trimIndent()
-                view?.evaluateJavascript(autoClickAndCheckDeadJs, null)
+                view?.evaluateJavascript(snifferHookJs, null)
             }
 
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
@@ -1225,7 +1366,7 @@ class ContentDetailActivity : AppCompatActivity() {
                 val reqUrl = request?.url?.toString() ?: return null
                 val lower = reqUrl.lowercase(Locale.ROOT)
 
-                if (lower.contains("doubleclick") || lower.contains("popads") || lower.contains("adsterra") || lower.contains("googlesyndication") || lower.contains("analytics")) {
+                if (AD_BLOCK_KEYWORDS.any { lower.contains(it) }) {
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                 }
 
@@ -1274,26 +1415,18 @@ class ContentDetailActivity : AppCompatActivity() {
                     }
                 }
 
-                val isMediaManifest = (lower.contains(".m3u8") ||
-                        lower.contains(".mp4") ||
-                        lower.contains("/playlist/") ||
-                        lower.contains("master.txt") ||
-                        lower.contains("m3u8-proxy")) &&
-                        !lower.contains("netnaija.film/wp-content") &&
-                        !lower.contains("promo") &&
-                        !lower.contains("trailer") &&
-                        !lower.endsWith(".js") &&
-                        !lower.endsWith(".css") &&
-                        !lower.endsWith(".png") &&
-                        !lower.endsWith(".jpg")
-
-                if (isMediaManifest) {
+                if (isLikelyPlayableStreamUrl(reqUrl)) {
                     val headers = request.requestHeaders
                     val currentProvider = providerTargets.getOrNull(currentProviderIndex)
                     val ref = headers["Referer"] ?: headers["referer"] ?: currentProvider?.referer ?: "https://vidlink.pro/"
-                    val orig = headers["Origin"] ?: headers["origin"] ?: currentProvider?.origin ?: ""
+                    val derivedOrigin = runCatching {
+                        val u = Uri.parse(ref)
+                        if (!u.scheme.isNullOrEmpty() && !u.host.isNullOrEmpty()) "${u.scheme}://${u.host}" else ""
+                    }.getOrDefault("")
+                    val orig = headers["Origin"] ?: headers["origin"] ?: derivedOrigin.ifBlank { currentProvider?.origin.orEmpty() }
                     val ua = headers["User-Agent"] ?: headers["user-agent"] ?: SNIFFER_UA
-                    onRawStreamIntercepted(reqUrl, ref, orig, ua)
+                    val label = currentProvider?.label ?: "REYZO ${currentProviderIndex + 1}"
+                    onRawStreamIntercepted(reqUrl, ref, orig, ua, label)
                 }
 
                 return super.shouldInterceptRequest(view, request)
@@ -1301,12 +1434,27 @@ class ContentDetailActivity : AppCompatActivity() {
         }
     }
 
-    private fun onRawStreamIntercepted(url: String, referer: String, origin: String, userAgent: String) {
-        // Lock immediately before posting to the UI thread so secondary HLS requests
-        // cannot trigger a second player start.
+    private fun onRawStreamIntercepted(
+        url: String,
+        referer: String,
+        origin: String,
+        userAgent: String,
+        explicitLabel: String? = null
+    ) {
         synchronized(this) {
             if (hasLockedPrimaryStream) return
             hasLockedPrimaryStream = true
+        }
+
+        // تحويل أي رابط vixsrc يحتوي على b=1 (Base64) إلى h=1 (HLS #EXTM3U) لكي يشتغل فوراً في ExoPlayer بدون خطأ
+        val normalizedStreamUrl = if (url.contains("vixsrc.to/playlist/", ignoreCase = true)) {
+            var fixed = url.replace("?b=1&", "?").replace("&b=1", "").replace("?b=1", "")
+            if (!fixed.contains("h=1")) {
+                fixed += if (fixed.contains("?")) "&h=1" else "?h=1"
+            }
+            fixed
+        } else {
+            url
         }
 
         runOnUiThread {
@@ -1320,10 +1468,13 @@ class ContentDetailActivity : AppCompatActivity() {
             headlessSnifferWebView.onPause()
             headlessSnifferWebView.pauseTimers()
 
-            val providerLabel = providerTargets.getOrNull(currentProviderIndex)?.label ?: "Server 1"
+            val providerLabel = explicitLabel
+                ?: providerTargets.getOrNull(currentProviderIndex)?.label
+                ?: "REYZO 1"
+
             val newDirectSource = StreamSource(
                 label = providerLabel,
-                url = url,
+                url = normalizedStreamUrl,
                 referer = referer,
                 origin = origin,
                 userAgent = userAgent,
@@ -1332,6 +1483,11 @@ class ContentDetailActivity : AppCompatActivity() {
 
             resolvedDirectStreams.clear()
             resolvedDirectStreams.add(newDirectSource)
+            // إضافة باقي السيرفرات المباشرة كسيرفرات احتياطية جاهزة للمشغل
+            providerTargets.filter { it.isDirectStream && it.url != normalizedStreamUrl }.forEach {
+                resolvedDirectStreams.add(it)
+            }
+
             moviePlayerController.setServerBadgeLabel(providerLabel)
 
             if (isPlayerModeActive) {
@@ -1349,7 +1505,7 @@ class ContentDetailActivity : AppCompatActivity() {
         vod: VodItem,
         season: Int = 1,
         episode: Int = 1,
-        runWebViewNow: Boolean = false
+        runWebViewNow: Boolean = true
     ) {
         snifferTimeoutJob?.cancel()
         streamFetchJob?.cancel()
@@ -1357,7 +1513,6 @@ class ContentDetailActivity : AppCompatActivity() {
         triedServersCount = 0
 
         playerEngine.pauseAndReleaseSocket()
-        // Clear the previous frame before preparing the new stream.
         moviePlayerController.playerView.player = null
 
         resolvedDirectStreams.clear()
@@ -1384,13 +1539,12 @@ class ContentDetailActivity : AppCompatActivity() {
                     episode = episode,
                     onFastestDirectReady = { fastestServer ->
                         if (!hasLockedPrimaryStream) {
-                            val idx = providerTargets.indexOfFirst { it.label == fastestServer.label }.coerceAtLeast(0)
-                            currentProviderIndex = idx
                             onRawStreamIntercepted(
                                 url = fastestServer.url,
                                 referer = fastestServer.referer,
                                 origin = fastestServer.origin,
-                                userAgent = fastestServer.userAgent
+                                userAgent = fastestServer.userAgent,
+                                explicitLabel = fastestServer.label
                             )
                         }
                     }
@@ -1403,17 +1557,28 @@ class ContentDetailActivity : AppCompatActivity() {
                 return@launch
             }
 
+            // إذا كان أسرع سيرفر مباشر قد تم التقاطه مسبقاً، نحدّث فقط الـ index والروابط الاحتياطية
+            if (hasLockedPrimaryStream) {
+                val activeUrl = resolvedDirectStreams.firstOrNull()?.url
+                val matchedIdx = panelServers.indexOfFirst { it.url == activeUrl }
+                if (matchedIdx != -1) {
+                    currentProviderIndex = matchedIdx
+                    moviePlayerController.setServerBadgeLabel(panelServers[matchedIdx].label)
+                }
+                val backups = panelServers.filter { it.isDirectStream && it.url != activeUrl }
+                playerEngine.appendBackupSourcesSilently(backups)
+                return@launch
+            }
+
             moviePlayerController.setServerBadgeLabel(panelServers.first().label)
 
-            if (!hasLockedPrimaryStream) {
-                val firstDirectIdx = panelServers.indexOfFirst { it.isDirectStream }
-                if (firstDirectIdx != -1) {
-                    currentProviderIndex = firstDirectIdx
-                    val source = panelServers[firstDirectIdx]
-                    onRawStreamIntercepted(source.url, source.referer, source.origin, source.userAgent)
-                } else if (runWebViewNow || isPlayerModeActive) {
-                    loadProviderInHeadlessSniffer(0)
-                }
+            val firstDirectIdx = panelServers.indexOfFirst { it.isDirectStream }
+            if (firstDirectIdx != -1) {
+                currentProviderIndex = firstDirectIdx
+                val source = panelServers[firstDirectIdx]
+                onRawStreamIntercepted(source.url, source.referer, source.origin, source.userAgent, source.label)
+            } else if (runWebViewNow || isPlayerModeActive) {
+                loadProviderInHeadlessSniffer(0)
             }
         }
     }
@@ -1432,7 +1597,7 @@ class ContentDetailActivity : AppCompatActivity() {
 
         snifferTimeoutJob?.cancel()
         snifferTimeoutJob = lifecycleScope.launch {
-            delay(4500L)
+            delay(4200L)
             if (!hasLockedPrimaryStream && !playerEngine.isPlaying()) {
                 tryNextProviderInBackground()
             }
@@ -1469,7 +1634,7 @@ class ContentDetailActivity : AppCompatActivity() {
         }
 
         if (nextServer.isDirectStream) {
-            onRawStreamIntercepted(nextServer.url, nextServer.referer, nextServer.origin, nextServer.userAgent)
+            onRawStreamIntercepted(nextServer.url, nextServer.referer, nextServer.origin, nextServer.userAgent, nextServer.label)
         } else {
             loadProviderInHeadlessSniffer(nextIdx)
         }
@@ -1613,7 +1778,7 @@ class ContentDetailActivity : AppCompatActivity() {
         val previousVod = currentVod
         if (previousVod != null && previousVod.id != vod.id && isPlayerModeActive) {
             playerEngine.player?.let { exo ->
-                if (exo.currentPosition > 5000L && exo.duration > 10000L) {
+                if (exo.currentPosition > 1000L && exo.duration > 0L) {
                     SessionManager.saveWatchProgress(this, previousVod, exo.currentPosition, exo.duration)
                 }
             }
@@ -1662,7 +1827,6 @@ class ContentDetailActivity : AppCompatActivity() {
             bindMovieFullDetailsToUi(vod, cachedDetails)
         } else {
             crewMetadataContainer.visibility = View.GONE
-            // إظهار Skeleton خاص بالـ Cast (دائري) و Skeleton خاص بالـ Recommended قبل ما يطلعو
             tvCastHeader.visibility = View.VISIBLE
             rvCast.visibility = View.VISIBLE
             rvCast.adapter = com.primeott.app.presentation.sections.PrimeSkeletonHelper.CastSkeletonAdapter(6)
@@ -1705,6 +1869,9 @@ class ContentDetailActivity : AppCompatActivity() {
                 .start()
         }
 
+        // نجهز السيرفر الشغال فوراً في الخلفية بمجرد فتح الصفحة لكي يشتغل الفيديو فوراً عند ضغط PLAY
+        startStreamExtractionForEpisodeOrMovie(vod, 1, 1, runWebViewNow = true)
+
         detailsFetchJob = lifecycleScope.launch {
             val details = cachedDetails ?: withContext(Dispatchers.IO) {
                 OttRepository.fetchMovieOrSeriesFullDetails(vod)
@@ -1714,8 +1881,6 @@ class ContentDetailActivity : AppCompatActivity() {
             if (cachedDetails == null) {
                 bindMovieFullDetailsToUi(vod, details)
             }
-
-            startStreamExtractionForEpisodeOrMovie(vod, 1, 1, runWebViewNow = false)
 
             withContext(Dispatchers.IO) {
                 val subs = OttRepository.fetchRealSubtitlesForMovie(
@@ -2006,7 +2171,7 @@ class ContentDetailActivity : AppCompatActivity() {
         super.onPause()
         val p = playerEngine.player
         val vod = currentVod
-        if (isPlayerModeActive && p != null && vod != null && p.currentPosition > 5000L && p.duration > 10000L) {
+        if (isPlayerModeActive && p != null && vod != null && p.currentPosition > 1000L && p.duration > 0L) {
             pendingResumePositionMs = p.currentPosition
             SessionManager.saveWatchProgress(this, vod, p.currentPosition, p.duration)
         }
@@ -3131,5 +3296,6 @@ class ActorCreditsGridAdapter(
         } else {
             holder.ivPoster.setImageDrawable(skeletonDrawable)
         }
+        holder.root.setOnClickListener { onVodClick(item) }
     }
 }
